@@ -21,3 +21,10 @@ coverage
 /playwright-report/
 /test-results/
 e2e/.auth/user.json
+
+# Supabase local CLI state
+supabase/.branches/
+supabase/.temp/
+
+# Claude Code local state
+.claude/
