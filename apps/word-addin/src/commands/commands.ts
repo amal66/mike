@@ -4,8 +4,9 @@ Office.onReady(() => {
   // no-op — ribbon commands are handled by the task pane
 });
 
+// Reserved for future ExecuteFunction ribbon actions.
+// The current ribbon button uses ShowTaskpane (manifest) — no function call needed.
 function openTaskpane(event: Office.AddinCommands.Event): void {
-  Office.context.ui.openBrowserWindow("https://localhost:3000/taskpane.html");
   event.completed();
 }
 
