@@ -48,6 +48,7 @@ const projectChatBodySchema = z.object({
     model: z.string().optional(),
     displayed_doc: docRefSchema.optional(),
     attached_documents: z.array(docRefSchema).optional(),
+    documentContext: z.string().optional(),
 });
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
@@ -68,13 +69,14 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
 
     const body = parseBody(projectChatBodySchema, req, res);
     if (!body) return;
-    const { messages, chat_id, model, displayed_doc, attached_documents } =
+    const { messages, chat_id, model, displayed_doc, attached_documents, documentContext } =
         body as {
             messages: ChatMessage[];
             chat_id?: string;
             model?: string;
             displayed_doc?: { filename: string; document_id: string };
             attached_documents?: { filename: string; document_id: string }[];
+            documentContext?: string;
         };
 
     const db = createServerSupabase();
@@ -179,6 +181,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     }
 
     const nonce = generateSpotlightNonce();
+    if (documentContext) {
+        systemPromptExtra = (systemPromptExtra ? systemPromptExtra + "\n\n" : "") +
+            `The user is working in Microsoft Word. The text below is the body of their active document:\n<word-document nonce="${nonce}">\n${documentContext}\n</word-document>`;
+    }
     const apiMessages = buildMessages(
         messagesForLLM,
         docAvailability,

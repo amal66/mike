@@ -468,6 +468,20 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const project_id = parsedProjectId.projectId;
     const model = parsedModel.model;
 
+    // Optional plain-text document context supplied by the Word Office.js add-in.
+    // The add-in reads the active document body via Word.run() and posts it here
+    // as `documentContext` rather than uploading a file — there is no stored
+    // document record and no file upload step. The text is injected into the LLM
+    // system prompt via buildMessages's systemPromptExtra parameter.
+    //
+    // A separate POST /documents/from-text endpoint is NOT needed: wiring the
+    // text directly into the system prompt is simpler and avoids creating a
+    // dummy document_versions row for content the add-in already has in memory.
+    const documentContext =
+        typeof body.documentContext === "string" && body.documentContext.trim()
+            ? body.documentContext.trim()
+            : undefined;
+
     req.log.debug({ model, messageCount: messages?.length }, "[chat/stream] incoming request");
 
     const userEmail = res.locals.userEmail as string | undefined;
@@ -552,7 +566,13 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         docIndex,
     );
     const nonce = generateSpotlightNonce();
-    const apiMessages = buildMessages(enrichedMessages, docAvailability, undefined, docIndex, nonce);
+    // If the add-in sent document text, wrap it in a nonce-fenced block so the
+    // LLM treats it as untrusted data (same spotlighting technique used for
+    // filenames elsewhere). The nonce is generated just above this line.
+    const systemPromptExtra = documentContext
+        ? `The user is working in Microsoft Word. The text below is the body of their active document:\n<word-document nonce="${nonce}">\n${documentContext}\n</word-document>`
+        : undefined;
+    const apiMessages = buildMessages(enrichedMessages, docAvailability, systemPromptExtra, docIndex, nonce);
 
     const workflowStore = await buildWorkflowStore(userId, userEmail, db);
 
