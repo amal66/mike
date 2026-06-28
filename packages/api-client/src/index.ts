@@ -50,7 +50,10 @@ const DEFAULT_API_BASE =
 let clientConfig: ResolvedMikeApiClientConfig = {
     baseUrl: DEFAULT_API_BASE,
     getAuthHeaders: async () => ({}),
-    fetchImpl: fetch,
+    // Arrow function ensures fetch is always called as a plain function (not as a
+    // method of clientConfig), which avoids "Illegal invocation" in Chrome when
+    // the native `fetch` reference is detached from `window`.
+    fetchImpl: (...args: Parameters<typeof fetch>) => fetch(...args),
 };
 
 function resolveMikeApiClientConfig(

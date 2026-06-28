@@ -16,3 +16,8 @@ next-env.d.ts
 .DS_Store
 .vercel
 coverage
+
+# Playwright
+/playwright-report/
+/test-results/
+e2e/.auth/user.json
