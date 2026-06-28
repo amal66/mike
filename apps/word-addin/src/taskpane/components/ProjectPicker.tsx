@@ -17,9 +17,10 @@ interface Project {
   name: string;
 }
 
+// Documents from GET /projects/:id/documents expose `filename` (not `name`).
 interface ProjectDoc {
   id: string;
-  name: string;
+  filename: string;
   created_at?: string;
 }
 
@@ -136,10 +137,20 @@ export function ProjectPicker(): React.ReactElement {
       // Retrieve the real binary .docx (ZIP archive) rather than raw XML
       const blob = await getDocxBlob();
 
-      // Derive a filename from the document URL or fall back to a default
+      // Derive a filename from the document URL or fall back to a default.
+      // getFileAsync(Compressed) always returns OOXML (.docx) bytes regardless
+      // of the on-disk format, so the upload must carry a .docx extension — the
+      // API validates extension against magic bytes and rejects e.g. a ZIP sent
+      // as ".doc". Strip any query string and force the .docx extension.
       const rawUrl = Office.context.document.url ?? "";
-      const fileName =
-        rawUrl.split("/").pop()?.split("\\").pop() ?? "document.docx";
+      const base =
+        rawUrl
+          .split(/[\\/]/)
+          .pop()
+          ?.split("?")[0]
+          ?.replace(/\.[^.]+$/, "")
+          ?.trim() || "document";
+      const fileName = `${base}.docx`;
 
       const formData = new FormData();
       formData.append("file", blob, fileName);
@@ -263,7 +274,7 @@ export function ProjectPicker(): React.ReactElement {
         <div className={styles.docList}>
           {docs.map((doc) => (
             <div key={doc.id} className={styles.docItem}>
-              <Text>{doc.name}</Text>
+              <Text>{doc.filename}</Text>
             </div>
           ))}
         </div>
