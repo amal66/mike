@@ -11,11 +11,16 @@ import {
 import { apiClient } from "../api/client";
 import { useWordDoc } from "../hooks/useWordDoc";
 
+// Shape returned by GET /workflows (see apps/api .../workflows.routes.ts):
+// the runnable instruction lives in `prompt_md`, the label in `title`, and
+// workflows are either "assistant" (chat-style) or "tabular" (column extract).
+// Only "assistant" workflows can be run as a document chat here.
 interface Workflow {
   id: string;
-  name: string;
-  instruction: string;
-  description?: string;
+  title: string;
+  prompt_md: string | null;
+  type: "assistant" | "tabular";
+  practice?: string | null;
 }
 
 const useStyles = makeStyles({
@@ -88,7 +93,12 @@ export function WorkflowPicker(): React.ReactElement {
   useEffect(() => {
     apiClient
       .get<Workflow[]>("/workflows")
-      .then((data) => {
+      .then((all) => {
+        // Only assistant-type workflows have a runnable prompt; tabular
+        // workflows need column config and a different endpoint.
+        const data = (all ?? []).filter(
+          (w) => w.type === "assistant" && (w.prompt_md ?? "").trim()
+        );
         setWorkflows(data);
         if (data.length > 0) setSelectedId(data[0].id);
       })
@@ -110,11 +120,17 @@ export function WorkflowPicker(): React.ReactElement {
     try {
       const docText = await readDocumentText();
       let accumulated = "";
+      // POST /chat does not read a `systemPrompt` field. The workflow
+      // instruction is sent as the user message and the document body is
+      // passed via `documentContext` (which the API folds into the system
+      // prompt as a spotlighted block). The model is injected by apiClient.
       await apiClient.stream(
         "/chat",
         {
-          systemPrompt: selectedWorkflow.instruction,
-          messages: [{ role: "user", content: docText }],
+          messages: [
+            { role: "user", content: selectedWorkflow.prompt_md ?? "" },
+          ],
+          documentContext: docText,
         },
         (chunk) => {
           accumulated += chunk;
@@ -170,14 +186,14 @@ export function WorkflowPicker(): React.ReactElement {
       >
         {workflows.map((w) => (
           <option key={w.id} value={w.id}>
-            {w.name}
+            {w.title}
           </option>
         ))}
       </Select>
 
-      {selectedWorkflow?.description && (
+      {selectedWorkflow?.practice && (
         <Text className={styles.description}>
-          {selectedWorkflow.description}
+          {selectedWorkflow.practice}
         </Text>
       )}
 

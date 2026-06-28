@@ -2,7 +2,6 @@
 const path = require("path");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const webpack = require("webpack");
-const { getHttpsServerOptions } = require("office-addin-webpack-https");
 
 module.exports = async (_env, options) => {
   const isDev = options.mode !== "production";
@@ -23,8 +22,39 @@ module.exports = async (_env, options) => {
   };
 
   if (isDev) {
+    // Dev-only: self-signed HTTPS cert for the webpack-dev-server on
+    // localhost:3000. Required lazily so production builds (`--mode production`)
+    // don't depend on this dev-only package at all.
+    const { getHttpsServerOptions } = require("office-addin-dev-certs");
     const httpsOptions = await getHttpsServerOptions();
     devServerConfig.server = { type: "https", options: httpsOptions };
+
+    // Word loads the task pane over HTTPS, and its WebView blocks "mixed content"
+    // (HTTP requests from an HTTPS page). The Mike API and local Supabase only
+    // serve HTTP, so calling them directly fails with "Load failed". Proxy them
+    // through this HTTPS dev server instead, so the pane makes only same-origin
+    // HTTPS calls (REACT_APP_SUPABASE_URL=https://localhost:3000,
+    // REACT_APP_API_BASE_URL=https://localhost:3000/api) that webpack forwards to
+    // the local HTTP backends server-side. Targets are overridable so the proxy
+    // tracks whatever ports the backend is actually on.
+    const supaTarget =
+      process.env.SUPABASE_PROXY_TARGET || "http://127.0.0.1:54321";
+    const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3001";
+    devServerConfig.proxy = [
+      {
+        context: ["/auth", "/rest", "/storage"],
+        target: supaTarget,
+        changeOrigin: true,
+        secure: false,
+      },
+      {
+        context: ["/api"],
+        target: apiTarget,
+        changeOrigin: true,
+        secure: false,
+        pathRewrite: { "^/api": "" },
+      },
+    ];
   }
 
   /** @type {import('webpack').Configuration} */
@@ -71,6 +101,7 @@ module.exports = async (_env, options) => {
         REACT_APP_API_BASE_URL: "http://localhost:3001",
         REACT_APP_SUPABASE_URL: "",
         REACT_APP_SUPABASE_ANON_KEY: "",
+        REACT_APP_DEFAULT_MODEL: "claude-sonnet-4-6",
         NODE_ENV: isDev ? "development" : "production",
       }),
     ],

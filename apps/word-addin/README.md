@@ -12,7 +12,38 @@ An Office.js task pane add-in that brings the Mike legal AI platform directly in
 
 ---
 
-## Setup
+## Quick start (one command)
+
+If the Mike backend is already running locally (`scripts/setup-local.sh` + `npm run dev:api`), this script does everything below for you — writes `.env.development` from `supabase status`, installs dependencies, installs the trusted dev certificate, and launches the add-in into Word:
+
+```bash
+bash apps/word-addin/scripts/dev.sh
+```
+
+It is idempotent (safe to re-run) and only prompts you when it genuinely needs input — namely the **keychain/admin password** when installing the dev HTTPS certificate the first time. After the cert installs, **fully quit Word (Cmd-Q)** and re-run the script so Word reloads the trust.
+
+**The add-in requires the Mike backend to be running.** Sign-in talks directly to local Supabase (`/auth/v1/token`) and uploads use Supabase storage, while chat/actions/workflows/projects call the Mike API. The script verifies both before launching:
+
+- **Supabase** — `GET <supabase>/auth/v1/health`
+- **Mike API + db + storage** — `GET <api>/ready`
+
+If either is down it prints how to start them and **refuses to launch** (the task pane would just fail to sign in). Start them first:
+
+```bash
+# repo root
+bash scripts/setup-local.sh   # once — starts Supabase, creates the `mike` bucket
+npm run dev:api               # the Mike API on :3001
+```
+
+Flags:
+- `--setup-only` — do everything except the final `npm start` (prep deps/env/cert; report backend status without launching).
+- `FORCE=1 bash apps/word-addin/scripts/dev.sh` — launch even if the backend check fails (sign-in won't work until Mike is up).
+
+The sections below explain each step the script automates, and the manual / web sideloading paths.
+
+---
+
+## Setup (manual)
 
 1. **Install dependencies**
 
