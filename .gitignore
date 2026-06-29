@@ -17,3 +17,8 @@ next-env.d.ts
 .DS_Store
 .vercel
 coverage
+
+# Playwright e2e: generated auth state (contains session tokens) + run artifacts
+frontend/e2e/.auth/
+frontend/test-results/
+playwright-report/
