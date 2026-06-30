@@ -22,6 +22,16 @@ const projects = await listProjects();
 Public request and response shapes should be defined in `packages/core` before
 they are consumed by API handlers, the web app, or SDKs.
 
+## Billing
+
+When Stripe is configured, the API exposes a billing surface under `/billing`
+(`GET /billing/subscription`, `POST /billing/checkout`, `POST /billing/portal`,
+and the Stripe event sink `POST /billing/webhook`). Subscription tiers map to
+the existing message-credit limits. The webhook is mounted with a raw-body
+parser ahead of `express.json` so Stripe signatures can be verified. When Stripe
+is not configured the feature is disabled and these routes are inert. See
+[billing.md](./billing.md) and [ADR 0002](./adr/0002-stripe-billing.md).
+
 ## OpenAI-Compatible Gateways
 
 The API can route OpenAI-model requests through an OpenAI-compatible gateway by

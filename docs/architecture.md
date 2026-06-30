@@ -56,3 +56,17 @@ jurisdiction law libraries (`lawLibraries/`), the BullMQ background job queues
 (`queue/` + `workers/` — DOCX→PDF conversion and tabular-review extraction; see
 [async-jobs.md](async-jobs.md)), and the air-gap posture (`airgap.ts`,
 `secretGuard.ts`).
+
+Compatibility exports remain under `apps/api/src/routes` so the server entry
+point's import list stays small and stable (e.g. `routes/billing.ts` re-exports
+the billing router from its module).
+
+## Billing
+
+Optional Stripe billing lives in `apps/api/src/lib/billing` (plan catalogue,
+Stripe client, webhook handler) with routes in `apps/api/src/modules/billing`.
+Subscription tiers map to the existing message-credit limits in `lib/credits.ts`
+rather than introducing a separate metering system. Billing is disabled unless
+`STRIPE_SECRET_KEY` is set, so self-hosted deployments are unaffected by
+default. See [billing.md](./billing.md) and
+[ADR 0002](./adr/0002-stripe-billing.md).
