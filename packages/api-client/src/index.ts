@@ -343,6 +343,64 @@ export async function updateUserMfaOnLogin(
     });
 }
 
+// ---------------------------------------------------------------------------
+// Billing (Stripe subscriptions + usage). See docs/billing.md.
+// ---------------------------------------------------------------------------
+
+/** A subscription tier offered by the instance. */
+export type BillingTier = "Free" | "Pro" | "Enterprise";
+
+export interface BillingPlanOption {
+    tier: BillingTier;
+    displayName: string;
+    monthlyMessageCredits: number;
+    /** Whether this tier can be purchased (has a configured Stripe price). */
+    purchasable: boolean;
+}
+
+export interface SubscriptionInfo {
+    /** False on self-hosted instances with no Stripe configured. */
+    billingEnabled: boolean;
+    tier: BillingTier;
+    planDisplayName: string;
+    /** Stripe subscription status (e.g. "active"), or null if none. */
+    status: string | null;
+    /** ISO timestamp when the current paid period ends, or null. */
+    currentPeriodEnd: string | null;
+    creditsUsed: number;
+    creditsLimit: number;
+    creditsResetDate: string | null;
+    availablePlans: BillingPlanOption[];
+}
+
+/** Fetch the current plan, subscription status, and usage against the limit. */
+export async function getSubscription(): Promise<SubscriptionInfo> {
+    return apiRequest<SubscriptionInfo>("/billing/subscription");
+}
+
+/**
+ * Start a Stripe Checkout Session for a tier. The server resolves the tier to a
+ * price (the client never supplies a price) and returns a URL to redirect to.
+ */
+export async function createCheckoutSession(
+    tier: BillingTier,
+): Promise<{ url: string | null }> {
+    return apiRequest<{ url: string | null }>("/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tier }),
+    });
+}
+
+/** Open the Stripe Customer Portal (manage plan, invoices, cancellation). */
+export async function createBillingPortalSession(): Promise<{
+    url: string | null;
+}> {
+    return apiRequest<{ url: string | null }>("/billing/portal", {
+        method: "POST",
+    });
+}
+
 // MERGE-REVIEW: upstream defined ApiKeyProvider/ApiKeySource locally with the
 // extra "openrouter" and "courtlistener" providers. The fork sources these
 // types from @mike/core (imported above), so the local redefinition is dropped
