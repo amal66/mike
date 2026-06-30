@@ -16,6 +16,10 @@ import { userRouter } from "./modules/user/user.routes";
 import { downloadsRouter } from "./modules/downloads/downloads.routes";
 import { caseLawRouter } from "./modules/case-law/caseLaw.routes";
 import { guestRouter } from "./modules/auth/auth.routes";
+import { apiKeysRouter } from "./routes/apiKeys";
+import { webhooksRouter } from "./routes/webhooks";
+import swaggerUi from "swagger-ui-express";
+import { openApiDocument } from "./lib/openapi";
 import { getAdminClient } from "./lib/supabase";
 import { checkStorageReady } from "./lib/storage";
 import { env } from "./lib/env";
@@ -198,6 +202,42 @@ app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 app.use("/case-law", caseLawRouter);
 app.use("/auth", guestRouter);
+
+// ── Developer platform ──────────────────────────────────────────────────────
+app.use("/v1/api-keys", apiKeysRouter);
+app.use("/v1/webhooks", webhooksRouter);
+
+// Machine-readable API contract — see lib/openapi.ts.
+app.get("/openapi.json", (_req, res) => res.json(openApiDocument));
+
+// Human-readable interactive docs. Swagger UI injects inline scripts/styles and
+// loads images as data: URIs, all of which the strict global CSP (default-src
+// 'none') would block. We relax the policy for this subtree ONLY — everything
+// served here is first-party Swagger UI, no third-party origins.
+app.use(
+    "/docs",
+    (
+        _req: express.Request,
+        res: express.Response,
+        next: express.NextFunction,
+    ) => {
+        res.setHeader(
+            "Content-Security-Policy",
+            [
+                "default-src 'none'",
+                "script-src 'self' 'unsafe-inline'",
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data:",
+                "connect-src 'self'",
+            ].join("; "),
+        );
+        next();
+    },
+    swaggerUi.serve,
+    swaggerUi.setup(openApiDocument, {
+        customSiteTitle: "Mike API reference",
+    }),
+);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
