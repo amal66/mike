@@ -3,6 +3,12 @@ import { getAdminClient } from "../lib/supabase";
 import { sendError } from "../lib/http";
 import { logger } from "../lib/logger";
 import { syncProfileEmail } from "../lib/userLookup";
+import { isApiKeyToken } from "../core/apiKeys";
+import {
+  authenticateApiKey,
+  touchApiKeyLastUsed,
+  type ApiKeyScope,
+} from "../lib/apiKeys";
 
 /**
  * The /user/profile (and /users/profile alias) endpoint must stay reachable
@@ -76,6 +82,63 @@ async function enforceLoginMfaIfEnabled(
   return true;
 }
 
+/**
+ * Map an HTTP method to the API-key scope it requires. Safe, side-effect-free
+ * verbs need only `read`; anything that can mutate state needs `write`.
+ */
+function requiredScopeForMethod(method: string): ApiKeyScope {
+  return method === "GET" || method === "HEAD" ? "read" : "write";
+}
+
+/**
+ * API-key authentication branch. Handles `Authorization: Bearer mike_sk_...`.
+ * Returns true when the request is fully authenticated and may proceed to
+ * `next()`, false when a 401/403 response has already been sent.
+ *
+ * Note: API keys deliberately bypass the interactive MFA-on-login gate. MFA
+ * protects *browser sessions* (something you know + an authenticator); a
+ * long-lived programmatic credential is a distinct factor (something you hold)
+ * that the user explicitly minted and can revoke at any time. Forcing aal2 on
+ * a headless key would make it unusable. This is documented in the ADR.
+ */
+async function authenticateWithApiKey(
+  req: Request,
+  res: Response,
+  token: string,
+): Promise<boolean> {
+  const result = await authenticateApiKey(token);
+  if (!result) {
+    sendError(res, 401, "UNAUTHORIZED", "Invalid or revoked API key");
+    return false;
+  }
+
+  const needed = requiredScopeForMethod(req.method);
+  if (!result.scopes.includes(needed)) {
+    sendError(
+      res,
+      403,
+      "FORBIDDEN",
+      `This API key is missing the '${needed}' scope required for ${req.method} requests`,
+    );
+    return false;
+  }
+
+  res.locals.userId = result.userId;
+  res.locals.apiKeyId = result.keyId;
+  res.locals.authMethod = "api_key";
+
+  // Downstream routes (project sharing, exports) key off the caller's email.
+  // Resolve it from the user record so API-key callers behave like JWT callers.
+  const { data: userData } = await getAdminClient().auth.admin.getUserById(
+    result.userId,
+  );
+  res.locals.userEmail = userData?.user?.email?.toLowerCase() ?? "";
+
+  // Best-effort, non-blocking usage tracking — never delays the request.
+  void touchApiKeyLastUsed(result.keyId);
+  return true;
+}
+
 export async function requireAuth(
   req: Request,
   res: Response,
@@ -87,6 +150,14 @@ export async function requireAuth(
     return;
   }
   const token = auth.slice(7).trim();
+
+  // Branch on the credential type. Programmatic API keys are self-describing
+  // (`mike_sk_` prefix); anything else is treated as a Supabase JWT, preserving
+  // the original behaviour byte-for-byte.
+  if (isApiKeyToken(token)) {
+    if (await authenticateWithApiKey(req, res, token)) next();
+    return;
+  }
 
   const { data } = await getAdminClient().auth.getUser(token);
   if (!data.user) {
@@ -156,5 +227,29 @@ export async function requireMfaIfEnrolled(
     return;
   }
 
+  next();
+}
+
+/**
+ * Guard for management routes that must be driven by a real, interactive user
+ * session — never by a programmatic API key. This is what stops a key from
+ * minting *more* keys (privilege escalation) or editing webhook endpoints.
+ *
+ * Mount it AFTER `requireAuth`, which has already populated `res.locals`.
+ */
+export function requireUserSession(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (res.locals.authMethod === "api_key") {
+    sendError(
+      res,
+      403,
+      "FORBIDDEN",
+      "This endpoint requires a logged-in user session and cannot be used with an API key",
+    );
+    return;
+  }
   next();
 }

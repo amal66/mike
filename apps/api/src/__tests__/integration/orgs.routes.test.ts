@@ -65,6 +65,8 @@ vi.mock("../../lib/supabase", () => ({
 // requireAuth double: enforces a bearer token (so 401 is testable) and, when
 // present, seeds the standard res.locals identity.
 vi.mock("../../middleware/auth", () => ({
+    requireUserSession: (_req: unknown, _res: unknown, next: () => void) =>
+        next(),
     requireAuth: (
         req: { headers: Record<string, unknown> },
         res: {

@@ -130,6 +130,8 @@ vi.mock("../../lib/supabase", () => ({
 // guard so we can drive both the satisfied (next()) and rejected
 // (403 mfa_verification_required) paths.
 vi.mock("../../middleware/auth", () => ({
+    requireUserSession: (_req: unknown, _res: unknown, next: () => void) =>
+        next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },

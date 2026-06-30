@@ -16,6 +16,8 @@ vi.mock("../../lib/supabase", () => ({
 
 // Authenticated as u1 for every request (mirrors the other route tests).
 vi.mock("../../middleware/auth", () => ({
+    requireUserSession: (_req: unknown, _res: unknown, next: () => void) =>
+        next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },
