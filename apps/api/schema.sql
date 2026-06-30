@@ -246,6 +246,75 @@ create index if not exists idx_user_api_keys_user
 
 alter table public.user_api_keys enable row level security;
 
+-- ── Developer platform: programmatic API keys ───────────────────────────────
+-- Long-lived credentials a developer mints to call the API from scripts/CI.
+-- We store only a SHA-256 hash of the secret (never the secret itself) plus a
+-- short non-secret prefix for display. See apps/api/src/lib/apiKeys.ts.
+create table if not exists public.api_keys (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  key_prefix text not null,
+  key_hash text not null unique,
+  scopes text[] not null default array['read','write'],
+  last_used_at timestamptz,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz
+);
+
+-- Lookup is by the non-secret prefix; partial index covers only live keys.
+create index if not exists idx_api_keys_prefix_active
+  on public.api_keys(key_prefix)
+  where revoked_at is null;
+create index if not exists idx_api_keys_user
+  on public.api_keys(user_id);
+
+alter table public.api_keys enable row level security;
+
+-- ── Developer platform: webhook endpoints ───────────────────────────────────
+-- Where to POST events, which events to send, and the per-endpoint HMAC secret.
+create table if not exists public.webhook_endpoints (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  url text not null,
+  secret text not null,
+  enabled boolean not null default true,
+  event_types text[] not null default array[]::text[],
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_webhook_endpoints_user
+  on public.webhook_endpoints(user_id);
+
+alter table public.webhook_endpoints enable row level security;
+
+-- ── Developer platform: webhook deliveries ──────────────────────────────────
+-- One row per attempt-set: the event, payload, status and recorded response.
+create table if not exists public.webhook_deliveries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  endpoint_id uuid not null references public.webhook_endpoints(id) on delete cascade,
+  event_type text not null,
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'pending'
+    check (status in ('pending', 'succeeded', 'failed')),
+  attempts integer not null default 0,
+  response_status integer,
+  response_body text,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  delivered_at timestamptz
+);
+
+create index if not exists idx_webhook_deliveries_endpoint
+  on public.webhook_deliveries(endpoint_id, created_at desc);
+create index if not exists idx_webhook_deliveries_user
+  on public.webhook_deliveries(user_id, created_at desc);
+
+alter table public.webhook_deliveries enable row level security;
+
 create table if not exists public.user_mcp_connectors (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -1327,6 +1396,9 @@ revoke all on public.tabular_cells from anon, authenticated;
 revoke all on public.tabular_review_chats from anon, authenticated;
 revoke all on public.tabular_review_chat_messages from anon, authenticated;
 revoke all on public.user_api_keys from anon, authenticated;
+revoke all on public.api_keys from anon, authenticated;
+revoke all on public.webhook_endpoints from anon, authenticated;
+revoke all on public.webhook_deliveries from anon, authenticated;
 revoke all on public.user_mcp_connectors from anon, authenticated;
 revoke all on public.user_mcp_oauth_tokens from anon, authenticated;
 revoke all on public.user_mcp_oauth_states from anon, authenticated;
