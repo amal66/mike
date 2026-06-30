@@ -1,15 +1,16 @@
 import { createServerSupabase } from "./supabase";
 import { logger } from "./logger";
+import { creditLimitForTier, SELF_HOST_CREDIT_LIMIT } from "./billing/plans";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
-// Default monthly limit for the free tier.
-// Platform-hosted deployments may override this via the MONTHLY_CREDIT_LIMIT
-// env var; self-hosters who are not running a metered platform can set it to
-// a very high value (the default for self-hosted instances).
-export const MONTHLY_CREDIT_LIMIT = process.env.MONTHLY_CREDIT_LIMIT
-    ? Number(process.env.MONTHLY_CREDIT_LIMIT)
-    : 999_999;
+// Backwards-compatible alias. Historically the monthly limit was a single
+// constant (see PR #157). With Stripe billing the *effective* limit now depends
+// on the user's tier (see `creditLimitForTier`), but when billing is disabled
+// every tier resolves to this generous self-host default — so this constant is
+// still the correct baseline for unconfigured/self-hosted deployments and for
+// callers that only need the default.
+export const MONTHLY_CREDIT_LIMIT = SELF_HOST_CREDIT_LIMIT;
 
 // Quota-accounting failure policy (see env.ts CREDITS_FAIL_CLOSED). When a
 // credit read fails, do we fail OPEN (allow, historical self-host default) or
@@ -66,12 +67,16 @@ export async function checkMessageCredits(
         return { allowed: true };
     }
 
+    // The limit is derived from the user's tier. When billing is disabled
+    // (no Stripe configured) every tier resolves to the generous self-host
+    // default, preserving the pre-billing behaviour for self-hosters.
+    const limit = creditLimitForTier(data.tier);
     const used = data.message_credits_used ?? 0;
-    if (used >= MONTHLY_CREDIT_LIMIT) {
+    if (used >= limit) {
         return {
             allowed: false,
             used,
-            limit: MONTHLY_CREDIT_LIMIT,
+            limit,
             resetDate: data.credits_reset_date,
         };
     }
