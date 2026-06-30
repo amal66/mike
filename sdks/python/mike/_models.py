@@ -166,3 +166,47 @@ class ApiKeyStatus(BaseModel):
 
 class ApiKeyStatusResponse(BaseModel):
     keys: list[ApiKeyStatus] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Developer platform — programmatic API keys & webhooks
+# ---------------------------------------------------------------------------
+
+class ApiKey(BaseModel):
+    id: str
+    name: str
+    key_prefix: str
+    scopes: list[str] = Field(default_factory=list)
+    last_used_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class ApiKeyCreateResponse(ApiKey):
+    # The full secret — present ONLY in the create response, never again.
+    key: str
+
+
+class WebhookEndpoint(BaseModel):
+    id: str
+    url: str
+    enabled: bool = True
+    event_types: list[str] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class WebhookEndpointCreateResponse(WebhookEndpoint):
+    # The HMAC signing secret — present ONLY in the create response.
+    secret: str
+
+
+class WebhookDelivery(BaseModel):
+    id: str
+    endpoint_id: str
+    event_type: str
+    status: Literal["pending", "succeeded", "failed"]
+    attempts: int = 0
+    response_status: Optional[int] = None
+    last_error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None

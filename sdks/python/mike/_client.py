@@ -5,12 +5,31 @@ from typing import Any
 import httpx
 
 from ._exceptions import _raise_for_status
+from .resources.api_keys import ApiKeysResource, AsyncApiKeysResource
 from .resources.chat import ChatResource, AsyncChatResource
 from .resources.documents import DocumentsResource, AsyncDocumentsResource
 from .resources.projects import ProjectsResource, AsyncProjectsResource
 from .resources.tabular import TabularResource, AsyncTabularResource
 from .resources.user import UserResource, AsyncUserResource
+from .resources.webhooks import WebhooksResource, AsyncWebhooksResource
 from .resources.workflows import WorkflowsResource, AsyncWorkflowsResource
+
+
+def _build_headers(
+    access_token: str | None, api_key: str | None
+) -> dict[str, str]:
+    """Assemble the default request headers.
+
+    ``api_key`` is the preferred, first-class credential: a programmatic Mike
+    API key (``mike_sk_...``) sent as a standard ``Authorization: Bearer``
+    header. ``access_token`` (a Supabase session JWT) is also supported and
+    sent the same way; when both are supplied the API key takes precedence.
+    """
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    token = api_key or access_token
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 class MikeClient:
@@ -22,11 +41,14 @@ class MikeClient:
     tabular: TabularResource
     workflows: WorkflowsResource
     user: UserResource
+    api_keys: ApiKeysResource
+    webhooks: WebhooksResource
 
     def __init__(
         self,
         *,
         base_url: str,
+        api_key: str | None = None,
         access_token: str | None = None,
         timeout: float = 60.0,
         http_client: httpx.Client | None = None,
@@ -35,18 +57,18 @@ class MikeClient:
 
         Args:
             base_url: Root URL of the Mike API.
+            api_key: Programmatic Mike API key (``mike_sk_...``). Sent as an
+                ``Authorization: Bearer <key>`` header; preferred over
+                ``access_token`` when both are given.
             access_token: Supabase access token (JWT). Sent as an
                 ``Authorization: Bearer <token>`` header, matching the API's
                 auth middleware.
         """
         self._base_url = base_url.rstrip("/")
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
 
         self._http = http_client or httpx.Client(
             base_url=self._base_url,
-            headers=headers,
+            headers=_build_headers(access_token, api_key),
             timeout=timeout,
         )
 
@@ -56,6 +78,8 @@ class MikeClient:
         self.tabular = TabularResource(self)
         self.workflows = WorkflowsResource(self)
         self.user = UserResource(self)
+        self.api_keys = ApiKeysResource(self)
+        self.webhooks = WebhooksResource(self)
 
     def _request(
         self,
@@ -100,11 +124,14 @@ class AsyncMikeClient:
     tabular: AsyncTabularResource
     workflows: AsyncWorkflowsResource
     user: AsyncUserResource
+    api_keys: AsyncApiKeysResource
+    webhooks: AsyncWebhooksResource
 
     def __init__(
         self,
         *,
         base_url: str,
+        api_key: str | None = None,
         access_token: str | None = None,
         timeout: float = 60.0,
         http_client: httpx.AsyncClient | None = None,
@@ -113,18 +140,18 @@ class AsyncMikeClient:
 
         Args:
             base_url: Root URL of the Mike API.
+            api_key: Programmatic Mike API key (``mike_sk_...``). Sent as an
+                ``Authorization: Bearer <key>`` header; preferred over
+                ``access_token`` when both are given.
             access_token: Supabase access token (JWT). Sent as an
                 ``Authorization: Bearer <token>`` header, matching the API's
                 auth middleware.
         """
         self._base_url = base_url.rstrip("/")
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
 
         self._http = http_client or httpx.AsyncClient(
             base_url=self._base_url,
-            headers=headers,
+            headers=_build_headers(access_token, api_key),
             timeout=timeout,
         )
 
@@ -134,6 +161,8 @@ class AsyncMikeClient:
         self.tabular = AsyncTabularResource(self)
         self.workflows = AsyncWorkflowsResource(self)
         self.user = AsyncUserResource(self)
+        self.api_keys = AsyncApiKeysResource(self)
+        self.webhooks = AsyncWebhooksResource(self)
 
     async def _request(
         self,

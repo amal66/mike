@@ -656,6 +656,59 @@ export interface Workflow {
   open_source_submission?: WorkflowOpenSourceSubmission | null;
 }
 
+// Developer platform — programmatic API keys & webhooks
+
+export type ApiKeyScope = "read" | "write";
+
+/** A programmatic API key as returned by list/create (never includes the secret). */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** Non-secret prefix for display, e.g. `mike_sk_Ab3xK9`. */
+  key_prefix: string;
+  scopes: ApiKeyScope[];
+  last_used_at: string | null;
+  created_at: string;
+}
+
+/** Create response — the only time the full `key` secret is ever returned. */
+export interface ApiKeyCreateResponse extends ApiKey {
+  key: string;
+}
+
+export type WebhookEventType =
+  | "document.uploaded"
+  | "document.analysed"
+  | "chat.message"
+  | "workflow.completed";
+
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  enabled: boolean;
+  event_types: WebhookEventType[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** Create response — the only time the signing `secret` is ever returned. */
+export interface WebhookEndpointCreateResponse extends WebhookEndpoint {
+  secret: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  endpoint_id: string;
+  event_type: string;
+  status: "pending" | "succeeded" | "failed";
+  attempts: number;
+  response_status: number | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  delivered_at: string | null;
+}
+
 // API helpers
 
 export interface ChatDetailOut {

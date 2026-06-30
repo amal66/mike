@@ -1,6 +1,9 @@
 import type {
     AssistantEvent,
+    ApiKey,
+    ApiKeyCreateResponse,
     ApiKeyProvider,
+    ApiKeyScope,
     ApiKeySource,
     Chat,
     ChatDetailOut,
@@ -11,6 +14,10 @@ import type {
     OpenSourceWorkflowContributorMode,
     OpenSourceWorkflowResponse,
     Project,
+    WebhookDelivery,
+    WebhookEndpoint,
+    WebhookEndpointCreateResponse,
+    WebhookEventType,
     Workflow,
     WorkflowContributor,
     TabularReview,
@@ -18,6 +25,15 @@ import type {
 } from "@mike/core";
 
 export type { ApiKeyProvider, ApiKeySource } from "@mike/core";
+export type {
+    ApiKey,
+    ApiKeyCreateResponse,
+    ApiKeyScope,
+    WebhookDelivery,
+    WebhookEndpoint,
+    WebhookEndpointCreateResponse,
+    WebhookEventType,
+} from "@mike/core";
 
 // MERGE-REVIEW: the fork's createMikeApiClient helper (below) references
 // Mike-prefixed type names; @mike/core exports the unprefixed types the rest of
@@ -896,6 +912,74 @@ async function getChatWithConfig(
     return { chat: raw.chat, messages };
 }
 
+// ---------------------------------------------------------------------------
+// Developer platform — programmatic API keys & webhooks
+//
+// These management endpoints require an interactive user session (a Supabase
+// JWT). You cannot mint a key, or reconfigure webhooks, using an API key.
+// ---------------------------------------------------------------------------
+
+export async function listApiKeys(): Promise<ApiKey[]> {
+    return apiRequest<ApiKey[]>("/v1/api-keys");
+}
+
+export async function createApiKey(payload: {
+    name: string;
+    scopes?: ApiKeyScope[];
+}): Promise<ApiKeyCreateResponse> {
+    return apiRequest<ApiKeyCreateResponse>("/v1/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function revokeApiKey(id: string): Promise<void> {
+    await apiRequest(`/v1/api-keys/${id}`, { method: "DELETE" });
+}
+
+export async function listWebhookEventTypes(): Promise<WebhookEventType[]> {
+    const result = await apiRequest<{ event_types: WebhookEventType[] }>(
+        "/v1/webhooks/events",
+    );
+    return result.event_types;
+}
+
+export async function listWebhookEndpoints(): Promise<WebhookEndpoint[]> {
+    return apiRequest<WebhookEndpoint[]>("/v1/webhooks/endpoints");
+}
+
+export async function createWebhookEndpoint(payload: {
+    url: string;
+    event_types: WebhookEventType[];
+}): Promise<WebhookEndpointCreateResponse> {
+    return apiRequest<WebhookEndpointCreateResponse>(
+        "/v1/webhooks/endpoints",
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
+}
+
+export async function deleteWebhookEndpoint(id: string): Promise<void> {
+    await apiRequest(`/v1/webhooks/endpoints/${id}`, { method: "DELETE" });
+}
+
+export async function listWebhookDeliveries(options?: {
+    endpointId?: string;
+    limit?: number;
+}): Promise<WebhookDelivery[]> {
+    const params = new URLSearchParams();
+    if (options?.endpointId) params.set("endpoint_id", options.endpointId);
+    if (options?.limit) params.set("limit", String(options.limit));
+    const query = params.toString();
+    return apiRequest<WebhookDelivery[]>(
+        `/v1/webhooks/deliveries${query ? `?${query}` : ""}`,
+    );
+}
+
 export function createMikeApiClient(config: MikeApiClientConfig = {}) {
     const scopedConfig = resolveMikeApiClientConfig(config, {
         baseUrl: DEFAULT_API_BASE,
@@ -976,6 +1060,72 @@ export function createMikeApiClient(config: MikeApiClientConfig = {}) {
                 uploadProjectDocumentWithConfig(scopedConfig, projectId, file),
             uploadStandalone: (file: File) =>
                 uploadStandaloneDocumentWithConfig(scopedConfig, file),
+        },
+        apiKeys: {
+            list: () =>
+                apiRequestWithConfig<ApiKey[]>(scopedConfig, "/v1/api-keys"),
+            create: (payload: { name: string; scopes?: ApiKeyScope[] }) =>
+                apiRequestWithConfig<ApiKeyCreateResponse>(
+                    scopedConfig,
+                    "/v1/api-keys",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    },
+                ),
+            revoke: (id: string) =>
+                apiRequestWithConfig<void>(
+                    scopedConfig,
+                    `/v1/api-keys/${id}`,
+                    { method: "DELETE" },
+                ),
+        },
+        webhooks: {
+            listEventTypes: async () => {
+                const result = await apiRequestWithConfig<{
+                    event_types: WebhookEventType[];
+                }>(scopedConfig, "/v1/webhooks/events");
+                return result.event_types;
+            },
+            listEndpoints: () =>
+                apiRequestWithConfig<WebhookEndpoint[]>(
+                    scopedConfig,
+                    "/v1/webhooks/endpoints",
+                ),
+            createEndpoint: (payload: {
+                url: string;
+                event_types: WebhookEventType[];
+            }) =>
+                apiRequestWithConfig<WebhookEndpointCreateResponse>(
+                    scopedConfig,
+                    "/v1/webhooks/endpoints",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    },
+                ),
+            deleteEndpoint: (id: string) =>
+                apiRequestWithConfig<void>(
+                    scopedConfig,
+                    `/v1/webhooks/endpoints/${id}`,
+                    { method: "DELETE" },
+                ),
+            listDeliveries: (options?: {
+                endpointId?: string;
+                limit?: number;
+            }) => {
+                const params = new URLSearchParams();
+                if (options?.endpointId)
+                    params.set("endpoint_id", options.endpointId);
+                if (options?.limit) params.set("limit", String(options.limit));
+                const query = params.toString();
+                return apiRequestWithConfig<WebhookDelivery[]>(
+                    scopedConfig,
+                    `/v1/webhooks/deliveries${query ? `?${query}` : ""}`,
+                );
+            },
         },
     };
 }
