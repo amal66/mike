@@ -24,6 +24,7 @@ const TABS: TabDef[] = [
     { id: "models", label: "Model Preferences", href: "/account/models" },
     { id: "api-keys", label: "API Keys", href: "/account/api-keys" },
     { id: "connectors", label: "Connectors", href: "/account/connectors" },
+    { id: "developer", label: "Developer", href: "/account/developer" },
 ];
 
 export default function AccountLayout({
