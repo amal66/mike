@@ -42,6 +42,7 @@ import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { DocView } from "@/app/components/shared/DocView";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
 import { DocxView } from "@/app/components/shared/DocxView";
+import { SpreadsheetView } from "@/app/components/shared/SpreadsheetView";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserProfile } from "@/contexts/UserProfileContext";
@@ -56,7 +57,10 @@ import type {
     Message,
     Project,
 } from "@/app/components/shared/types";
-import { expandCitationToEntries } from "@/app/components/shared/types";
+import {
+    expandCitationToEntries,
+    isSpreadsheetFilename,
+} from "@/app/components/shared/types";
 
 interface Props {
     params: Promise<{ id: string; chatId: string }>;
@@ -886,7 +890,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     <input
                                         ref={fileInputRef}
                                         type="file"
-                                        accept=".pdf,.docx,.doc"
+                                        accept=".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt"
                                         multiple
                                         className="hidden"
                                         onChange={(e) =>
@@ -1078,7 +1082,15 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                         {activeTab ? (
-                            isDocxTab(activeTab.filename) ? (
+                            isSpreadsheetFilename(activeTab.filename) ? (
+                                <SpreadsheetView
+                                    key={activeTab.documentId}
+                                    documentId={activeTab.documentId}
+                                    versionId={activeTab.versionId}
+                                    rounded={false}
+                                    bordered={false}
+                                />
+                            ) : isDocxTab(activeTab.filename) ? (
                                 <DocxView
                                     key={activeTab.documentId}
                                     documentId={activeTab.documentId}
