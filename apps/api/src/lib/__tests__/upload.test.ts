@@ -65,6 +65,33 @@ describe("hasMagicBytes", () => {
         });
     });
 
+    describe("spreadsheets and presentations", () => {
+        it("accepts a ZIP buffer for xlsx / xlsm / pptx (OOXML)", () => {
+            const buf = Buffer.concat([ZIP_MAGIC, Buffer.from(" rest")]);
+            for (const ext of ["xlsx", "xlsm", "pptx"]) {
+                expect(hasMagicBytes(buf, ext)).toBe(true);
+            }
+        });
+
+        it("accepts an OLE2 buffer for legacy xls / ppt", () => {
+            const buf = Buffer.concat([OLE2_MAGIC, Buffer.from(" rest")]);
+            for (const ext of ["xls", "ppt"]) {
+                expect(hasMagicBytes(buf, ext)).toBe(true);
+            }
+        });
+
+        it("rejects a PDF magic buffer for xlsx and pptx", () => {
+            const buf = Buffer.concat([PDF_MAGIC, Buffer.from(" rest")]);
+            expect(hasMagicBytes(buf, "xlsx")).toBe(false);
+            expect(hasMagicBytes(buf, "pptx")).toBe(false);
+        });
+
+        it("rejects garbage for xls and ppt", () => {
+            expect(hasMagicBytes(GARBAGE, "xls")).toBe(false);
+            expect(hasMagicBytes(GARBAGE, "ppt")).toBe(false);
+        });
+    });
+
     describe("unknown extension", () => {
         it("returns true for an unknown extension (falls back gracefully)", () => {
             expect(hasMagicBytes(GARBAGE, "xyz")).toBe(true);

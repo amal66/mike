@@ -5,6 +5,10 @@ import { downloadFile, getSignedUrl } from "../../lib/storage";
 import { loadActiveVersion } from "../../lib/documentVersions";
 import { listAccessibleProjectIds, listUserOrgIds } from "../../lib/access";
 import {
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
+import {
   DOCX_MIME,
   downloadFilenameForVersion,
   type Db,
@@ -37,25 +41,29 @@ export async function getDisplayableVersion(
   if (!active) return { ok: false, detail: "No file available" };
 
   const fileType = active.file_type ?? "";
-  const isDocx = fileType === "docx" || fileType === "doc";
+  // Word + PowerPoint get a PDF rendition for display; spreadsheets do not
+  // (they render natively in the frontend from the raw bytes).
+  const isConvertibleOffice = shouldConvertToPdf(fileType);
   const displayFilename = downloadFilenameForVersion(
     active.filename,
     active.version_number,
     active.source === "assistant_edit",
   );
 
-  // For DOCX, prefer the per-version PDF rendition if one exists.
+  // For Word/PowerPoint, prefer the per-version PDF rendition if one exists.
   const servePath =
-    isDocx && active.pdf_storage_path
+    isConvertibleOffice && active.pdf_storage_path
       ? active.pdf_storage_path
       : active.storage_path;
   const raw = await downloadFile(servePath);
   if (!raw) return { ok: false, detail: "Document not found in storage" };
 
+  // Serve the PDF rendition when we're using it; otherwise serve the raw bytes
+  // with their true content-type (spreadsheets → xlsx MIME, etc.).
   const contentType =
-    fileType === "pdf" || (isDocx && active.pdf_storage_path)
+    fileType === "pdf" || (isConvertibleOffice && active.pdf_storage_path)
       ? "application/pdf"
-      : DOCX_MIME;
+      : contentTypeForDocumentType(fileType);
   return {
     ok: true,
     bytes: raw as ArrayBuffer,

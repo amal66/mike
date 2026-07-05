@@ -2,7 +2,14 @@
 // LLM cell-extraction helpers, and document (PDF/DOCX) text extraction.
 
 import { logger } from "../../lib/logger";
-import { normalizeDocxZipPaths } from "../../lib/convert";
+import { docxToPdf, normalizeDocxZipPaths } from "../../lib/convert";
+import {
+    isPresentationDocumentType,
+    isSpreadsheetDocumentType,
+    isWordDocumentType,
+} from "../../lib/documentTypes";
+import { extractPresentationText } from "../../lib/officeText";
+import { spreadsheetToLLMText } from "../../lib/spreadsheet";
 import { type TabularCellStore } from "../../lib/chatTools";
 import {
     completeText,
@@ -248,6 +255,47 @@ Rules:
 // ---------------------------------------------------------------------------
 // Document text extraction
 // ---------------------------------------------------------------------------
+
+/**
+ * Extract one document's text as markdown for the tabular extractor, dispatched
+ * on its declared file type. This is the single choke point so every caller
+ * (sync generate, regenerate-cell, async worker) handles all formats the same:
+ *
+ *   - pdf              → pdf.js text per page
+ *   - docx             → mammoth HTML → markdown
+ *   - xlsx/xlsm/xls    → SheetJS cell-addressed markdown (no PDF detour)
+ *   - pptx             → jszip slide-text extraction
+ *   - doc/ppt (legacy) → LibreOffice → PDF → pdf.js text
+ */
+export async function extractDocumentMarkdown(
+    buf: ArrayBuffer,
+    fileType: string | null | undefined,
+): Promise<string> {
+    const normalizedType = (fileType ?? "").toLowerCase();
+    if (normalizedType === "pdf") return extractPdfMarkdown(buf);
+    if (normalizedType === "docx") return extractDocxMarkdown(buf);
+    if (isSpreadsheetDocumentType(normalizedType)) {
+        // SheetJS handles .xlsx/.xlsm/.xls directly, no PDF detour.
+        return spreadsheetToLLMText(Buffer.from(buf));
+    }
+    if (normalizedType === "pptx") {
+        return extractPresentationText(Buffer.from(buf));
+    }
+    if (
+        isPresentationDocumentType(normalizedType) ||
+        isWordDocumentType(normalizedType)
+    ) {
+        // Legacy .doc/.ppt (OLE2): route through LibreOffice → PDF → text.
+        const pdfBuf = await docxToPdf(Buffer.from(buf));
+        const pdfArrayBuffer = pdfBuf.buffer.slice(
+            pdfBuf.byteOffset,
+            pdfBuf.byteOffset + pdfBuf.byteLength,
+        ) as ArrayBuffer;
+        return extractPdfMarkdown(pdfArrayBuffer);
+    }
+    // Unknown type: best-effort docx/mammoth extraction (matches prior default).
+    return extractDocxMarkdown(buf);
+}
 
 export async function extractPdfMarkdown(buf: ArrayBuffer): Promise<string> {
     try {
