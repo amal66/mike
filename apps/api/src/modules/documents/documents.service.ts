@@ -19,6 +19,7 @@
 export {
   DOCX_MIME,
   ALLOWED_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
   MAX_ZIP_DOCUMENTS,
   deleteDocumentAndVersionFiles,
   downloadFilenameForVersion,

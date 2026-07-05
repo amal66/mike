@@ -17,18 +17,24 @@ export const MAX_UPLOAD_SIZE_MB = Math.round(
 // file that parsers (pdfjs, mammoth) would reject anyway.
 //
 // PDF: %PDF-  (0x25 50 44 46 2D)
-// DOCX/DOC (ZIP): PK\x03\x04  (0x50 4B 03 04) — DOCX is a ZIP archive
-// DOC (OLE2 Compound): \xD0\xCF\x11\xE0  (the OLE2 magic)
+// Modern Office (OOXML) — .docx/.xlsx/.xlsm/.pptx — are ZIP archives, so they
+// all share the ZIP local-file-header magic PK\x03\x04 (0x50 4B 03 04).
+// Legacy Office — .doc/.xls/.ppt — are OLE2 Compound files: \xD0\xCF\x11\xE0.
+// We accept both signatures for each family so a modern file mislabeled with a
+// legacy extension (or vice-versa) still passes the check, since the downstream
+// parsers (SheetJS, jszip, mammoth) detect the true format themselves.
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\x03\x04 (OOXML/ZIP)
+const OLE2_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0]); // legacy Office (CFB)
+const OFFICE_MAGIC = [ZIP_MAGIC, OLE2_MAGIC];
 const MAGIC_SIGNATURES: Record<string, Buffer[]> = {
   pdf: [Buffer.from([0x25, 0x50, 0x44, 0x46])], // %PDF
-  docx: [
-    Buffer.from([0x50, 0x4b, 0x03, 0x04]), // ZIP/DOCX
-    Buffer.from([0xd0, 0xcf, 0x11, 0xe0]), // OLE2 (older Word)
-  ],
-  doc: [
-    Buffer.from([0x50, 0x4b, 0x03, 0x04]), // ZIP (just in case)
-    Buffer.from([0xd0, 0xcf, 0x11, 0xe0]), // OLE2
-  ],
+  docx: OFFICE_MAGIC,
+  doc: OFFICE_MAGIC,
+  xlsx: OFFICE_MAGIC,
+  xlsm: OFFICE_MAGIC,
+  xls: OFFICE_MAGIC,
+  pptx: OFFICE_MAGIC,
+  ppt: OFFICE_MAGIC,
 };
 
 /**

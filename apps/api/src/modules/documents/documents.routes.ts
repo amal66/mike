@@ -5,6 +5,7 @@ import { buildContentDisposition } from "../../lib/storage";
 import { singleFileUpload, hasMagicBytes } from "../../lib/upload";
 import {
   ALLOWED_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
   MAX_ZIP_DOCUMENTS,
   DOCX_MIME,
   listSingleDocuments,
@@ -61,7 +62,7 @@ documentsRouter.post(
     const suffix = extensionOf(filename);
     if (!ALLOWED_TYPES.has(suffix))
       return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       });
 
     // Magic-byte check: verify the file actually starts with the binary
@@ -333,7 +334,7 @@ documentsRouter.post(
     const suffix = extensionOf(file.originalname);
     if (!ALLOWED_TYPES.has(suffix)) {
       return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       });
     }
 
@@ -419,7 +420,7 @@ documentsRouter.put(
     const suffix = extensionOf(file.originalname);
     if (!ALLOWED_TYPES.has(suffix)) {
       return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       });
     }
     if (target.file_type && target.file_type !== suffix) {

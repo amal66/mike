@@ -34,12 +34,11 @@ vi.mock("../../lib/userSettings", () => ({
 }));
 
 const queryTabularAllColumns = vi.fn();
-const extractPdfMarkdown = vi.fn(async () => "extracted text");
-const extractDocxMarkdown = vi.fn(async () => "extracted text");
+const extractDocumentMarkdown = vi.fn(async () => "extracted text");
 vi.mock("../../modules/tabular/tabular.extract", () => ({
     queryTabularAllColumns: (...a: unknown[]) => queryTabularAllColumns(...a),
-    extractPdfMarkdown: (...a: unknown[]) => extractPdfMarkdown(...a),
-    extractDocxMarkdown: (...a: unknown[]) => extractDocxMarkdown(...a),
+    extractDocumentMarkdown: (...a: unknown[]) =>
+        extractDocumentMarkdown(...a),
 }));
 
 import {
@@ -125,7 +124,7 @@ beforeEach(() => {
     downloadFile.mockReset();
     downloadFile.mockResolvedValue(new ArrayBuffer(8));
     queryTabularAllColumns.mockReset();
-    extractPdfMarkdown.mockClear();
+    extractDocumentMarkdown.mockClear();
 });
 
 describe("runExtractionJob", () => {

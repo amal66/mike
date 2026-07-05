@@ -7,7 +7,10 @@ import { enqueueConversion } from "../../lib/queue/conversionQueue";
 import { maybeEnqueueEmbedding } from "../../lib/queue/embeddingQueue";
 import { resolveContentOrgId } from "../../lib/access";
 import {
-  DOCX_MIME,
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
+import {
   countPdfPages,
   type Db,
   type Log,
@@ -73,7 +76,7 @@ export async function createDocumentFromUpload(
   try {
     const docId = doc.id as string;
     const key = storageKey(userId, docId, filename);
-    const contentType = suffix === "pdf" ? "application/pdf" : DOCX_MIME;
+    const contentType = contentTypeForDocumentType(suffix);
     await uploadFile(
       key,
       content.buffer.slice(
@@ -89,15 +92,18 @@ export async function createDocumentFromUpload(
     ) as ArrayBuffer;
     const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
 
-    // When the job queue is enabled, defer DOCX/DOC → PDF conversion to the
+    // When the job queue is enabled, defer Office → PDF conversion to the
     // BullMQ worker instead of blocking the upload request on LibreOffice.
+    // Spreadsheets are excluded (shouldConvertToPdf === false): they render
+    // natively from raw bytes, so there is no PDF rendition to produce.
     const deferConversion =
-      (suffix === "docx" || suffix === "doc") &&
+      shouldConvertToPdf(suffix) &&
       env.ASYNC_DOCUMENT_CONVERSION === "true";
 
-    // Convert DOCX/DOC → PDF for display. PDFs are their own rendition.
+    // Convert Word/PowerPoint → PDF for display. PDFs are their own rendition;
+    // spreadsheets get none (rendered natively in the frontend).
     let pdfStoragePath: string | null = null;
-    if (!deferConversion && (suffix === "docx" || suffix === "doc")) {
+    if (!deferConversion && shouldConvertToPdf(suffix)) {
       try {
         const pdfBuf = await docxToPdf(content);
         const pdfKey = convertedPdfKey(userId, docId);
@@ -111,7 +117,7 @@ export async function createDocumentFromUpload(
         );
         pdfStoragePath = pdfKey;
       } catch (err) {
-        log.error({ err, filename }, "[upload] DOCX→PDF conversion failed");
+        log.error({ err, filename }, "[upload] Office→PDF conversion failed");
       }
     } else if (suffix === "pdf") {
       pdfStoragePath = key;

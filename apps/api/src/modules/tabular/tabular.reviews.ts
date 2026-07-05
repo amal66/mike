@@ -15,8 +15,7 @@ import {
     resolveContentOrgId,
 } from "../../lib/access";
 import {
-    extractDocxMarkdown,
-    extractPdfMarkdown,
+    extractDocumentMarkdown,
     queryTabularCell,
 } from "./tabular.extract";
 import {
@@ -678,10 +677,10 @@ export async function regenerateTabularCell(
         const buf = await downloadFile(docActive.storage_path);
         if (buf) {
             try {
-                markdown =
-                    docActive.file_type === "pdf"
-                        ? await extractPdfMarkdown(buf)
-                        : await extractDocxMarkdown(buf);
+                markdown = await extractDocumentMarkdown(
+                    buf,
+                    docActive.file_type,
+                );
             } catch (err) {
                 log.error(
                     { err, document_id },
