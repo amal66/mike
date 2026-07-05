@@ -111,7 +111,7 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
     body: req.body ?? {},
   });
   if (!result.ok) {
-    if (result.kind === "self_share")
+    if (result.kind === "self_share" || result.kind === "share_gate")
       return void res.status(400).json({ detail: result.detail });
     return void res.status(404).json({ detail: "Project not found" });
   }

@@ -15,6 +15,10 @@ import {
     resolveContentOrgId,
 } from "../../lib/access";
 import {
+    assertShareableEmails,
+    loadProfileUsersByEmail,
+} from "../../lib/userLookup";
+import {
     extractDocxMarkdown,
     extractPdfMarkdown,
     queryTabularCell,
@@ -269,44 +273,9 @@ export async function getTabularReviewPeople(
             : []
     ).map((e) => (e ?? "").toLowerCase());
 
-    // Same pattern as /projects/:id/people: walk auth.users to map emails
-    // to user_ids, then pull display_names from user_profiles by user_id.
-    const { data: usersData } = await db.auth.admin.listUsers({
-        perPage: 1000,
-    });
-    const allUsers = usersData?.users ?? [];
-    const userByEmail = new Map<string, { id: string; email: string }>();
-    const userById = new Map<string, { id: string; email: string }>();
-    for (const u of allUsers) {
-        if (!u.email) continue;
-        const lower = u.email.toLowerCase();
-        userByEmail.set(lower, { id: u.id, email: u.email });
-        userById.set(u.id, { id: u.id, email: u.email });
-    }
-
-    const memberUserIds: string[] = [];
-    for (const email of sharedWith) {
-        const u = userByEmail.get(email);
-        if (u) memberUserIds.push(u.id);
-    }
-
-    const profileIds = [review.user_id as string, ...memberUserIds].filter(
-        (x, i, arr) => arr.indexOf(x) === i,
-    );
-
-    const profileByUserId = new Map<string, string | null>();
-    if (profileIds.length > 0) {
-        const { data: profiles } = await db
-            .from("user_profiles")
-            .select("user_id, display_name")
-            .in("user_id", profileIds);
-        for (const p of profiles ?? []) {
-            profileByUserId.set(
-                p.user_id as string,
-                (p.display_name as string | null) ?? null,
-            );
-        }
-    }
+    // Resolve owner + members from the mirrored profile email so this never
+    // scans auth.users (same rewrite as /projects/:id/people).
+    const { userByEmail, userById } = await loadProfileUsersByEmail(db);
 
     const ownerInfo = userById.get(review.user_id as string);
     return {
@@ -315,14 +284,11 @@ export async function getTabularReviewPeople(
             owner: {
                 user_id: review.user_id,
                 email: ownerInfo?.email ?? null,
-                display_name:
-                    profileByUserId.get(review.user_id as string) ?? null,
+                display_name: ownerInfo?.display_name ?? null,
             },
             members: sharedWith.map((email) => {
                 const u = userByEmail.get(email);
-                const display_name = u
-                    ? (profileByUserId.get(u.id) ?? null)
-                    : null;
+                const display_name = u?.display_name ?? null;
                 return { email, display_name };
             }),
         },
@@ -350,6 +316,7 @@ export async function updateTabularReview(
               | "move_forbidden"
               | "target_project_not_found";
       }
+    | { ok: false; kind: "share_gate"; detail: string }
     | { ok: false; kind: "db_error"; detail: string }
 > {
     const { reviewId, userId, userEmail, body } = args;
@@ -406,6 +373,10 @@ export async function updateTabularReview(
     }
     if (sharedWithUpdate !== undefined) {
         if (!access.isOwner) return { ok: false, kind: "sharing_forbidden" };
+        // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails.
+        const gate = await assertShareableEmails(db, sharedWithUpdate);
+        if (!gate.ok)
+            return { ok: false, kind: "share_gate", detail: gate.detail };
         updates.shared_with = sharedWithUpdate;
     }
     if (projectIdUpdateProvided) {

@@ -8,6 +8,7 @@
 
 import { createServerSupabase } from "../../lib/supabase";
 import { getOrgRole, getPersonalOrgId } from "../../lib/access";
+import { assertShareableEmails } from "../../lib/userLookup";
 import {
   describeWorkflowPackIssues,
   workflowPackSchema,
@@ -322,7 +323,7 @@ export async function deleteWorkflowShare(
 
 export type ShareWorkflowResult =
   | { ok: true }
-  | { ok: false; kind: "validation" | "self_share"; detail: string }
+  | { ok: false; kind: "validation" | "self_share" | "share_gate"; detail: string }
   | { ok: false; kind: "not_found" }
   | { ok: false; kind: "db_error"; detail: string };
 
@@ -355,6 +356,12 @@ export async function shareWorkflow(
       kind: "self_share",
       detail: "You cannot share a workflow with yourself.",
     };
+  }
+
+  // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails.
+  const gate = await assertShareableEmails(db, normalizedEmails);
+  if (!gate.ok) {
+    return { ok: false, kind: "share_gate", detail: gate.detail };
   }
 
   // Verify ownership
