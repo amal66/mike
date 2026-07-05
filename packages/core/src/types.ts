@@ -18,6 +18,8 @@ export interface Project {
   owner_email?: string | null;
   name: string;
   cm_number: string | null;
+  /** Free-text practice-area label (e.g. "Corporate", "Litigation"). */
+  practice?: string | null;
   shared_with: string[];
   created_at: string;
   updated_at: string;
