@@ -36,7 +36,7 @@ export interface Document {
   filename: string;
   owner_email?: string | null;
   owner_display_name?: string | null;
-  file_type: string | null; // pdf | docx | doc
+  file_type: string | null; // pdf | docx | doc | xlsx | xlsm | xls | pptx | ppt
   storage_path: string | null;
   pdf_storage_path: string | null;
   size_bytes: number | null;
@@ -301,6 +301,12 @@ export type QuoteVerification = {
 export type DocumentCitationQuote = {
   page: number | string;
   quote: string;
+  /**
+   * Spreadsheet citations are located by cell, not page: `sheet` is the
+   * worksheet name and `cell` is an A1 address or range (e.g. "B7", "B7:C9").
+   */
+  sheet?: string;
+  cell?: string;
   verification?: QuoteVerification;
 };
 
@@ -316,6 +322,9 @@ export type DocumentCitationAnnotation = {
   /** Legacy single-quote fields. Prefer `quotes` for new annotations. */
   page: number | string;
   quote: string;
+  /** Spreadsheet locators for the legacy single-quote form (see quote type). */
+  sheet?: string;
+  cell?: string;
   quotes?: DocumentCitationQuote[];
   /**
    * Aggregate verification over all quotes: `unverified` if any quote is
@@ -349,6 +358,43 @@ export type CitationAnnotation =
 
 const PAGE_BREAK_SENTINEL = "[[PAGE_BREAK]]";
 
+/** True for the spreadsheet formats we render as cells (xlsx/xlsm/xls). */
+export function isSpreadsheetFilename(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ext === "xlsx" || ext === "xlsm" || ext === "xls";
+}
+
+/**
+ * Machine-style cell locator, e.g. "Sheet1!B7". Falls back to whichever of
+ * `sheet`/`cell` is present. Used where several locators are joined together.
+ */
+export function formatCellLocator(sheet?: string, cell?: string): string {
+  if (sheet && cell) return `${sheet}!${cell}`;
+  return cell ?? sheet ?? "";
+}
+
+/**
+ * Reader-friendly cell locator, e.g. "Sheet1, cell B7" (or "cells B7:C9" for a
+ * range). Unlike `formatCellLocator`, this avoids the Excel `!` notation, which
+ * reads poorly in prose.
+ */
+export function formatCellLocatorReadable(sheet?: string, cell?: string): string {
+  if (!cell) return sheet ?? "";
+  const cellWord = cell.includes(":") ? "cells" : "cell";
+  const cellPart = `${cellWord} ${cell}`;
+  return sheet ? `${sheet}, ${cellPart}` : cellPart;
+}
+
+/** `{sheet, cell}` locators for a citation's quotes (spreadsheet sources). */
+export function getCitationCells(
+  a: CitationAnnotation,
+): { sheet?: string; cell?: string }[] {
+  if (a.kind === "case") return [];
+  return getDocumentCitationQuotes(a)
+    .filter((q) => q.cell || q.sheet)
+    .map((q) => ({ sheet: q.sheet, cell: q.cell }));
+}
+
 function expandDocumentQuoteEntry(entry: DocumentCitationQuote): CitationQuote[] {
   const rangeMatch =
     typeof entry.page === "string"
@@ -378,7 +424,7 @@ export function getDocumentCitationQuotes(
   if (Array.isArray(a.quotes) && a.quotes.length) {
     return a.quotes.filter((entry) => entry.quote.trim().length > 0);
   }
-  return [{ page: a.page, quote: a.quote }];
+  return [{ page: a.page, quote: a.quote, sheet: a.sheet, cell: a.cell }];
 }
 
 /**
@@ -393,12 +439,25 @@ export function expandCitationToEntries(
   return getDocumentCitationQuotes(a).flatMap(expandDocumentQuoteEntry);
 }
 
-/** Format the page(s) of a citation for display, e.g. "Page 3" or "Page 41-42". */
+/**
+ * Format the locator(s) of a citation for display, e.g. "Page 3" or
+ * "Page 41-42" for paged documents. Spreadsheets have no meaningful page
+ * number, so they are located by cell instead, e.g. "Sheet1!B7" (or several
+ * comma-separated cells).
+ */
 export function formatCitationPage(a: CitationAnnotation): string {
   if (a.kind === "case") {
     return a.citation || a.case_name || `Case ${a.cluster_id}`;
   }
   const quotes = getDocumentCitationQuotes(a);
+  if (isSpreadsheetFilename(a.filename)) {
+    const cells = Array.from(
+      new Set(
+        quotes.map((q) => formatCellLocator(q.sheet, q.cell)).filter(Boolean),
+      ),
+    );
+    return cells.join(", ");
+  }
   const pages = Array.from(
     new Set(quotes.map((q) => String(q.page)).filter(Boolean)),
   );
