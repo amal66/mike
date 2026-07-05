@@ -195,6 +195,8 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
                 return void res.status(403).json({
                     detail: "Only the review owner can change sharing",
                 });
+            case "share_gate":
+                return void res.status(400).json({ detail: result.detail });
             case "move_forbidden":
                 return void res.status(403).json({
                     detail: "Only the review owner can move a review",

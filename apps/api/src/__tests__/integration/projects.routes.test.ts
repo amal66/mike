@@ -209,6 +209,12 @@ describe("projects.routes", () => {
                 },
                 error: null,
             };
+            // Share-gating: recipients must be existing Mike users. Seed the
+            // mirrored profile emails so findMissingUserEmails finds them.
+            supabaseState.tables.user_profiles = {
+                data: [{ email: "a@x.com" }, { email: "b@x.com" }],
+                error: null,
+            };
 
             const res = await request(app)
                 .post("/projects")
@@ -230,6 +236,25 @@ describe("projects.routes", () => {
                 name: "Gamma",
                 shared_with: ["a@x.com", "b@x.com"],
             });
+        });
+
+        it("returns 400 when sharing with a non-Mike user (share-gate)", async () => {
+            // No user_profiles seeded → the recipient email is not a Mike user.
+            supabaseState.tables.user_profiles = { data: [], error: null };
+
+            const res = await request(app)
+                .post("/projects")
+                .set(...AUTH)
+                .send({ name: "Gamma", shared_with: ["stranger@x.com"] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.detail).toBe(
+                "stranger@x.com does not belong to a Mike user.",
+            );
+            // Gate rejected before any project row was inserted.
+            expect(
+                supabaseState.inserts.find((i) => i.table === "projects"),
+            ).toBeUndefined();
         });
 
         it("returns 500 when the insert errors", async () => {

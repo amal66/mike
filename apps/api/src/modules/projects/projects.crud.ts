@@ -15,6 +15,10 @@ import {
 } from "../../lib/access";
 import { deleteUserProjects } from "../../lib/userDataCleanup";
 import {
+  assertShareableEmails,
+  loadProfileUsersByEmail,
+} from "../../lib/userLookup";
+import {
   type Db,
   normalizeSharedWith,
   attachDocumentOwnerLabels,
@@ -38,7 +42,7 @@ export async function getProjectsOverview(
 
 export type CreateProjectResult =
   | { ok: true; project: Record<string, unknown> }
-  | { ok: false; kind: "validation" | "self_share"; detail: string }
+  | { ok: false; kind: "validation" | "self_share" | "share_gate"; detail: string }
   | { ok: false; kind: "db_error"; detail: string };
 
 export async function createProject(
@@ -80,6 +84,11 @@ export async function createProject(
   } else {
     resolvedOrgId = await getPersonalOrgId(userId, db);
   }
+
+  // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails.
+  const gate = await assertShareableEmails(db, shared.cleaned);
+  if (!gate.ok)
+    return { ok: false, kind: "share_gate", detail: gate.detail };
 
   const { data, error } = await db
     .from("projects")
@@ -187,59 +196,19 @@ export async function getProjectPeople(
     !!userEmail && sharedWith.includes(userEmail.toLowerCase());
   if (!isOwner && !isShared) return { ok: false };
 
-  // Pull every auth user (matching the lookup endpoint's pattern). For
-  // larger deployments this should page or be replaced with a bulk-by-id
-  // RPC, but it keeps things simple while user counts are modest.
-  const { data: usersData } = await db.auth.admin.listUsers({ perPage: 1000 });
-  const allUsers = usersData?.users ?? [];
-  const userByEmail = new Map<string, { id: string; email: string }>();
-  const userById = new Map<string, { id: string; email: string }>();
-  for (const u of allUsers) {
-    if (!u.email) continue;
-    const lower = u.email.toLowerCase();
-    userByEmail.set(lower, { id: u.id, email: u.email });
-    userById.set(u.id, { id: u.id, email: u.email });
-  }
-
-  const memberUserIds: string[] = [];
-  for (const email of sharedWith) {
-    const u = userByEmail.get(email);
-    if (u) memberUserIds.push(u.id);
-  }
-
-  const profileIds = [project.user_id as string, ...memberUserIds].filter(
-    (x, i, arr) => arr.indexOf(x) === i,
-  );
-
-  const profileByUserId = new Map<
-    string,
-    { display_name: string | null; organisation: string | null }
-  >();
-  if (profileIds.length > 0) {
-    const { data: profiles } = await db
-      .from("user_profiles")
-      .select("user_id, display_name, organisation")
-      .in("user_id", profileIds);
-    for (const p of profiles ?? []) {
-      profileByUserId.set(p.user_id as string, {
-        display_name: (p.display_name as string | null) ?? null,
-        organisation: (p.organisation as string | null) ?? null,
-      });
-    }
-  }
+  // Resolve owner + members from the mirrored profile email so this never
+  // scans auth.users. userById/userByEmail already carry the display_name.
+  const { userByEmail, userById } = await loadProfileUsersByEmail(db);
 
   const ownerInfo = userById.get(project.user_id as string);
   const owner = {
     user_id: project.user_id,
     email: ownerInfo?.email ?? null,
-    display_name:
-      profileByUserId.get(project.user_id as string)?.display_name ?? null,
+    display_name: ownerInfo?.display_name ?? null,
   };
   const members = sharedWith.map((email) => {
     const u = userByEmail.get(email);
-    const display_name = u
-      ? profileByUserId.get(u.id)?.display_name ?? null
-      : null;
+    const display_name = u?.display_name ?? null;
     return { email, display_name };
   });
 
@@ -248,7 +217,7 @@ export async function getProjectPeople(
 
 export type UpdateProjectResult =
   | { ok: true; body: Record<string, unknown> }
-  | { ok: false; kind: "self_share"; detail: string }
+  | { ok: false; kind: "self_share" | "share_gate"; detail: string }
   | { ok: false; kind: "not_found" };
 
 export async function updateProject(
@@ -282,6 +251,17 @@ export async function updateProject(
   // collaborators can read but not mutate (canManage stays false for them).
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok || !access.canManage) return { ok: false, kind: "not_found" };
+
+  // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails. Runs only
+  // when shared_with is being changed, after the manage check.
+  if (Array.isArray(updates.shared_with)) {
+    const gate = await assertShareableEmails(
+      db,
+      updates.shared_with as string[],
+    );
+    if (!gate.ok)
+      return { ok: false, kind: "share_gate", detail: gate.detail };
+  }
 
   const { data, error } = await db
     .from("projects")
