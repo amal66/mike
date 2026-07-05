@@ -38,6 +38,7 @@ import { UserMessage } from "@/app/components/assistant/UserMessage";
 import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
 import { ChatInput } from "@/app/components/assistant/ChatInput";
 import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
+import { AskInputPopup } from "@/app/components/assistant/AskInputPopup";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
@@ -50,6 +51,7 @@ import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import type {
+    AssistantEvent,
     CitationQuote,
     Citation,
     Document,
@@ -511,6 +513,86 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         },
         [activeTab, handleChat],
     );
+
+    // ask_inputs picker: swap the composer for AskInputPopup while the model
+    // waits on the user. Submissions/dismissals are tracked per message key
+    // (mirroring ChatView) and reset when the chat changes.
+    const [hiddenAskInputKeys, setHiddenAskInputKeys] = useState<Set<string>>(
+        () => new Set(),
+    );
+    useEffect(() => {
+        setHiddenAskInputKeys(new Set());
+    }, [chatId]);
+
+    // Locate an unanswered ask_inputs event at the tail of the conversation:
+    // scan messages backwards, stopping at the last user turn; within the
+    // trailing assistant message an ask_inputs_response means it was answered.
+    const rawActiveInput = (() => {
+        for (
+            let messageIndex = messages.length - 1;
+            messageIndex >= 0;
+            messageIndex--
+        ) {
+            const message = messages[messageIndex];
+            if (message.role === "user") return null;
+            if (message.role !== "assistant" || !message.events) continue;
+            for (
+                let eventIndex = message.events.length - 1;
+                eventIndex >= 0;
+                eventIndex--
+            ) {
+                const event = message.events[eventIndex];
+                if (event.type === "ask_inputs_response") {
+                    return null;
+                }
+                if (event.type === "ask_inputs") {
+                    return {
+                        key: `${messageIndex}-${eventIndex}`,
+                        event,
+                    };
+                }
+            }
+        }
+        return null;
+    })();
+    const activeAskInput =
+        rawActiveInput && !hiddenAskInputKeys.has(rawActiveInput.key)
+            ? rawActiveInput
+            : null;
+
+    const handleAskInputsSubmit = useCallback(
+        (
+            response: Extract<AssistantEvent, { type: "ask_inputs_response" }>,
+            content: string,
+            files: { filename: string; document_id: string }[],
+        ) => {
+            if (rawActiveInput) {
+                const key = rawActiveInput.key;
+                setHiddenAskInputKeys((prev) => new Set(prev).add(key));
+            }
+            void handleChat(
+                { role: "user", content, files },
+                {
+                    askInputsResponse: response,
+                    displayedDoc: activeTab
+                        ? {
+                              filename: activeTab.filename,
+                              documentId: activeTab.documentId,
+                          }
+                        : null,
+                },
+            );
+        },
+        [activeTab, handleChat, rawActiveInput],
+    );
+
+    const handleAskInputsDismiss = useCallback(() => {
+        if (rawActiveInput) {
+            const key = rawActiveInput.key;
+            setHiddenAskInputKeys((prev) => new Set(prev).add(key));
+        }
+        cancel();
+    }, [cancel, rawActiveInput]);
 
     const handleDocClick = (doc: Document) => {
         openTab(doc.id, doc.filename);
@@ -1277,19 +1359,28 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                         </div>
                     )}
 
-                    {/* ChatInput */}
+                    {/* ChatInput (or the ask_inputs picker when the model paused) */}
                     <div className="absolute bottom-2 left-0 right-0 z-30 w-full md:bottom-3">
                         <div className="pointer-events-none absolute -bottom-2 left-4 right-4 z-0 h-7 bg-white/50 backdrop-blur-[1px] md:-bottom-3" />
                         <div className="relative z-20 w-full px-4">
-                            <ChatInput
-                                ref={chatInputRef}
-                                onSubmit={handleSubmit}
-                                onCancel={cancel}
-                                isLoading={isResponseLoading}
-                                hideAddDocButton
-                                projectName={project?.name}
-                                projectCmNumber={project?.cm_number}
-                            />
+                            {activeAskInput ? (
+                                <AskInputPopup
+                                    key={activeAskInput.key}
+                                    event={activeAskInput.event}
+                                    onSubmit={handleAskInputsSubmit}
+                                    onDismiss={handleAskInputsDismiss}
+                                />
+                            ) : (
+                                <ChatInput
+                                    ref={chatInputRef}
+                                    onSubmit={handleSubmit}
+                                    onCancel={cancel}
+                                    isLoading={isResponseLoading}
+                                    hideAddDocButton
+                                    projectName={project?.name}
+                                    projectCmNumber={project?.cm_number}
+                                />
+                            )}
                         </div>
                     </div>
                 </div>
