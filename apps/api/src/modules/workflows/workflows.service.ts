@@ -862,7 +862,9 @@ export async function exportWorkflow(
 
   const { data: wf } = await db
     .from("workflows")
-    .select("title, type, prompt_md, columns_config, practice")
+    .select(
+      "title, type, prompt_md, columns_config, practice, language, jurisdictions",
+    )
     .eq("id", workflowId)
     .eq("user_id", userId)
     .single();
@@ -878,6 +880,8 @@ export async function exportWorkflow(
       prompt_md: wf.prompt_md ?? null,
       columns_config: wf.columns_config ?? null,
       practice: wf.practice ?? null,
+      language: wf.language ?? null,
+      jurisdictions: wf.jurisdictions ?? null,
     },
   };
 
@@ -927,6 +931,12 @@ export async function importWorkflow(
       prompt_md: wf.prompt_md ?? null,
       columns_config: wf.columns_config ?? null,
       practice: wf.practice ?? null,
+      // Imported files may predate these fields — normalize to the defaults.
+      language:
+        normalizeOptionalString(wf.language) ?? DEFAULT_WORKFLOW_LANGUAGE,
+      jurisdictions:
+        normalizeJurisdictions(wf.jurisdictions) ??
+        DEFAULT_WORKFLOW_JURISDICTIONS,
     })
     .select("*")
     .single();

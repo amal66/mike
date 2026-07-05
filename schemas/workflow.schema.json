@@ -90,6 +90,31 @@
               "type": "null"
             }
           ]
+        },
+        "language": {
+          "description": "Optional drafting/analysis language (e.g. 'English', 'French'). Defaults to 'English' on import when omitted.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jurisdictions": {
+          "description": "Optional governing-law jurisdiction tags (e.g. ['England and Wales', 'Singapore']). Defaults to ['General'] on import when omitted.",
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -116,7 +141,11 @@
         "type": "assistant",
         "prompt_md": "Review the provided NDA and identify:\n1. Key definitions and their scope\n2. Exclusions from confidential information\n3. Duration of confidentiality obligations\n4. Any unusual or unfair clauses\n\nProvide a structured summary with a risk rating (Low / Medium / High).",
         "columns_config": null,
-        "practice": "corporate"
+        "practice": "corporate",
+        "language": "English",
+        "jurisdictions": [
+          "General"
+        ]
       }
     },
     {
@@ -148,7 +177,11 @@
             "type": "flag"
           }
         ],
-        "practice": "corporate"
+        "practice": "corporate",
+        "language": "English",
+        "jurisdictions": [
+          "England and Wales"
+        ]
       }
     }
   ]
