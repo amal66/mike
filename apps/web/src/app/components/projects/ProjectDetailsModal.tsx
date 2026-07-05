@@ -14,7 +14,11 @@ interface ProjectDetailsModalProps {
     currentUserEmail?: string | null;
     fetchPeople: (projectId: string) => Promise<ProjectPeople>;
     onClose: () => void;
-    onSave: (values: { name: string; cmNumber: string }) => Promise<void>;
+    onSave: (values: {
+        name: string;
+        cmNumber: string;
+        practice: string;
+    }) => Promise<void>;
     onShareProject: () => void;
 }
 
@@ -31,6 +35,7 @@ export function ProjectDetailsModal({
 }: ProjectDetailsModalProps) {
     const [nameDraft, setNameDraft] = useState("");
     const [cmDraft, setCmDraft] = useState("");
+    const [practiceDraft, setPracticeDraft] = useState("");
     const [people, setPeople] = useState<ProjectPeople | null>(null);
     const [peopleLoading, setPeopleLoading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -41,6 +46,7 @@ export function ProjectDetailsModal({
         if (!open || !project) return;
         setNameDraft(project.name);
         setCmDraft(project.cm_number ?? "");
+        setPracticeDraft(project.practice ?? "");
         setSaved(false);
         setError(null);
     }, [open, project]);
@@ -75,13 +81,15 @@ export function ProjectDetailsModal({
 
     const trimmedName = nameDraft.trim();
     const trimmedCm = cmDraft.trim();
+    const trimmedPractice = practiceDraft.trim();
     const hasChanges = useMemo(() => {
         if (!project) return false;
         return (
             trimmedName !== project.name ||
-            trimmedCm !== (project.cm_number ?? "")
+            trimmedCm !== (project.cm_number ?? "") ||
+            trimmedPractice !== (project.practice ?? "")
         );
-    }, [project, trimmedCm, trimmedName]);
+    }, [project, trimmedCm, trimmedName, trimmedPractice]);
 
     if (!project) return null;
 
@@ -104,7 +112,11 @@ export function ProjectDetailsModal({
         setSaved(false);
         setError(null);
         try {
-            await onSave({ name: trimmedName, cmNumber: trimmedCm });
+            await onSave({
+                name: trimmedName,
+                cmNumber: trimmedCm,
+                practice: trimmedPractice,
+            });
             setSaved(true);
         } catch {
             setError("Could not update project details.");
@@ -179,6 +191,27 @@ export function ProjectDetailsModal({
                         }}
                         disabled={!canEdit || saving}
                         placeholder="No CM"
+                        className="h-9 w-full rounded-md border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none transition-colors focus:border-gray-300 disabled:cursor-not-allowed disabled:text-gray-400"
+                    />
+                </div>
+
+                <div className="flex flex-col gap-3">
+                    <label
+                        htmlFor="project-details-practice"
+                        className="text-xs font-medium text-gray-700"
+                    >
+                        Practice
+                    </label>
+                    <input
+                        id="project-details-practice"
+                        value={practiceDraft}
+                        onChange={(e) => {
+                            setPracticeDraft(e.target.value);
+                            setSaved(false);
+                            setError(null);
+                        }}
+                        disabled={!canEdit || saving}
+                        placeholder="No practice area"
                         className="h-9 w-full rounded-md border border-gray-200 bg-gray-50 px-3 text-sm text-gray-900 outline-none transition-colors focus:border-gray-300 disabled:cursor-not-allowed disabled:text-gray-400"
                     />
                 </div>
