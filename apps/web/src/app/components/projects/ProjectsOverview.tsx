@@ -128,7 +128,8 @@ export function ProjectsOverview() {
         (p) =>
             !q ||
             p.name.toLowerCase().includes(q) ||
-            (p.cm_number ?? "").toLowerCase().includes(q),
+            (p.cm_number ?? "").toLowerCase().includes(q) ||
+            (p.practice ?? "").toLowerCase().includes(q),
     );
 
     const allSelected =
@@ -290,6 +291,7 @@ export function ProjectsOverview() {
                         <span>Name</span>
                     </TableStickyCell>
                     <TableHeaderCell className="ml-auto w-32">CM</TableHeaderCell>
+                    <TableHeaderCell className="w-32">Practice</TableHeaderCell>
                     <TableHeaderCell className="w-32">Owner</TableHeaderCell>
                     <TableHeaderCell className="w-24">Files</TableHeaderCell>
                     <TableHeaderCell className="w-24">Chats</TableHeaderCell>
@@ -315,6 +317,9 @@ export function ProjectsOverview() {
                                     <SkeletonLine className="h-3.5 w-48" />
                                 </TableStickyCell>
                                 <TableCell className="ml-auto w-32">
+                                    <SkeletonLine className="w-20" />
+                                </TableCell>
+                                <TableCell className="w-32">
                                     <SkeletonLine className="w-20" />
                                 </TableCell>
                                 <TableCell className="w-32">
@@ -468,6 +473,11 @@ export function ProjectsOverview() {
                                                 —
                                             </span>
                                         ))
+                                    )}
+                                </TableCell>
+                                <TableCell className="w-32">
+                                    {project.practice ?? (
+                                        <span className="text-gray-300">—</span>
                                     )}
                                 </TableCell>
                                 <TableCell className="w-32">

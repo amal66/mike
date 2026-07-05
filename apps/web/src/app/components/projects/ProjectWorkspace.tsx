@@ -305,6 +305,7 @@ export function ProjectWorkspaceProvider({
     async function handleProjectDetailsSave(values: {
         name: string;
         cmNumber: string;
+        practice: string;
     }) {
         if (project && project.is_owner === false) {
             setOwnerOnlyAction("edit project details");
@@ -312,10 +313,13 @@ export function ProjectWorkspaceProvider({
         }
         const name = values.name.trim();
         const cmNumber = values.cmNumber.trim();
+        const practice = values.practice.trim();
         if (!name) return;
         const updated = await updateProject(projectId, {
             name,
             cm_number: cmNumber,
+            // Empty string is an explicit clear; the API normalises "" to null.
+            practice,
         });
         setProject((prev) =>
             prev
@@ -323,6 +327,7 @@ export function ProjectWorkspaceProvider({
                       ...prev,
                       name: updated.name,
                       cm_number: updated.cm_number,
+                      practice: updated.practice,
                   }
                 : updated,
         );

@@ -24,6 +24,7 @@ interface Props {
 export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [name, setName] = useState("");
     const [cmNumber, setCmNumber] = useState("");
+    const [practice, setPractice] = useState("");
     const [sharedEmails, setSharedEmails] = useState<string[]>([]);
     const [showMembers, setShowMembers] = useState(false);
     const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
@@ -55,6 +56,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
             const project = await createProject(
                 name.trim(),
                 cmNumber.trim() || undefined,
+                practice.trim() || undefined,
                 ownEmail
                     ? sharedEmails.filter((email) => email !== ownEmail)
                     : sharedEmails,
@@ -91,6 +93,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     function resetForm() {
         setName("");
         setCmNumber("");
+        setPractice("");
         setSharedEmails([]);
         setShowMembers(false);
         setSelectedDocIds(new Set());
@@ -146,6 +149,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     value={cmNumber}
                     onChange={(e) => setCmNumber(e.target.value)}
                     placeholder="Add a CM number..."
+                    className="mt-1.5 w-full text-sm text-gray-500 placeholder-gray-300 focus:outline-none bg-transparent"
+                />
+
+                <input
+                    type="text"
+                    value={practice}
+                    onChange={(e) => setPractice(e.target.value)}
+                    placeholder="Add a practice area..."
                     className="mt-1.5 w-full text-sm text-gray-500 placeholder-gray-300 focus:outline-none bg-transparent"
                 />
 
