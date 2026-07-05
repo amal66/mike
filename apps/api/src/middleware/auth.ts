@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { getAdminClient } from "../lib/supabase";
 import { sendError } from "../lib/http";
 import { logger } from "../lib/logger";
+import { syncProfileEmail } from "../lib/userLookup";
 
 /**
  * The /user/profile (and /users/profile alias) endpoint must stay reachable
@@ -96,6 +97,20 @@ export async function requireAuth(
   res.locals.userId = data.user.id;
   res.locals.userEmail = data.user.email?.toLowerCase() ?? "";
   res.locals.token = token;
+
+  // Keep the user_profiles.email mirror fresh so lookup / sharing never has to
+  // scan auth.users. Best-effort: a failure here must never block the request.
+  const syncError = await syncProfileEmail(
+    getAdminClient(),
+    data.user.id,
+    data.user.email,
+  );
+  if (syncError) {
+    logger.warn(
+      { path: req.originalUrl, userId: data.user.id },
+      "profile email mirror sync failed",
+    );
+  }
 
   if (!(await enforceLoginMfaIfEnabled(req, res, token))) {
     return;
