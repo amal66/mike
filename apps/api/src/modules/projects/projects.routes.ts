@@ -46,9 +46,10 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
 projectsRouter.post("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
-  const { name, cm_number, shared_with } = req.body as {
+  const { name, cm_number, practice, shared_with } = req.body as {
     name: string;
     cm_number?: string;
+    practice?: string;
     shared_with?: string[];
   };
   const db = createServerSupabase();
@@ -58,6 +59,7 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     userEmail,
     name,
     cm_number,
+    practice,
     shared_with,
   });
   if (!result.ok) {

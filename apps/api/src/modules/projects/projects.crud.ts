@@ -24,6 +24,16 @@ import {
   attachDocumentOwnerLabels,
 } from "./projects.shared";
 
+// Optional free-text fields (like `practice`) come off the wire as an unknown
+// JSON value. Coerce anything non-string to null, trim whitespace, and treat a
+// blank string as "unset" so the column stores a real value or null — never an
+// empty or padded string that would slip past `is null` checks.
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export async function getProjectsOverview(
   db: Db,
   userId: string,
@@ -52,11 +62,13 @@ export async function createProject(
     userEmail: string | undefined;
     name: string;
     cm_number?: string;
+    practice?: string;
     shared_with?: unknown;
     org_id?: string | null;
   },
 ): Promise<CreateProjectResult> {
-  const { userId, userEmail, name, cm_number, shared_with, org_id } = params;
+  const { userId, userEmail, name, cm_number, practice, shared_with, org_id } =
+    params;
   if (!name?.trim())
     return { ok: false, kind: "validation", detail: "name is required" };
 
@@ -96,6 +108,7 @@ export async function createProject(
       user_id: userId,
       name: name.trim(),
       cm_number: cm_number ?? null,
+      practice: normalizeOptionalString(practice),
       shared_with: shared.cleaned,
       org_id: resolvedOrgId,
     })
@@ -226,13 +239,24 @@ export async function updateProject(
     projectId: string;
     userId: string;
     userEmail: string | undefined;
-    body: { name?: unknown; cm_number?: unknown; shared_with?: unknown };
+    body: {
+      name?: unknown;
+      cm_number?: unknown;
+      practice?: unknown;
+      shared_with?: unknown;
+    };
   },
 ): Promise<UpdateProjectResult> {
   const { projectId, userId, userEmail, body } = params;
   const updates: Record<string, unknown> = {};
   if (body.name != null) updates.name = body.name;
   if (body.cm_number != null) updates.cm_number = body.cm_number;
+  // Presence-based (not null-based): sending `practice: ""` or `null` is an
+  // explicit "clear it" and must reach the DB as null, so key on the property
+  // existing rather than on its value being non-null like cm_number above.
+  if ("practice" in body) {
+    updates.practice = normalizeOptionalString(body.practice);
+  }
   if (Array.isArray(body.shared_with)) {
     // Normalise: lowercase + dedupe + drop empties.
     const normalizedUserEmail = userEmail?.trim().toLowerCase();
