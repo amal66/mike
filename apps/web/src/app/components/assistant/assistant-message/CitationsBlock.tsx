@@ -1,14 +1,15 @@
 "use client";
 
-import { AlertTriangle, File, FileText, Loader2, Scale } from "lucide-react";
+import { AlertTriangle, Loader2, Scale } from "lucide-react";
 import {
     citationVerificationStatus,
     displayCitationQuote,
     formatCitationPage,
 } from "../../shared/types";
 import type { CitationAnnotation } from "../../shared/types";
+import { FileTypeIcon } from "../../shared/FileTypeIcon";
 import { RESPONSE_GLASS_SURFACE, RESPONSE_GLASS_ANNOTATION } from "./constants";
-import { buildCitationSourceRows, documentExtension } from "./citationUtils";
+import { buildCitationSourceRows } from "./citationUtils";
 
 function CitationSourceIcon({
     annotation,
@@ -18,9 +19,10 @@ function CitationSourceIcon({
     if (annotation.kind === "case") {
         return <Scale className="h-3.5 w-3.5 text-slate-600" />;
     }
-    const ext = documentExtension(annotation.filename);
-    if (ext === "pdf") return <File className="h-3.5 w-3.5 text-red-500" />;
-    return <FileText className="h-3.5 w-3.5 text-blue-500" />;
+    // FileTypeIcon resolves the right glyph/colour per family (PDF, Word,
+    // Excel, PowerPoint) from the filename, so spreadsheet and slide citations
+    // no longer fall back to the generic document icon.
+    return <FileTypeIcon fileType={annotation.filename} />;
 }
 
 export function CitationsBlock({

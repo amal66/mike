@@ -285,7 +285,7 @@ export function ProjectDocumentsView({ projectId }: Props) {
     const sidePanelDoc = viewingDoc
         ? (docs.find((doc) => doc.id === viewingDoc.id) ?? viewingDoc)
         : null;
-    const versionUploadAccept = ".pdf,.docx,.doc";
+    const versionUploadAccept = ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt";
     const q = search.toLowerCase();
     const filteredDocs = q
         ? docs.filter((d) => d.filename.toLowerCase().includes(q))

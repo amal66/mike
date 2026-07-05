@@ -170,7 +170,7 @@ export function DocumentSidePanel({
 
     const activeDoc = doc;
     const documentId = activeDoc.id;
-    const newVersionAccept = ".pdf,.docx,.doc";
+    const newVersionAccept = ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt";
     const orderedVersions = [...versions].reverse();
     const activeVersionCount = versions.filter(
         (version) => version.deleted_at == null,
@@ -203,8 +203,20 @@ export function DocumentSidePanel({
     const replaceFileType = replaceTargetVersion
         ? fileTypeForVersion(replaceTargetVersion, selectedFileType)
         : selectedFileType;
+    // A version replace overwrites the bytes of one version, so the accepted
+    // extensions are pinned to that version's file type. Spreadsheets and
+    // slide decks are served/rendered raw (never converted to PDF), so they
+    // accept only their own family; PDFs stay PDF; everything else is Word.
     const replaceVersionAccept =
-        replaceFileType === "pdf" ? ".pdf" : ".docx,.doc";
+        replaceFileType === "pdf"
+            ? ".pdf"
+            : replaceFileType === "xlsx" ||
+                replaceFileType === "xlsm" ||
+                replaceFileType === "xls"
+              ? ".xlsx,.xlsm,.xls"
+              : replaceFileType === "pptx" || replaceFileType === "ppt"
+                ? ".pptx,.ppt"
+                : ".docx,.doc";
     const ownerLabel =
         doc.owner_display_name?.trim() ||
         doc.owner_email?.trim() ||

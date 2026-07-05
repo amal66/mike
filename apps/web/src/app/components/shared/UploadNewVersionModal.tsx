@@ -52,7 +52,7 @@ export function UploadNewVersionModal({ open, onClose, doc, onSubmit }: Props) {
 
     if (!open || !doc) return null;
 
-    const accept = ".pdf,.docx,.doc";
+    const accept = ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.pptx,.ppt";
 
     function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0] ?? null;
