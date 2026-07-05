@@ -237,12 +237,13 @@ export async function listProjects(): Promise<Project[]> {
 export async function createProject(
     name: string,
     cm_number?: string,
+    practice?: string,
     shared_with?: string[],
 ): Promise<Project> {
     return apiRequest<Project>("/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, cm_number, shared_with }),
+        body: JSON.stringify({ name, cm_number, practice, shared_with }),
     });
 }
 
@@ -480,6 +481,7 @@ export async function updateProject(
     payload: {
         name?: string;
         cm_number?: string;
+        practice?: string | null;
         shared_with?: string[];
     },
 ): Promise<Project> {
