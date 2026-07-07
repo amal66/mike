@@ -344,6 +344,24 @@ describe("readSSE", () => {
         );
         expect(events).toEqual([{ type: "content", text: "ok" }]);
     });
+
+    it("reports done:true when [DONE] terminates the stream, false otherwise", async () => {
+        const withDone = await readSSE(
+            sseResponse([
+                'data: {"type":"content","text":"x"}\n',
+                "data: [DONE]\n",
+            ]),
+            () => {},
+        );
+        expect(withDone).toEqual({ done: true });
+
+        // Stream that ends (reader EOF) without ever sending [DONE].
+        const withoutDone = await readSSE(
+            sseResponse(['data: {"type":"content","text":"x"}\n']),
+            () => {},
+        );
+        expect(withoutDone).toEqual({ done: false });
+    });
 });
 
 describe("getCourtlistenerOpinions", () => {

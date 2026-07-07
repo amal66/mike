@@ -1049,7 +1049,7 @@ export async function readSSE(
     response: Response,
     onEvent: (data: unknown) => void,
     options?: { signal?: AbortSignal },
-): Promise<void> {
+): Promise<{ done: boolean }> {
     if (!response.body) {
         throw new Error("Response body is null — streaming not supported");
     }
@@ -1087,20 +1087,19 @@ export async function readSSE(
     };
 
     try {
-        if (signal?.aborted) return;
+        if (signal?.aborted) return { done: false };
         let buffer = "";
         for (;;) {
             const { done, value } = await reader.read();
             if (done) {
-                // Flush any trailing partial line through the same logic.
-                if (processLine(buffer)) return;
-                return;
+                // Flush any trailing partial line; report whether it was [DONE].
+                return { done: processLine(buffer) };
             }
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
             buffer = lines.pop() ?? "";
             for (const line of lines) {
-                if (processLine(line)) return;
+                if (processLine(line)) return { done: true };
             }
         }
     } finally {
