@@ -1101,7 +1101,6 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     documentId={activeTab.documentId}
                                     versionId={activeTab.versionId}
                                     rounded={false}
-                                    bordered={false}
                                 />
                             ) : isDocxTab(activeTab.filename) ? (
                                 <DocxView
