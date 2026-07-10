@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MikeIcon } from "@/components/chat/mike-icon";
+import { MikeIcon } from "@/app/components/chat/mike-icon";
 import {
     streamTabularChat,
     getTabularChats,
@@ -13,15 +13,15 @@ import {
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
 import type { AssistantEvent, ColumnConfig, Document } from "../shared/types";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getModelProvider,
     isModelAvailable,
     resolveEffectiveTabularModel,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
-import { cn } from "@/lib/utils";
+import { cn } from "@/app/lib/utils";
 import type { TRMessage } from "./tr-chat-panel/types";
 import {
     findLastContentIndex,
@@ -1143,7 +1143,7 @@ export function TRChatPanel({
                 onHeightChange={setInputHeight}
             />
 
-            <ApiKeyMissingModal
+            <ApiKeyMissingPopup
                 open={apiKeyModalProvider !== null}
                 provider={apiKeyModalProvider}
                 onClose={() => setApiKeyModalProvider(null)}
