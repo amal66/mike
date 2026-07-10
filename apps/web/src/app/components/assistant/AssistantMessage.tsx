@@ -838,6 +838,12 @@ export function AssistantMessage({
                                         }
                                     }
                                 }
+                                // Number the cards only when a reply proposes
+                                // more than one edit — a lone "1" is just noise.
+                                const totalEdits = editedEvents.reduce(
+                                    (acc, e) => acc + e.annotations.length,
+                                    0,
+                                );
                                 let cardIndex = 0;
                                 const cards = editedEvents.flatMap((e) =>
                                     e.annotations.map((ann) => {
@@ -846,7 +852,11 @@ export function AssistantMessage({
                                             <EditCard
                                                 key={`editcard-${ann.edit_id}`}
                                                 annotation={ann}
-                                                changeNumber={changeNumber}
+                                                changeNumber={
+                                                    totalEdits > 1
+                                                        ? changeNumber
+                                                        : undefined
+                                                }
                                                 resolvedStatus={
                                                     resolvedEditStatuses?.[
                                                         ann.edit_id
