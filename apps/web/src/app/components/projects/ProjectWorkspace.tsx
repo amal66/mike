@@ -29,13 +29,13 @@ import type {
     TabularReview,
 } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
-import { AddNewTRModal } from "@/app/components/tabular/AddNewTRModal";
-import { ConfirmPopup } from "@/app/components/shared/ConfirmPopup";
-import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
-import { PeopleModal } from "@/app/components/shared/PeopleModal";
+import { NewTRModal } from "@/app/components/tabular/NewTRModal";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { PeopleModal } from "@/app/components/modals/PeopleModal";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
+import { useAuth } from "@/app/contexts/AuthContext";
+import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import {
     ProjectPageHeader,
@@ -318,8 +318,7 @@ export function ProjectWorkspaceProvider({
         const updated = await updateProject(projectId, {
             name,
             cm_number: cmNumber,
-            // Empty string is an explicit clear; the API normalises "" to null.
-            practice,
+            practice: practice || null,
         });
         setProject((prev) =>
             prev
@@ -422,7 +421,6 @@ export function ProjectWorkspaceProvider({
                     docsCount={project?.documents?.length ?? 0}
                     isOwner={project?.is_owner !== false}
                     onBackToProjects={() => router.push("/projects")}
-                    onOwnerOnly={setOwnerOnlyAction}
                     onOpenDetails={() => setProjectDetailsOpen(true)}
                     onDeleteProject={requestProjectDelete}
                     onSearchChange={setSearch}
@@ -433,7 +431,7 @@ export function ProjectWorkspaceProvider({
 
                 {children}
 
-                <AddNewTRModal
+                <NewTRModal
                     open={newTRModalOpen}
                     onClose={() => setNewTRModalOpen(false)}
                     onAdd={handleCreateReview}
@@ -444,7 +442,7 @@ export function ProjectWorkspaceProvider({
                     projectCmNumber={project?.cm_number}
                 />
 
-                <OwnerOnlyModal
+                <OwnerOnlyPopup
                     open={!!ownerOnlyAction}
                     action={ownerOnlyAction ?? undefined}
                     onClose={() => setOwnerOnlyAction(null)}
@@ -454,9 +452,6 @@ export function ProjectWorkspaceProvider({
                     open={projectDetailsOpen}
                     project={project}
                     canEdit={project?.is_owner !== false}
-                    currentUserDisplayName={profile?.displayName ?? null}
-                    currentUserEmail={user?.email ?? null}
-                    fetchPeople={getProjectPeople}
                     onClose={() => setProjectDetailsOpen(false)}
                     onSave={handleProjectDetailsSave}
                     onShareProject={() => {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFakeSupabase } from "../dms/__tests__/fakeDb";
 import {
-    assertShareableEmails,
     findMissingUserEmails,
     findProfileUserByEmail,
     loadProfileUsersByEmail,
@@ -9,7 +8,8 @@ import {
 } from "../userLookup";
 
 // The mirror helpers only ever touch public.user_profiles, so the in-memory
-// fakeDb (select/upsert/eq/in + await) exercises the real query shapes.
+// fakeDb (select/insert/update/eq/in/not + await) exercises the real query
+// shapes.
 function seedProfiles(rows: { user_id: string; email: string; display_name?: string | null }[]) {
     return createFakeSupabase({
         user_profiles: rows.map((r) => ({
@@ -32,7 +32,7 @@ describe("syncProfileEmail", () => {
         });
     });
 
-    it("updates the email on an existing profile (upsert on user_id)", async () => {
+    it("updates the email on an existing profile", async () => {
         const db = seedProfiles([
             { user_id: "u1", email: "old@example.com", display_name: "Ada" },
         ]);
@@ -46,7 +46,16 @@ describe("syncProfileEmail", () => {
         });
     });
 
-    it("is a no-op (null) for a blank/missing email and never throws", async () => {
+    it("is a no-op (null) when the mirrored email is already current", async () => {
+        const db = seedProfiles([
+            { user_id: "u1", email: "ada@example.com" },
+        ]);
+        const err = await syncProfileEmail(db as any, "u1", "ADA@example.com");
+        expect(err).toBeNull();
+        expect(db._tables.user_profiles[0].email).toBe("ada@example.com");
+    });
+
+    it("is a no-op (null) for a blank/missing email", async () => {
         const db = createFakeSupabase({ user_profiles: [] });
         expect(await syncProfileEmail(db as any, "u1", "   ")).toBeNull();
         expect(await syncProfileEmail(db as any, "u1", null)).toBeNull();
@@ -54,15 +63,21 @@ describe("syncProfileEmail", () => {
         expect(db._tables.user_profiles).toHaveLength(0);
     });
 
-    it("returns an Error instead of throwing when the db rejects", async () => {
-        const throwingDb = {
-            from() {
-                throw new Error("connection lost");
-            },
+    it("returns the query error instead of surfacing it", async () => {
+        // requireAuth runs this on the hot path and only logs the returned
+        // error, so a failed profile load must come back as a value.
+        const dbError = { message: "connection lost" };
+        const stub = {
+            from: () => ({
+                select: () => ({
+                    eq: () => ({
+                        maybeSingle: async () => ({ data: null, error: dbError }),
+                    }),
+                }),
+            }),
         };
-        const err = await syncProfileEmail(throwingDb as any, "u1", "a@b.com");
-        expect(err).toBeInstanceOf(Error);
-        expect(err?.message).toBe("connection lost");
+        const err = await syncProfileEmail(stub as any, "u1", "a@b.com");
+        expect(err).toBe(dbError);
     });
 });
 
@@ -72,7 +87,11 @@ describe("findProfileUserByEmail", () => {
             { user_id: "u1", email: "ada@example.com", display_name: "Ada L" },
         ]);
         const user = await findProfileUserByEmail(db as any, "ADA@example.com");
-        expect(user).toEqual({ email: "ada@example.com", display_name: "Ada L" });
+        expect(user).toEqual({
+            id: "u1",
+            email: "ada@example.com",
+            display_name: "Ada L",
+        });
     });
 
     it("returns null for an unknown or blank email", async () => {
@@ -116,7 +135,7 @@ describe("findMissingUserEmails", () => {
 });
 
 describe("loadProfileUsersByEmail", () => {
-    it("indexes profiles by email and by user_id, skipping blank emails", async () => {
+    it("indexes profiles by email and by user id, skipping blank emails", async () => {
         const db = seedProfiles([
             { user_id: "u1", email: "ada@example.com", display_name: "Ada" },
             { user_id: "u2", email: "GRACE@example.com", display_name: null },
@@ -125,45 +144,15 @@ describe("loadProfileUsersByEmail", () => {
         const { userByEmail, userById } = await loadProfileUsersByEmail(db as any);
 
         expect(userByEmail.get("ada@example.com")).toEqual({
-            user_id: "u1",
+            id: "u1",
             email: "ada@example.com",
             display_name: "Ada",
         });
         // stored value is lowercased on read
-        expect(userByEmail.get("grace@example.com")?.user_id).toBe("u2");
+        expect(userByEmail.get("grace@example.com")?.id).toBe("u2");
         expect(userById.get("u2")?.display_name).toBeNull();
         // blank-email row is excluded from both maps
         expect(userById.has("u3")).toBe(false);
         expect(userByEmail.size).toBe(2);
-    });
-});
-
-describe("assertShareableEmails (share-gate)", () => {
-    it("allows when every email belongs to a Mike user", async () => {
-        const db = seedProfiles([
-            { user_id: "u1", email: "member@example.com" },
-        ]);
-        expect(await assertShareableEmails(db as any, ["member@example.com"])).toEqual({
-            ok: true,
-        });
-    });
-
-    it("rejects with the first offending email's detail", async () => {
-        const db = seedProfiles([
-            { user_id: "u1", email: "member@example.com" },
-        ]);
-        const result = await assertShareableEmails(db as any, [
-            "member@example.com",
-            "stranger@example.com",
-        ]);
-        expect(result).toEqual({
-            ok: false,
-            detail: "stranger@example.com does not belong to a Mike user.",
-        });
-    });
-
-    it("allows an empty recipient list", async () => {
-        const db = seedProfiles([]);
-        expect(await assertShareableEmails(db as any, [])).toEqual({ ok: true });
     });
 });

@@ -2,7 +2,6 @@ import crypto from "crypto";
 import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../../middleware/auth";
 import { createServerSupabase } from "../../lib/supabase";
-import { findProfileUserByEmail } from "../../lib/userLookup";
 import { normalizeApiKeyProvider } from "../../lib/userApiKeys";
 import { completeUserMcpConnectorOAuth } from "../../lib/mcpConnectors";
 import {
@@ -28,6 +27,7 @@ import {
     getDmsConnector,
     getMcpConnector,
     getUserProfile,
+    lookupUserByEmail,
     importDmsDocument,
     listDmsConnectors,
     listMcpConnectors,
@@ -138,9 +138,6 @@ userRouter.post("/profile", requireAuth, async (_req, res) => {
 });
 
 // GET /user/lookup?email=person@example.com
-// Resolve an email to a Mike user via the mirrored profile email (no
-// auth.users scan). Used by the share UI to confirm a recipient exists and to
-// show their display name. Returns { exists, email, display_name }.
 userRouter.get("/lookup", requireAuth, async (req, res) => {
     const email = typeof req.query.email === "string" ? req.query.email : "";
     if (!email.trim()) {
@@ -148,12 +145,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
     }
 
     const db = createServerSupabase();
-    const user = await findProfileUserByEmail(db, email);
-    res.json({
-        exists: !!user,
-        email: user?.email ?? email.trim().toLowerCase(),
-        display_name: user?.display_name ?? null,
-    });
+    res.json(await lookupUserByEmail(db, email));
 });
 
 // GET /user/profile

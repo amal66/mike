@@ -30,7 +30,7 @@ describe("shareWorkflow share-gate", () => {
         });
         expect(result).toEqual({
             ok: false,
-            kind: "share_gate",
+            kind: "missing_user",
             detail: "stranger@example.com does not belong to a Mike user.",
         });
         expect(db._tables.workflow_shares).toHaveLength(0);

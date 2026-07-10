@@ -1,6 +1,6 @@
 // A small stateful in-memory stand-in for the Supabase client, supporting the
 // exact query shapes the DMS code uses: select/insert/update/delete/upsert with
-// eq/in/gt/is filters, order/limit, and single/maybeSingle terminals plus
+// eq/in/gt/is/not filters, order/limit, and single/maybeSingle terminals plus
 // direct-await (thenable). Deliberately minimal — not a general Supabase mock.
 import crypto from "crypto";
 
@@ -83,6 +83,12 @@ class QueryBuilder {
     }
     is(col: string, val: unknown): this {
         this.filters.push((r) => r[col] === val);
+        return this;
+    }
+    not(col: string, op: string, val: unknown): this {
+        // Negated filter, e.g. `.not("email", "is", null)`. Only equality-style
+        // operators ("is" / "eq") are modelled, which is all the code exercises.
+        this.filters.push((r) => r[col] !== val);
         return this;
     }
     order(col: string, opts?: { ascending?: boolean }): this {

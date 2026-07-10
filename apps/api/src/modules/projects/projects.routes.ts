@@ -3,7 +3,10 @@ import { requireAuth } from "../../middleware/auth";
 import { createServerSupabase } from "../../lib/supabase";
 import { singleFileUpload, hasMagicBytes } from "../../lib/upload";
 import {
-  ALLOWED_TYPES,
+  ALLOWED_DOCUMENT_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
+} from "../../lib/documentTypes";
+import {
   getProjectsOverview,
   createProject,
   getProjectDetail,
@@ -24,7 +27,7 @@ import {
 
 export const projectsRouter = Router();
 
-// Derive the file extension validated against ALLOWED_TYPES + magic bytes.
+// Derive the file extension validated against ALLOWED_DOCUMENT_TYPES + magic bytes.
 function extensionOf(filename: string): string {
   return filename.includes(".")
     ? filename.split(".").pop()!.toLowerCase()
@@ -113,7 +116,7 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
     body: req.body ?? {},
   });
   if (!result.ok) {
-    if (result.kind === "self_share" || result.kind === "share_gate")
+    if (result.kind === "self_share" || result.kind === "missing_user")
       return void res.status(400).json({ detail: result.detail });
     return void res.status(404).json({ detail: "Project not found" });
   }
@@ -248,9 +251,9 @@ projectsRouter.post(
 
     const filename = file.originalname;
     const suffix = extensionOf(filename);
-    if (!ALLOWED_TYPES.has(suffix))
+    if (!ALLOWED_DOCUMENT_TYPES.has(suffix))
       return void res.status(400).json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+        detail: `Unsupported file type: ${suffix}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,
       });
 
     // Magic-byte check: verify the file actually starts with the binary

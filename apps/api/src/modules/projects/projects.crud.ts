@@ -15,24 +15,15 @@ import {
 } from "../../lib/access";
 import { deleteUserProjects } from "../../lib/userDataCleanup";
 import {
-  assertShareableEmails,
+  findMissingUserEmails,
   loadProfileUsersByEmail,
 } from "../../lib/userLookup";
 import {
   type Db,
+  normalizeOptionalString,
   normalizeSharedWith,
   attachDocumentOwnerLabels,
 } from "./projects.shared";
-
-// Optional free-text fields (like `practice`) come off the wire as an unknown
-// JSON value. Coerce anything non-string to null, trim whitespace, and treat a
-// blank string as "unset" so the column stores a real value or null — never an
-// empty or padded string that would slip past `is null` checks.
-function normalizeOptionalString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 export async function getProjectsOverview(
   db: Db,
@@ -52,7 +43,7 @@ export async function getProjectsOverview(
 
 export type CreateProjectResult =
   | { ok: true; project: Record<string, unknown> }
-  | { ok: false; kind: "validation" | "self_share" | "share_gate"; detail: string }
+  | { ok: false; kind: "validation" | "self_share"; detail: string }
   | { ok: false; kind: "db_error"; detail: string };
 
 export async function createProject(
@@ -81,6 +72,15 @@ export async function createProject(
       detail: "You cannot share a project with yourself.",
     };
 
+  // Sharing targets must be existing Mike users (mirrored profile emails).
+  const missingSharedUsers = await findMissingUserEmails(db, shared.cleaned);
+  if (missingSharedUsers.length > 0)
+    return {
+      ok: false,
+      kind: "validation",
+      detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+    };
+
   // Tenant assignment: an explicit org_id must be one the caller belongs to;
   // otherwise the project lands in the caller's personal org.
   let resolvedOrgId: string | null;
@@ -97,17 +97,12 @@ export async function createProject(
     resolvedOrgId = await getPersonalOrgId(userId, db);
   }
 
-  // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails.
-  const gate = await assertShareableEmails(db, shared.cleaned);
-  if (!gate.ok)
-    return { ok: false, kind: "share_gate", detail: gate.detail };
-
   const { data, error } = await db
     .from("projects")
     .insert({
       user_id: userId,
       name: name.trim(),
-      cm_number: cm_number ?? null,
+      cm_number: normalizeOptionalString(cm_number),
       practice: normalizeOptionalString(practice),
       shared_with: shared.cleaned,
       org_id: resolvedOrgId,
@@ -209,8 +204,7 @@ export async function getProjectPeople(
     !!userEmail && sharedWith.includes(userEmail.toLowerCase());
   if (!isOwner && !isShared) return { ok: false };
 
-  // Resolve owner + members from the mirrored profile email so this never
-  // scans auth.users. userById/userByEmail already carry the display_name.
+  // Use the mirrored profile email so sharing checks do not scan auth.users.
   const { userByEmail, userById } = await loadProfileUsersByEmail(db);
 
   const ownerInfo = userById.get(project.user_id as string);
@@ -230,7 +224,7 @@ export async function getProjectPeople(
 
 export type UpdateProjectResult =
   | { ok: true; body: Record<string, unknown> }
-  | { ok: false; kind: "self_share" | "share_gate"; detail: string }
+  | { ok: false; kind: "self_share" | "missing_user"; detail: string }
   | { ok: false; kind: "not_found" };
 
 export async function updateProject(
@@ -251,9 +245,6 @@ export async function updateProject(
   const updates: Record<string, unknown> = {};
   if (body.name != null) updates.name = body.name;
   if (body.cm_number != null) updates.cm_number = body.cm_number;
-  // Presence-based (not null-based): sending `practice: ""` or `null` is an
-  // explicit "clear it" and must reach the DB as null, so key on the property
-  // existing rather than on its value being non-null like cm_number above.
   if ("practice" in body) {
     updates.practice = normalizeOptionalString(body.practice);
   }
@@ -267,6 +258,14 @@ export async function updateProject(
         kind: "self_share",
         detail: "You cannot share a project with yourself.",
       };
+    // Sharing targets must be existing Mike users (mirrored profile emails).
+    const missingSharedUsers = await findMissingUserEmails(db, shared.cleaned);
+    if (missingSharedUsers.length > 0)
+      return {
+        ok: false,
+        kind: "missing_user",
+        detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+      };
     updates.shared_with = shared.cleaned;
   }
 
@@ -275,17 +274,6 @@ export async function updateProject(
   // collaborators can read but not mutate (canManage stays false for them).
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok || !access.canManage) return { ok: false, kind: "not_found" };
-
-  // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails. Runs only
-  // when shared_with is being changed, after the manage check.
-  if (Array.isArray(updates.shared_with)) {
-    const gate = await assertShareableEmails(
-      db,
-      updates.shared_with as string[],
-    );
-    if (!gate.ok)
-      return { ok: false, kind: "share_gate", detail: gate.detail };
-  }
 
   const { data, error } = await db
     .from("projects")

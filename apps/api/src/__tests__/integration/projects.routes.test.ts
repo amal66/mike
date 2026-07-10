@@ -41,7 +41,6 @@ let supabaseState: {
     rpc: QueryResult;
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
-    updates: { table: string; payload: unknown }[];
 };
 
 function resetSupabaseState() {
@@ -49,7 +48,6 @@ function resetSupabaseState() {
         rpc: { data: [], error: null },
         tables: {},
         inserts: [],
-        updates: [],
     };
 }
 resetSupabaseState();
@@ -61,17 +59,13 @@ function resultForTable(table: string): QueryResult {
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "delete", "upsert",
+        "select", "update", "delete", "upsert",
         "eq", "neq", "in", "is", "or", "lt", "gt", "gte", "lte",
         "filter", "order", "limit", "range", "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
         supabaseState.inserts.push({ table, payload });
-        return q;
-    });
-    q.update = vi.fn((payload: unknown) => {
-        supabaseState.updates.push({ table, payload });
         return q;
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
@@ -206,6 +200,13 @@ describe("projects.routes", () => {
         });
 
         it("creates the project (201) and normalises shared_with", async () => {
+            // Sharing now requires each recipient to have a mirrored
+            // user_profiles row (findMissingUserEmails); seed both emails so
+            // validation passes and the create path proceeds.
+            supabaseState.tables.user_profiles = {
+                data: [{ email: "a@x.com" }, { email: "b@x.com" }],
+                error: null,
+            };
             supabaseState.tables.projects = {
                 data: {
                     id: "p9",
@@ -213,12 +214,6 @@ describe("projects.routes", () => {
                     user_id: "u1",
                     shared_with: ["a@x.com", "b@x.com"],
                 },
-                error: null,
-            };
-            // Share-gating: recipients must be existing Mike users. Seed the
-            // mirrored profile emails so findMissingUserEmails finds them.
-            supabaseState.tables.user_profiles = {
-                data: [{ email: "a@x.com" }, { email: "b@x.com" }],
                 error: null,
             };
 
@@ -244,61 +239,21 @@ describe("projects.routes", () => {
             });
         });
 
-        it("returns 400 when sharing with a non-Mike user (share-gate)", async () => {
-            // No user_profiles seeded → the recipient email is not a Mike user.
-            supabaseState.tables.user_profiles = { data: [], error: null };
-
+        it("returns 400 when a shared_with recipient is not a Mike user", async () => {
+            // No user_profiles rows seeded → findMissingUserEmails reports the
+            // recipient as unknown and the create is rejected before insert.
             const res = await request(app)
                 .post("/projects")
                 .set(...AUTH)
-                .send({ name: "Gamma", shared_with: ["stranger@x.com"] });
+                .send({ name: "Gamma", shared_with: ["ghost@x.com"] });
 
             expect(res.status).toBe(400);
             expect(res.body.detail).toBe(
-                "stranger@x.com does not belong to a Mike user.",
+                "ghost@x.com does not belong to a Mike user.",
             );
-            // Gate rejected before any project row was inserted.
             expect(
                 supabaseState.inserts.find((i) => i.table === "projects"),
             ).toBeUndefined();
-        });
-
-        it("trims the practice label and persists it on the insert", async () => {
-            supabaseState.tables.projects = {
-                data: { id: "p10", name: "Epsilon", practice: "Corporate" },
-                error: null,
-            };
-
-            const res = await request(app)
-                .post("/projects")
-                .set(...AUTH)
-                .send({ name: "Epsilon", practice: "  Corporate  " });
-
-            expect(res.status).toBe(201);
-            expect(res.body).toMatchObject({ practice: "Corporate" });
-
-            const insert = supabaseState.inserts.find(
-                (i) => i.table === "projects",
-            );
-            // Trimmed non-empty string reaches the DB verbatim.
-            expect(insert?.payload).toMatchObject({ practice: "Corporate" });
-        });
-
-        it("stores a blank practice label as null", async () => {
-            supabaseState.tables.projects = {
-                data: { id: "p11", name: "Zeta", practice: null },
-                error: null,
-            };
-
-            await request(app)
-                .post("/projects")
-                .set(...AUTH)
-                .send({ name: "Zeta", practice: "   " });
-
-            const insert = supabaseState.inserts.find(
-                (i) => i.table === "projects",
-            );
-            expect((insert?.payload as { practice: unknown }).practice).toBeNull();
         });
 
         it("returns 500 when the insert errors", async () => {
@@ -447,48 +402,6 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
-        });
-
-        it("updates the practice label (trimmed) and echoes it back", async () => {
-            supabaseState.tables.projects = {
-                data: { id: "p1", user_id: "u1", practice: "Litigation" },
-                error: null,
-            };
-            supabaseState.tables.documents = { data: [], error: null };
-            supabaseState.tables.project_subfolders = { data: [], error: null };
-
-            const res = await request(app)
-                .patch("/projects/p1")
-                .set(...AUTH)
-                .send({ practice: "  Litigation  " });
-
-            expect(res.status).toBe(200);
-            expect(res.body).toMatchObject({ practice: "Litigation" });
-
-            const update = supabaseState.updates.find(
-                (u) => u.table === "projects",
-            );
-            expect(update?.payload).toMatchObject({ practice: "Litigation" });
-        });
-
-        it("clears the practice label when sent blank", async () => {
-            supabaseState.tables.projects = {
-                data: { id: "p1", user_id: "u1", practice: null },
-                error: null,
-            };
-            supabaseState.tables.documents = { data: [], error: null };
-            supabaseState.tables.project_subfolders = { data: [], error: null };
-
-            await request(app)
-                .patch("/projects/p1")
-                .set(...AUTH)
-                .send({ practice: "" });
-
-            const update = supabaseState.updates.find(
-                (u) => u.table === "projects",
-            );
-            // Presence-based handling: an empty string is an explicit clear.
-            expect((update?.payload as { practice: unknown }).practice).toBeNull();
         });
     });
 

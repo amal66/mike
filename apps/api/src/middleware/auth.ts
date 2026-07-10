@@ -98,8 +98,6 @@ export async function requireAuth(
   res.locals.userEmail = data.user.email?.toLowerCase() ?? "";
   res.locals.token = token;
 
-  // Keep the user_profiles.email mirror fresh so lookup / sharing never has to
-  // scan auth.users. Best-effort: a failure here must never block the request.
   const syncError = await syncProfileEmail(
     getAdminClient(),
     data.user.id,
@@ -107,8 +105,13 @@ export async function requireAuth(
   );
   if (syncError) {
     logger.warn(
-      { path: req.originalUrl, userId: data.user.id },
-      "profile email mirror sync failed",
+      {
+        method: req.method,
+        path: req.originalUrl,
+        userId: data.user.id,
+        error: syncError.message,
+      },
+      "Profile email sync failed",
     );
   }
 

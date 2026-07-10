@@ -15,14 +15,13 @@ import {
     resolveContentOrgId,
 } from "../../lib/access";
 import {
-    assertShareableEmails,
-    loadProfileUsersByEmail,
-} from "../../lib/userLookup";
-import {
-    extractDocxMarkdown,
-    extractPdfMarkdown,
+    extractDocumentMarkdown,
     queryTabularCell,
 } from "./tabular.extract";
+import {
+    findMissingUserEmails,
+    loadProfileUsersByEmail,
+} from "../../lib/userLookup";
 import {
     missingModelApiKey,
     parseCellContent,
@@ -273,8 +272,7 @@ export async function getTabularReviewPeople(
             : []
     ).map((e) => (e ?? "").toLowerCase());
 
-    // Resolve owner + members from the mirrored profile email so this never
-    // scans auth.users (same rewrite as /projects/:id/people).
+    // Use the mirrored profile email so sharing checks do not scan auth.users.
     const { userByEmail, userById } = await loadProfileUsersByEmail(db);
 
     const ownerInfo = userById.get(review.user_id as string);
@@ -316,7 +314,7 @@ export async function updateTabularReview(
               | "move_forbidden"
               | "target_project_not_found";
       }
-    | { ok: false; kind: "share_gate"; detail: string }
+    | { ok: false; kind: "missing_user"; detail: string }
     | { ok: false; kind: "db_error"; detail: string }
 > {
     const { reviewId, userId, userEmail, body } = args;
@@ -373,10 +371,18 @@ export async function updateTabularReview(
     }
     if (sharedWithUpdate !== undefined) {
         if (!access.isOwner) return { ok: false, kind: "sharing_forbidden" };
-        // Share-gate (BEHAVIOR CHANGE): reject sharing to non-Mike emails.
-        const gate = await assertShareableEmails(db, sharedWithUpdate);
-        if (!gate.ok)
-            return { ok: false, kind: "share_gate", detail: gate.detail };
+        // Sharing targets must be existing Mike users (mirrored profile emails).
+        const missingSharedUsers = await findMissingUserEmails(
+            db,
+            sharedWithUpdate,
+        );
+        if (missingSharedUsers.length > 0) {
+            return {
+                ok: false,
+                kind: "missing_user",
+                detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+            };
+        }
         updates.shared_with = sharedWithUpdate;
     }
     if (projectIdUpdateProvided) {
@@ -649,10 +655,10 @@ export async function regenerateTabularCell(
         const buf = await downloadFile(docActive.storage_path);
         if (buf) {
             try {
-                markdown =
-                    docActive.file_type === "pdf"
-                        ? await extractPdfMarkdown(buf)
-                        : await extractDocxMarkdown(buf);
+                markdown = await extractDocumentMarkdown(
+                    buf,
+                    docActive.file_type,
+                );
             } catch (err) {
                 log.error(
                     { err, document_id },
