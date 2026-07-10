@@ -8,6 +8,10 @@ import {
   updateWorkflow,
   deleteWorkflow,
   getWorkflowDetail,
+  findSystemWorkflow,
+  withSystemWorkflowAccess,
+  submitOpenSourceWorkflow,
+  WORKFLOW_CONTRIBUTIONS_ENABLED,
   listHiddenWorkflows,
   hideWorkflow,
   unhideWorkflow,
@@ -16,6 +20,7 @@ import {
   shareWorkflow,
   exportWorkflow,
   importWorkflow,
+  type WorkflowMetadata,
 } from "./workflows.service";
 
 export const workflowsRouter = Router();
@@ -48,28 +53,32 @@ workflowsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
 // POST /workflows
 workflowsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
-  const { title, type, prompt_md, columns_config, practice } = req.body as {
-    title: string;
-    type: string;
-    prompt_md?: string;
+  const {
+    metadata,
+    skill_md,
+    columns_config,
+  } = req.body as {
+    metadata?: Partial<WorkflowMetadata>;
+    skill_md?: string;
     columns_config?: unknown;
-    practice?: string | null;
   };
+  const title = metadata?.title;
+  const type = metadata?.type;
   if (!title?.trim())
-    return void res.status(400).json({ detail: "title is required" });
-  if (!["assistant", "tabular"].includes(type))
+    return void res.status(400).json({ detail: "metadata.title is required" });
+  if (type !== "assistant" && type !== "tabular")
     return void res
       .status(400)
-      .json({ detail: "type must be 'assistant' or 'tabular'" });
+      .json({ detail: "metadata.type must be 'assistant' or 'tabular'" });
 
   const db = createServerSupabase();
   const result = await createWorkflow(db, {
     userId,
     title,
     type,
-    prompt_md,
+    skill_md,
     columns_config,
-    practice,
+    metadata,
   });
   if (!result.ok) return void res.status(500).json({ detail: result.detail });
   res.status(201).json(result.workflow);
@@ -104,6 +113,13 @@ workflowsRouter.patch("/:workflowId", requireAuth, asyncRoute(handleWorkflowUpda
 workflowsRouter.delete("/:workflowId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
+  // Built-in workflows ship with the code and cannot be deleted; echo the
+  // workflow back (the UI hides built-ins per user via /workflows/hidden).
+  const systemWorkflow = findSystemWorkflow(workflowId);
+  if (systemWorkflow) {
+    return void res.json(withSystemWorkflowAccess(systemWorkflow));
+  }
+
   const db = createServerSupabase();
 
   const result = await deleteWorkflow(db, userId, workflowId);
@@ -145,11 +161,50 @@ workflowsRouter.delete("/hidden/:workflowId", requireAuth, asyncRoute(async (req
   res.status(204).send();
 }));
 
+// POST /workflows/:workflowId/open-source
+workflowsRouter.post("/:workflowId/open-source", requireAuth, asyncRoute(async (req, res) => {
+  if (!WORKFLOW_CONTRIBUTIONS_ENABLED) {
+    return void res
+      .status(404)
+      .json({ detail: "Workflow contributions are disabled" });
+  }
+
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { workflowId } = req.params;
+  const db = createServerSupabase();
+
+  const result = await submitOpenSourceWorkflow(db, {
+    workflowId,
+    userId,
+    userEmail,
+    body: (req.body ?? {}) as {
+      contributor_mode?: unknown;
+      contributor?: unknown;
+    },
+  });
+  if (!result.ok) {
+    if (result.kind === "not_found")
+      return void res
+        .status(404)
+        .json({ detail: "Workflow not found or not open-sourceable" });
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
+    return void res.status(500).json({ detail: result.detail });
+  }
+  res.status(result.status).json(result.body);
+}));
+
 // GET /workflows/:workflowId
 workflowsRouter.get("/:workflowId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
+  const systemWorkflow = findSystemWorkflow(workflowId);
+  if (systemWorkflow) {
+    return void res.json(withSystemWorkflowAccess(systemWorkflow));
+  }
+
   const db = createServerSupabase();
 
   const result = await getWorkflowDetail(db, { workflowId, userId, userEmail });
