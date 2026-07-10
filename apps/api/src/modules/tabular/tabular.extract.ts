@@ -1,5 +1,5 @@
 // Extraction for the tabular-review module: tabular citation parsing, the
-// LLM cell-extraction helpers, and document (PDF/DOCX) text extraction.
+// LLM cell-extraction helpers, and document (PDF/DOCX/Office) text extraction.
 
 import { logger } from "../../lib/logger";
 import { docxToPdf, normalizeDocxZipPaths } from "../../lib/convert";
@@ -14,7 +14,7 @@ import {
 } from "../../lib/documentTypes";
 import { extractPresentationText } from "../../lib/officeText";
 import { spreadsheetToLLMText } from "../../lib/spreadsheet";
-import { type TabularCellStore } from "../../lib/chatTools";
+import { type TabularCellStore } from "../../lib/chat";
 import {
     completeText,
     streamChatWithTools,

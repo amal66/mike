@@ -7,14 +7,14 @@ import { enqueueConversion } from "../../lib/queue/conversionQueue";
 import { maybeEnqueueEmbedding } from "../../lib/queue/embeddingQueue";
 import { resolveContentOrgId } from "../../lib/access";
 import {
-  contentTypeForDocumentType,
-  shouldConvertToPdf,
-} from "../../lib/documentTypes";
-import {
   countPdfPages,
   type Db,
   type Log,
 } from "./documents.shared";
+import {
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
 
 // ---------------------------------------------------------------------------
 // Create a document from an uploaded file (initial upload pipeline)
@@ -94,14 +94,13 @@ export async function createDocumentFromUpload(
 
     // When the job queue is enabled, defer Office → PDF conversion to the
     // BullMQ worker instead of blocking the upload request on LibreOffice.
-    // Spreadsheets are excluded (shouldConvertToPdf === false): they render
-    // natively from raw bytes, so there is no PDF rendition to produce.
     const deferConversion =
       shouldConvertToPdf(suffix) &&
       env.ASYNC_DOCUMENT_CONVERSION === "true";
 
-    // Convert Word/PowerPoint → PDF for display. PDFs are their own rendition;
-    // spreadsheets get none (rendered natively in the frontend).
+    // Convert Office files → PDF for display. PDFs are their own rendition.
+    // Spreadsheets are excluded (shouldConvertToPdf): the frontend renders
+    // them natively from the raw bytes.
     let pdfStoragePath: string | null = null;
     if (!deferConversion && shouldConvertToPdf(suffix)) {
       try {

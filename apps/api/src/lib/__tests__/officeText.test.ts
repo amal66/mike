@@ -43,8 +43,12 @@ describe("extractPresentationText", () => {
         expect(text).toContain("Ben & Jerry <3");
     });
 
-    it("returns an empty string for bytes it cannot open as a zip", async () => {
+    it("rejects for bytes it cannot open as a zip (legacy OLE2 .ppt)", async () => {
+        // Callers never feed OLE2 bytes here: legacy .ppt is dispatched to the
+        // LibreOffice->PDF path instead (see tabular.extract and
+        // chat/tools/documentOps), so a non-zip buffer is a programming error
+        // and surfaces as a rejection.
         const notAZip = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0x00, 0x00]);
-        expect(await extractPresentationText(notAZip)).toBe("");
+        await expect(extractPresentationText(notAZip)).rejects.toThrow();
     });
 });

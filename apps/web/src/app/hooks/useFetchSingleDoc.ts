@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/app/lib/supabase";
 
 /**
  * /display returns PDF bytes (when the active version has a PDF rendition),
  * raw spreadsheet bytes (xlsx/xlsm/xls — never converted to PDF), or raw DOCX
- * bytes otherwise. Reporting the type lets the caller swap between DocView
- * (PDF.js), SpreadsheetView (Fortune-sheet), and DocxView (docx-preview)
- * accordingly.
+ * bytes otherwise. Reporting the type lets the caller swap between PdfView
+ * (PDF.js), SpreadsheetView (Fortune-sheet), and DocxView (docx-preview).
  */
 export type DocResult =
     | { type: "pdf"; buffer: ArrayBuffer }

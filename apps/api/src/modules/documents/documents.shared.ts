@@ -6,10 +6,6 @@ import { createServerSupabase } from "../../lib/supabase";
 import { logger } from "../../lib/logger";
 import { deleteFile } from "../../lib/storage";
 import { loadPdfjs } from "../../lib/pdfjs";
-import {
-  ALLOWED_DOCUMENT_TYPES,
-  ALLOWED_DOCUMENT_TYPES_LABEL,
-} from "../../lib/documentTypes";
 
 export type Db = ReturnType<typeof createServerSupabase>;
 
@@ -22,11 +18,15 @@ export type UploadedFile = { buffer: Buffer; originalname: string };
 export const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-// The single upload allowlist lives in ../../lib/documentTypes so the upload
-// gate, read path, and downloads all agree. Re-exported here because callers in
-// this module import it (alongside the label) via documents.service.
-export const ALLOWED_TYPES = ALLOWED_DOCUMENT_TYPES;
-export { ALLOWED_DOCUMENT_TYPES_LABEL };
+// Allowed upload types (now including Excel/PowerPoint) and the MIME/PDF
+// conversion helpers live in the shared lib so every module agrees on them.
+export {
+  ALLOWED_DOCUMENT_TYPES,
+  ALLOWED_DOCUMENT_TYPES_LABEL,
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
+
 export const MAX_ZIP_DOCUMENTS = 50;
 
 // ---------------------------------------------------------------------------

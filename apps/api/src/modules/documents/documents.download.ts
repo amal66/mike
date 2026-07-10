@@ -5,14 +5,13 @@ import { downloadFile, getSignedUrl } from "../../lib/storage";
 import { loadActiveVersion } from "../../lib/documentVersions";
 import { listAccessibleProjectIds, listUserOrgIds } from "../../lib/access";
 import {
-  contentTypeForDocumentType,
-  shouldConvertToPdf,
-} from "../../lib/documentTypes";
-import {
-  DOCX_MIME,
   downloadFilenameForVersion,
   type Db,
 } from "./documents.shared";
+import {
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
 import { ensureDocumentAccess } from "./documents.access";
 
 // ---------------------------------------------------------------------------
@@ -41,8 +40,6 @@ export async function getDisplayableVersion(
   if (!active) return { ok: false, detail: "No file available" };
 
   const fileType = active.file_type ?? "";
-  // Word + PowerPoint get a PDF rendition for display; spreadsheets do not
-  // (they render natively in the frontend from the raw bytes).
   const isConvertibleOffice = shouldConvertToPdf(fileType);
   const displayFilename = downloadFilenameForVersion(
     active.filename,
@@ -50,7 +47,7 @@ export async function getDisplayableVersion(
     active.source === "assistant_edit",
   );
 
-  // For Word/PowerPoint, prefer the per-version PDF rendition if one exists.
+  // For Office files, prefer the per-version PDF rendition if one exists.
   const servePath =
     isConvertibleOffice && active.pdf_storage_path
       ? active.pdf_storage_path
@@ -58,8 +55,8 @@ export async function getDisplayableVersion(
   const raw = await downloadFile(servePath);
   if (!raw) return { ok: false, detail: "Document not found in storage" };
 
-  // Serve the PDF rendition when we're using it; otherwise serve the raw bytes
-  // with their true content-type (spreadsheets → xlsx MIME, etc.).
+  // Fallback: serve raw Office bytes when PDF conversion was unavailable
+  // (spreadsheets are always served raw — the frontend renders them natively).
   const contentType =
     fileType === "pdf" || (isConvertibleOffice && active.pdf_storage_path)
       ? "application/pdf"

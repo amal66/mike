@@ -1,10 +1,5 @@
 import JSZip from "jszip";
 
-// Text extraction for OOXML Office files that are ZIP containers. PowerPoint
-// (.pptx) stores each slide as its own XML part under ppt/slides/, with the
-// visible text living in <a:t> runs. We pull those out in slide order so the
-// LLM sees the deck as readable, slide-delimited text — no LibreOffice detour.
-
 function decodeXml(text: string) {
   return text
     .replace(/&amp;/g, "&")
@@ -20,7 +15,10 @@ function decodeXml(text: string) {
 
 function extractTagText(xml: string, tagName: string) {
   const parts: string[] = [];
-  const re = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "gi");
+  const re = new RegExp(
+    `<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`,
+    "gi",
+  );
   let match: RegExpExecArray | null;
   while ((match = re.exec(xml))) parts.push(decodeXml(match[1]));
   return parts;
@@ -35,18 +33,8 @@ async function readZipText(zip: JSZip, path: string) {
   return entry ? entry.async("text") : null;
 }
 
-/**
- * Extract a `.pptx` presentation's text as slide-delimited markdown. Returns an
- * empty string for files JSZip can't open (e.g. legacy OLE2 `.ppt`), so callers
- * degrade gracefully rather than throw.
- */
-export async function extractPresentationText(buffer: Buffer): Promise<string> {
-  let zip: JSZip;
-  try {
-    zip = await JSZip.loadAsync(buffer);
-  } catch {
-    return "";
-  }
+export async function extractPresentationText(buffer: Buffer) {
+  const zip = await JSZip.loadAsync(buffer);
   const slidePaths = Object.keys(zip.files)
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
     .sort(naturalSort);

@@ -11,16 +11,16 @@ import { docxToPdf } from "../../lib/convert";
 import { loadActiveVersion } from "../../lib/documentVersions";
 import { maybeEnqueueEmbedding } from "../../lib/queue/embeddingQueue";
 import {
-  contentTypeForDocumentType,
-  shouldConvertToPdf,
-} from "../../lib/documentTypes";
-import {
   countPdfPages,
   deleteDocumentAndVersionFiles,
   type Db,
   type Log,
   type UploadedFile,
 } from "./documents.shared";
+import {
+  contentTypeForDocumentType,
+  shouldConvertToPdf,
+} from "../../lib/documentTypes";
 import { ensureDocumentAccess } from "./documents.access";
 
 // ---------------------------------------------------------------------------
