@@ -3,10 +3,10 @@
  *
  * The pane starts signed-in (seeded token). Switching to the Workflows tab
  * mounts WorkflowPicker, which:
- *   - GET /workflows           -> list, filtered to type==="assistant" with a
- *                                 non-empty prompt_md (tabular / empty are hidden)
+ *   - GET /workflows           -> list, filtered to metadata.type==="assistant"
+ *                                 with non-empty skill_md
  *   - Run workflow on document -> reads the doc body, POST /chat (SSE) with the
- *                                 workflow's prompt_md as the user message and the
+ *                                 workflow's skill_md as the user message and the
  *                                 document text as documentContext; streams the
  *                                 answer into a result box
  *   - Insert below cursor      -> paragraph insertion after the current paragraph
@@ -22,33 +22,37 @@ const TOKEN = "wf-test-token";
 const WORKFLOWS = [
   {
     id: "wf-summary",
-    title: "Summarize document",
-    prompt_md: "Summarize the document.",
-    type: "assistant",
-    practice: "Litigation",
+    metadata: {
+      title: "Summarize document",
+      type: "assistant",
+      practice: "Litigation",
+    },
+    skill_md: "Summarize the document.",
   },
   {
     id: "wf-risks",
-    title: "Identify risks",
-    prompt_md: "List the key risks.",
-    type: "assistant",
-    practice: null,
+    metadata: { title: "Identify risks", type: "assistant", practice: null },
+    skill_md: "List the key risks.",
   },
   // Filtered out: tabular workflows need a different endpoint.
   {
     id: "wf-table",
-    title: "Extract parties table",
-    prompt_md: "columns: party, role",
-    type: "tabular",
-    practice: null,
+    metadata: {
+      title: "Extract parties table",
+      type: "tabular",
+      practice: null,
+    },
+    skill_md: "columns: party, role",
   },
-  // Filtered out: assistant but blank prompt_md => not runnable.
+  // Filtered out: assistant but blank skill_md => not runnable.
   {
     id: "wf-empty",
-    title: "Blank prompt workflow",
-    prompt_md: "   ",
-    type: "assistant",
-    practice: null,
+    metadata: {
+      title: "Blank prompt workflow",
+      type: "assistant",
+      practice: null,
+    },
+    skill_md: "   ",
   },
 ];
 
@@ -146,9 +150,19 @@ test("runs the selected workflow and streams the result", async ({
   await openWorkflows(addin, WORKFLOWS);
   await addin.mockChatStream(["The contract ", "has three key risks."]);
 
+  const requestPromise = page.waitForRequest("**/chat");
   await page
     .getByRole("button", { name: "Run workflow on document" })
     .click();
+  const request = await requestPromise;
+  const body = request.postDataJSON();
+  expect(body.messages[0]).toEqual({
+    role: "user",
+    content: "Summarize the document.",
+  });
+  expect(body.documentContext).toBe(
+    "This Agreement is between Acme and Beta."
+  );
 
   // The streamed deltas are accumulated into the result box.
   await expect(page.getByText("The contract has three key risks.")).toBeVisible();

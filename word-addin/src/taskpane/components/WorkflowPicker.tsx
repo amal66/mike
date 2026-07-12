@@ -28,7 +28,7 @@ export function WorkflowPicker(): React.ReactElement {
         // runnable as a document chat (they need column config + a different
         // endpoint).
         const data = (all ?? []).filter(
-          (w) => w.type === "assistant" && (w.prompt_md ?? "").trim()
+          (w) => w.metadata.type === "assistant" && (w.skill_md ?? "").trim()
         );
         setWorkflows(data);
         if (data.length > 0) setSelectedId(data[0].id);
@@ -58,7 +58,7 @@ export function WorkflowPicker(): React.ReactElement {
       await streamAssistant(
         {
           messages: [
-            { role: "user", content: selectedWorkflow.prompt_md ?? "" },
+            { role: "user", content: selectedWorkflow.skill_md ?? "" },
           ],
           documentContext: docText,
         },
@@ -122,13 +122,13 @@ export function WorkflowPicker(): React.ReactElement {
         >
           {workflows.map((w) => (
             <option key={w.id} value={w.id}>
-              {w.title}
+              {w.metadata.title}
             </option>
           ))}
         </Select>
-        {selectedWorkflow?.practice && (
+        {selectedWorkflow?.metadata.practice && (
           <p className="text-xs text-muted-foreground">
-            {selectedWorkflow.practice}
+            {selectedWorkflow.metadata.practice}
           </p>
         )}
       </div>

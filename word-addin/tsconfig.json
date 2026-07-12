@@ -29,5 +29,9 @@
     "../packages/shared/**/*.tsx",
     "../packages/api-client/src/**/*.ts",
     "../packages/core/src/**/*.ts"
+  ],
+  "exclude": [
+    "../packages/api-client/src/**/*.test.ts",
+    "../packages/api-client/src/**/__tests__/**"
   ]
 }

@@ -1076,9 +1076,8 @@ export async function streamChat(payload: {
 /**
  * Read an SSE (text/event-stream) response body frame-by-frame and hand each
  * parsed `data:` payload to `onEvent`. Pure transport: it does not interpret
- * event types — that is the caller's job. This is the one canonical reader
- * shared by every streaming consumer (web + the Word add-in) so the
- * framing/`[DONE]`/parse rules live in exactly one place.
+ * event types — that is the caller's job. The Word add-in uses this shared
+ * transport instead of carrying a second, subtly different SSE parser.
  *
  * `[DONE]` is terminal: the backend emits a harmless trailing `{"type":"error"}`
  * frame after it, and callers rely on never seeing anything past `[DONE]`.

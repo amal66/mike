@@ -6,6 +6,21 @@ const webpack = require("webpack");
 module.exports = async (_env, options) => {
   const isDev = options.mode !== "production";
 
+  if (!isDev) {
+    const required = [
+      "REACT_APP_API_BASE_URL",
+      "REACT_APP_SUPABASE_URL",
+      "REACT_APP_SUPABASE_ANON_KEY",
+      "REACT_APP_WEB_APP_URL",
+    ];
+    const missing = required.filter((name) => !process.env[name]?.trim());
+    if (missing.length > 0) {
+      throw new Error(
+        `Production Word build is missing: ${missing.join(", ")}`
+      );
+    }
+  }
+
   /** @type {import('webpack-dev-server').Configuration} */
   const devServerConfig = {
     port: 3000,
@@ -134,13 +149,13 @@ module.exports = async (_env, options) => {
       }),
       // Expose env vars to the bundle so TypeScript process.env calls compile
       new webpack.EnvironmentPlugin({
-        REACT_APP_API_BASE_URL: "http://localhost:3001",
-        REACT_APP_SUPABASE_URL: "",
-        REACT_APP_SUPABASE_ANON_KEY: "",
+        REACT_APP_API_BASE_URL: isDev ? "http://localhost:3001" : undefined,
+        REACT_APP_SUPABASE_URL: isDev ? "" : undefined,
+        REACT_APP_SUPABASE_ANON_KEY: isDev ? "" : undefined,
         REACT_APP_DEFAULT_MODEL: "claude-sonnet-4-6",
         // The Mike web app origin — the task pane links here (e.g. the
         // account/api-keys page); it never fetches from it.
-        REACT_APP_WEB_APP_URL: "http://localhost:3000",
+        REACT_APP_WEB_APP_URL: isDev ? "http://localhost:3000" : undefined,
         NODE_ENV: isDev ? "development" : "production",
       }),
     ],

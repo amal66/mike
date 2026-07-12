@@ -6,7 +6,7 @@
 #
 # What it does (idempotent — safe to re-run):
 #   1. Verifies Node is available.
-#   2. Reads the Supabase URL + anon key from frontend/.env.local (the same
+#   2. Reads the Supabase URL + publishable key from apps/web/.env.local (the same
 #      values the Next.js app uses) and writes word-addin/.env.development —
 #      the webpack build inlines these at compile time, so they must exist
 #      before the bundle is built.
@@ -19,9 +19,8 @@
 #   7. Sources the env and runs `npm start`, which boots the webpack dev server
 #      on https://localhost:3000 and sideloads the add-in into Word desktop.
 #
-# Prerequisite: the Mike backend must be running (cd backend && npm run dev),
-# and frontend/.env.local must be filled in (see the repo README). The add-in
-# uses the SAME Supabase project and backend as the web app.
+# Prerequisite: the Mike API must be running (`npm run dev:api` at repo root),
+# and apps/web/.env.local must be filled in (see the repo README).
 #
 # Pass --setup-only to do everything except the port check + final `npm start`.
 #
@@ -40,14 +39,16 @@ warn() { printf "    \033[1;33m! %s\033[0m\n" "$1"; }
 
 # ── 1. Prerequisites ─────────────────────────────────────────────────────────
 step "Checking prerequisites"
-command -v node >/dev/null 2>&1 || { echo "Node.js 18+ is required (https://nodejs.org)"; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "Node.js 22+ is required (https://nodejs.org)"; exit 1; }
+NODE_MAJOR="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
+[ "$NODE_MAJOR" -ge 22 ] || { echo "Node.js 22+ is required; found $(node --version)"; exit 1; }
 ok "node $(node --version)"
 
-# ── 2. Read Supabase config from frontend/.env.local ─────────────────────────
+# ── 2. Read Supabase config from apps/web/.env.local ─────────────────────────
 # The add-in signs in against the SAME Supabase project as the web app, so we
-# reuse the frontend's env file rather than asking you to copy the keys twice.
-step "Reading Supabase config from frontend/.env.local"
-FE_ENV="$ROOT_DIR/frontend/.env.local"
+# reuse the web app's env file rather than asking you to copy the keys twice.
+step "Reading Supabase config from apps/web/.env.local"
+FE_ENV="$ROOT_DIR/apps/web/.env.local"
 read_env() { [ -f "$FE_ENV" ] && grep -E "^$1=" "$FE_ENV" | head -1 | cut -d= -f2- | tr -d '"' || true; }
 SUPA_URL="$(read_env NEXT_PUBLIC_SUPABASE_URL)"
 ANON="$(read_env NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY)"
@@ -83,7 +84,7 @@ EOF
 if [ -n "$ANON" ]; then
     ok "wrote proxied URLs + anon key"
 else
-    warn "No anon key found — fill frontend/.env.local and re-run."
+    warn "No publishable key found — fill apps/web/.env.local and re-run."
 fi
 
 # ── 4. Dependencies ──────────────────────────────────────────────────────────
@@ -96,9 +97,8 @@ else
 fi
 
 # ── 5. Mike backend health (API + Supabase) ──────────────────────────────────
-# The add-in is useless without the backend: sign-in goes to Supabase
-# (/auth/v1/token) and uploads use Supabase storage, while chat/actions/
-# workflows/projects call the Mike backend. Verify both before launching.
+# The add-in is useless without the API: sign-in goes to Supabase while chat,
+# actions, workflows, project browsing, and uploads call the Mike API.
 step "Checking the Mike backend is running"
 BACKEND_OK=1
 
@@ -109,8 +109,8 @@ if [ "$health_code" = "200" ]; then
     ok "Mike backend healthy at $API_BASE"
 else
     BACKEND_OK=0
-    warn "Mike backend NOT reachable at $API_BASE (HTTP $health_code)."
-    warn "Start it from the repo root:  cd backend && npm run dev"
+    warn "Mike API NOT reachable at $API_BASE (HTTP $health_code)."
+    warn "Start it from the repo root:  npm run dev:api"
 fi
 
 # 5b. Supabase — required for sign-in and document storage.
@@ -127,7 +127,7 @@ fi
 
 # ── 6. Port 3000 availability ─────────────────────────────────────────────────
 # The webpack dev server AND the add-in manifest are hardwired to
-# https://localhost:3000. The Mike web app (`npm run dev` in frontend/) also
+# https://localhost:3000. The Mike web app (`npm run dev:web`) also
 # binds 3000, so the two collide. Fail fast with a clear message BEFORE the cert
 # prompt / launch — otherwise `npm start` dies with an opaque EADDRINUSE.
 # (Skipped for --setup-only, which never launches; re-running while the add-in's
@@ -140,7 +140,7 @@ if [ "$SETUP_ONLY" != 1 ]; then
         echo "    The add-in dev server and Word's manifest both require https://localhost:3000."
         echo "    This is most likely the Mike web app — stop it first:"
         echo "      lsof -nP -iTCP:3000 -sTCP:LISTEN     # confirm what it is"
-        echo "      # then stop that process (e.g. quit the frontend 'npm run dev')"
+        echo "      # then stop that process (e.g. quit 'npm run dev:web')"
         echo "    Then re-run this script."
         exit 1
     fi
@@ -169,8 +169,8 @@ fi
 if [ "$BACKEND_OK" != 1 ]; then
     step "Mike backend is not running"
     echo "    The add-in needs Mike running before it does anything useful. Start it:"
-    echo "      (repo root)  cd backend && npm run dev    # the Mike backend on :3001"
-    echo "    and make sure frontend/.env.local has your Supabase URL + anon key."
+    echo "      (repo root)  npm run dev:api    # the Mike API on :3001"
+    echo "    and make sure apps/web/.env.local has your Supabase URL + publishable key."
     echo "    Then re-run this script. To launch anyway, set FORCE=1 (sign-in will fail until Mike is up)."
     [ "${FORCE:-0}" = 1 ] || exit 1
     warn "FORCE=1 set — launching despite the backend being down."

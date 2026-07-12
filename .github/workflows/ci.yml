@@ -155,6 +155,12 @@ jobs:
   word-addin:
     name: Word add-in build and tests
     runs-on: ubuntu-latest
+    env:
+      REACT_APP_API_BASE_URL: https://api.example.invalid
+      REACT_APP_SUPABASE_URL: https://supabase.example.invalid
+      REACT_APP_SUPABASE_ANON_KEY: ci-publishable-key
+      REACT_APP_WEB_APP_URL: https://app.example.invalid
+      WORD_ADDIN_PUBLIC_URL: https://word.example.invalid
     defaults:
       run:
         working-directory: word-addin
@@ -169,6 +175,7 @@ jobs:
 
       - run: npm ci
       - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
       - run: npm run build
       - run: npm run build:e2e
       - run: npm run test:e2e
