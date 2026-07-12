@@ -8,10 +8,12 @@ import { __setStripeForTests } from "../stripe";
 // ---------------------------------------------------------------------------
 
 interface MockTable {
-    insertResult: { error: { code?: string } | null };
+    insertResult: { error: { code?: string; message?: string } | null };
     selectResult: { data: unknown; error: { code?: string } | null };
+    updateResult: { error: { message?: string } | null };
     updates: Record<string, unknown>[];
     inserts: Record<string, unknown>[];
+    deletes: string[];
 }
 
 function makeDb(overrides: Partial<Record<string, Partial<MockTable>>> = {}) {
@@ -21,8 +23,10 @@ function makeDb(overrides: Partial<Record<string, Partial<MockTable>>> = {}) {
             tables[name] = {
                 insertResult: { error: null },
                 selectResult: { data: null, error: null },
+                updateResult: { error: null },
                 updates: [],
                 inserts: [],
+                deletes: [],
             };
             Object.assign(tables[name], overrides[name] ?? {});
         }
@@ -50,7 +54,15 @@ function makeDb(overrides: Partial<Record<string, Partial<MockTable>>> = {}) {
                 update(row: Record<string, unknown>) {
                     t.updates.push(row);
                     return {
-                        eq: () => Promise.resolve({ error: null }),
+                        eq: () => Promise.resolve(t.updateResult),
+                    };
+                },
+                delete() {
+                    return {
+                        eq(_column: string, value: string) {
+                            t.deletes.push(value);
+                            return Promise.resolve({ error: null });
+                        },
                     };
                 },
             };
@@ -93,10 +105,7 @@ describe("constructWebhookEvent — signature verification", () => {
             webhooks: { constructEvent },
         } as unknown as Stripe);
 
-        const event = constructWebhookEvent(
-            Buffer.from("{}"),
-            "t=1,v1=abc",
-        );
+        const event = constructWebhookEvent(Buffer.from("{}"), "t=1,v1=abc");
 
         expect(event).toBe(fakeEvent);
         expect(constructEvent).toHaveBeenCalledWith(
@@ -110,14 +119,16 @@ describe("constructWebhookEvent — signature verification", () => {
         __setStripeForTests({
             webhooks: { constructEvent: vi.fn() },
         } as unknown as Stripe);
-        expect(() => constructWebhookEvent(Buffer.from("{}"), undefined)).toThrow(
-            /Stripe-Signature/i,
-        );
+        expect(() =>
+            constructWebhookEvent(Buffer.from("{}"), undefined),
+        ).toThrow(/Stripe-Signature/i);
     });
 
     it("propagates Stripe's verification failure (tampered payload)", () => {
         const constructEvent = vi.fn().mockImplementation(() => {
-            throw new Error("No signatures found matching the expected signature");
+            throw new Error(
+                "No signatures found matching the expected signature",
+            );
         });
         __setStripeForTests({
             webhooks: { constructEvent },
@@ -178,6 +189,43 @@ describe("handleStripeEvent — idempotency", () => {
             event_id: "evt_new",
             type: "invoice.paid",
         });
+    });
+
+    it("fails closed when the idempotency ledger cannot claim the event", async () => {
+        const db = makeDb({
+            billing_events: {
+                insertResult: {
+                    error: { code: "08006", message: "connection lost" },
+                },
+            },
+        });
+        const event = {
+            id: "evt_ledger_down",
+            type: "invoice.paid",
+            data: { object: { customer: "cus_1", period_end: 1 } },
+        } as unknown as Stripe.Event;
+
+        await expect(handleStripeEvent(event, db)).rejects.toThrow(/claim/i);
+        expect(db._tables.user_profiles?.updates ?? []).toHaveLength(0);
+    });
+
+    it("releases the event claim when a billing side effect fails", async () => {
+        const db = makeDb({
+            user_profiles: {
+                selectResult: { data: { user_id: "user-1" }, error: null },
+                updateResult: { error: { message: "write failed" } },
+            },
+        });
+        const event = {
+            id: "evt_retry_me",
+            type: "invoice.paid",
+            data: { object: { customer: "cus_1", period_end: 1 } },
+        } as unknown as Stripe.Event;
+
+        await expect(handleStripeEvent(event, db)).rejects.toThrow(
+            /reset credits/i,
+        );
+        expect(db._tables.billing_events.deletes).toEqual(["evt_retry_me"]);
     });
 });
 

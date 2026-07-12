@@ -2,10 +2,7 @@ import type Stripe from "stripe";
 import { logger } from "../logger";
 import { getAdminClient, type MikeSupabaseClient } from "../supabase";
 import { getStripe } from "./stripe";
-import {
-    findUserIdForCustomer,
-    snapshotFromSubscription,
-} from "./stripe";
+import { findUserIdForCustomer, snapshotFromSubscription } from "./stripe";
 
 // ---------------------------------------------------------------------------
 // Stripe webhook handling.
@@ -58,8 +55,8 @@ export function constructWebhookEvent(
  * have seen it (caller should proceed), or `false` if it was already processed
  * (caller should no-op). Implemented as an insert into a table with the event
  * id as primary key: a duplicate insert fails the unique constraint, which is
- * our idempotency signal. Fails open (returns `true`) only if the table is
- * missing, so a not-yet-migrated DB still functions.
+ * our idempotency signal. Any other ledger failure is fatal: processing a
+ * payment event without idempotency can apply billing side effects twice.
  */
 async function claimEvent(
     event: Stripe.Event,
@@ -74,19 +71,25 @@ async function claimEvent(
     // 23505 = unique_violation -> we have processed this event already.
     if ((error as { code?: string }).code === "23505") return false;
 
-    // 42P01 = undefined_table (migration not applied yet) -> don't block.
-    if ((error as { code?: string }).code === "42P01") {
-        logger.warn(
-            "[billing] billing_events table missing — idempotency disabled",
-        );
-        return true;
-    }
-
-    logger.warn(
-        { eventId: event.id, code: (error as { code?: string }).code },
-        "[billing] failed to record webhook event; processing anyway",
+    throw new Error(
+        `Unable to claim Stripe event ${event.id}: ${error.message ?? "unknown database error"}`,
     );
-    return true;
+}
+
+async function releaseEventClaim(
+    eventId: string,
+    db: MikeSupabaseClient,
+): Promise<void> {
+    const { error } = await db
+        .from("billing_events")
+        .delete()
+        .eq("event_id", eventId);
+    if (error) {
+        logger.error(
+            { eventId, error: error.message },
+            "[billing] failed to release unsuccessful event claim",
+        );
+    }
 }
 
 /** Apply a subscription's current state to a user's profile. */
@@ -96,7 +99,7 @@ async function applySubscription(
     db: MikeSupabaseClient,
 ): Promise<void> {
     const snapshot = snapshotFromSubscription(sub);
-    await db
+    const { error } = await db
         .from("user_profiles")
         .update({
             tier: snapshot.tier,
@@ -107,6 +110,7 @@ async function applySubscription(
             updated_at: new Date().toISOString(),
         })
         .eq("user_id", userId);
+    if (error) throw new Error(`Failed to sync subscription: ${error.message}`);
     logger.info(
         { userId, tier: snapshot.tier, status: snapshot.subscription_status },
         "[billing] subscription synced",
@@ -139,69 +143,84 @@ export async function handleStripeEvent(
         return;
     }
 
-    switch (event.type) {
-        case "checkout.session.completed": {
-            // The user just finished paying. The session links the customer to
-            // the subscription they bought; fetch it and apply the tier.
-            const session = event.data.object as Stripe.Checkout.Session;
-            const userId =
-                session.metadata?.userId ??
-                (await userIdForCustomer(session.customer, db));
-            const subscriptionId =
-                typeof session.subscription === "string"
-                    ? session.subscription
-                    : (session.subscription?.id ?? null);
-            if (userId && subscriptionId) {
-                const sub =
-                    await getStripe().subscriptions.retrieve(subscriptionId);
-                await applySubscription(userId, sub, db);
+    try {
+        switch (event.type) {
+            case "checkout.session.completed": {
+                // The user just finished paying. The session links the customer to
+                // the subscription they bought; fetch it and apply the tier.
+                const session = event.data.object as Stripe.Checkout.Session;
+                const userId =
+                    session.metadata?.userId ??
+                    (await userIdForCustomer(session.customer, db));
+                const subscriptionId =
+                    typeof session.subscription === "string"
+                        ? session.subscription
+                        : (session.subscription?.id ?? null);
+                if (userId && subscriptionId) {
+                    const sub =
+                        await getStripe().subscriptions.retrieve(
+                            subscriptionId,
+                        );
+                    await applySubscription(userId, sub, db);
+                }
+                break;
             }
-            break;
-        }
 
-        case "customer.subscription.created":
-        case "customer.subscription.updated":
-        case "customer.subscription.deleted": {
-            // The subscription changed (upgrade, downgrade, cancel, lapse).
-            // `tierFromSubscription` returns Free for any non-live status, so a
-            // deleted/canceled subscription automatically demotes the user.
-            const sub = event.data.object as Stripe.Subscription;
-            const userId = await userIdForCustomer(sub.customer, db);
-            if (userId) await applySubscription(userId, sub, db);
-            break;
-        }
+            case "customer.subscription.created":
+            case "customer.subscription.updated":
+            case "customer.subscription.deleted": {
+                // The subscription changed (upgrade, downgrade, cancel, lapse).
+                // `tierFromSubscription` returns Free for any non-live status, so a
+                // deleted/canceled subscription automatically demotes the user.
+                const sub = event.data.object as Stripe.Subscription;
+                const userId = await userIdForCustomer(sub.customer, db);
+                if (userId) await applySubscription(userId, sub, db);
+                break;
+            }
 
-        case "invoice.paid": {
-            // A renewal succeeded — the new billing period started, so reset
-            // the user's monthly message credits. We integrate with the
-            // existing credits columns rather than inventing new counters.
-            const invoice = event.data.object as Stripe.Invoice;
-            const userId = await userIdForCustomer(invoice.customer, db);
-            if (userId) {
-                const periodEnd = invoice.period_end
-                    ? new Date(invoice.period_end * 1000).toISOString()
-                    : null;
-                const update: Record<string, unknown> = {
-                    message_credits_used: 0,
-                    updated_at: new Date().toISOString(),
-                };
-                if (periodEnd) update.credits_reset_date = periodEnd;
-                await db
-                    .from("user_profiles")
-                    .update(update)
-                    .eq("user_id", userId);
-                logger.info(
-                    { userId },
-                    "[billing] credits reset on invoice.paid",
+            case "invoice.paid": {
+                // A renewal succeeded — the new billing period started, so reset
+                // the user's monthly message credits. We integrate with the
+                // existing credits columns rather than inventing new counters.
+                const invoice = event.data.object as Stripe.Invoice;
+                const userId = await userIdForCustomer(invoice.customer, db);
+                if (userId) {
+                    const periodEnd = invoice.period_end
+                        ? new Date(invoice.period_end * 1000).toISOString()
+                        : null;
+                    const update: Record<string, unknown> = {
+                        message_credits_used: 0,
+                        updated_at: new Date().toISOString(),
+                    };
+                    if (periodEnd) update.credits_reset_date = periodEnd;
+                    const { error } = await db
+                        .from("user_profiles")
+                        .update(update)
+                        .eq("user_id", userId);
+                    if (error)
+                        throw new Error(
+                            `Failed to reset credits: ${error.message}`,
+                        );
+                    logger.info(
+                        { userId },
+                        "[billing] credits reset on invoice.paid",
+                    );
+                }
+                break;
+            }
+
+            default:
+                logger.debug(
+                    { type: event.type },
+                    "[billing] unhandled event type ignored",
                 );
-            }
-            break;
         }
-
-        default:
-            logger.debug(
-                { type: event.type },
-                "[billing] unhandled event type ignored",
-            );
+    } catch (error) {
+        // The event id is inserted before side effects. If a side effect fails,
+        // remove that claim so Stripe's retry is allowed to process it again.
+        // Without this, one transient DB/provider error would permanently turn
+        // every later delivery into a false "duplicate" success.
+        await releaseEventClaim(event.id, db);
+        throw error;
     }
 }
