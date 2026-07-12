@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  readSSE,
   streamChat,
   streamProjectChat,
 } from "@/app/lib/mikeApi";
@@ -231,6 +230,9 @@ export function useAssistantChat({
         throw new Error(`HTTP ${response.status}: ${errText}`);
       }
 
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
       // Context handed to the SSE dispatcher: the event buffer + its mutators
       // and the plain state setters. `onChatId` records the server-assigned id
       // back into this closure so the post-stream routing below can use it.
@@ -252,15 +254,36 @@ export function useAssistantChat({
         pushThinkingPlaceholder,
       };
 
-      await readSSE(
-        response,
-        (data) =>
-          applyAssistantStreamEvent(
-            data as { type?: string; [key: string]: unknown },
-            streamCtx,
-          ),
-        { signal: controller.signal },
-      );
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
+
+          const dataStr = trimmed.slice(5).trim();
+          if (dataStr === "[DONE]") continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            applyAssistantStreamEvent(data, streamCtx);
+          } catch (e) {
+            console.warn(
+              "[useAssistantChat] failed to parse SSE line:",
+              trimmed,
+              e,
+            );
+          }
+        }
+      }
 
       finalizeStreamingReasoning();
       setIsResponseLoading(false);
