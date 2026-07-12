@@ -8,6 +8,7 @@ import { AssistantMessage } from "./AssistantMessage";
 import { ChatInput } from "./ChatInput";
 import type { ChatInputHandle } from "./ChatInput";
 import { AskInputPopup } from "./AskInputPopup";
+import { findActiveAskInput } from "./activeAskInput";
 import {
     AssistantSidePanel,
     type AssistantSidePanelTab,
@@ -122,19 +123,16 @@ export function ChatView({
         [],
     );
 
-    const hidePanel = useCallback(
-        (afterHidden: () => void) => {
-            if (panelCloseTimerRef.current !== null) {
-                window.clearTimeout(panelCloseTimerRef.current);
-            }
-            setPanelVisible(false);
-            panelCloseTimerRef.current = window.setTimeout(() => {
-                panelCloseTimerRef.current = null;
-                afterHidden();
-            }, ASSISTANT_PANEL_TRANSITION_MS);
-        },
-        [],
-    );
+    const hidePanel = useCallback((afterHidden: () => void) => {
+        if (panelCloseTimerRef.current !== null) {
+            window.clearTimeout(panelCloseTimerRef.current);
+        }
+        setPanelVisible(false);
+        panelCloseTimerRef.current = window.setTimeout(() => {
+            panelCloseTimerRef.current = null;
+            afterHidden();
+        }, ASSISTANT_PANEL_TRANSITION_MS);
+    }, []);
 
     const unmountPanel = useCallback(
         (afterUnmount?: () => void) => {
@@ -595,34 +593,7 @@ export function ChatView({
         };
     }, [panelMounted]);
 
-    const rawActiveInput = (() => {
-        for (
-            let messageIndex = messages.length - 1;
-            messageIndex >= 0;
-            messageIndex--
-        ) {
-            const message = messages[messageIndex];
-            if (message.role === "user") return null;
-            if (message.role !== "assistant" || !message.events) continue;
-            for (
-                let eventIndex = message.events.length - 1;
-                eventIndex >= 0;
-                eventIndex--
-            ) {
-                const event = message.events[eventIndex];
-                if (event.type === "ask_inputs_response") {
-                    return null;
-                }
-                if (event.type === "ask_inputs") {
-                    return {
-                        key: `${messageIndex}-${eventIndex}`,
-                        event,
-                    };
-                }
-            }
-        }
-        return null;
-    })();
+    const rawActiveInput = findActiveAskInput(messages);
     const activeInput =
         rawActiveInput && !hiddenAskInputKeys.has(rawActiveInput.key)
             ? rawActiveInput
@@ -697,8 +668,7 @@ export function ChatView({
                                                 isError={!!msg.error}
                                                 errorMessage={msg.error}
                                                 onRetry={
-                                                    i ===
-                                                        messages.length - 1 &&
+                                                    i === messages.length - 1 &&
                                                     !!msg.error &&
                                                     !isResponseLoading &&
                                                     retryLast

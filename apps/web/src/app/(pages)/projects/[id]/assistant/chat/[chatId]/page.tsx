@@ -39,6 +39,7 @@ import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
 import { ChatInput } from "@/app/components/assistant/ChatInput";
 import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
 import { AskInputPopup } from "@/app/components/assistant/AskInputPopup";
+import { findActiveAskInput } from "@/app/components/assistant/activeAskInput";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
@@ -524,37 +525,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         setHiddenAskInputKeys(new Set());
     }, [chatId]);
 
-    // Locate an unanswered ask_inputs event at the tail of the conversation:
-    // scan messages backwards, stopping at the last user turn; within the
-    // trailing assistant message an ask_inputs_response means it was answered.
-    const rawActiveInput = (() => {
-        for (
-            let messageIndex = messages.length - 1;
-            messageIndex >= 0;
-            messageIndex--
-        ) {
-            const message = messages[messageIndex];
-            if (message.role === "user") return null;
-            if (message.role !== "assistant" || !message.events) continue;
-            for (
-                let eventIndex = message.events.length - 1;
-                eventIndex >= 0;
-                eventIndex--
-            ) {
-                const event = message.events[eventIndex];
-                if (event.type === "ask_inputs_response") {
-                    return null;
-                }
-                if (event.type === "ask_inputs") {
-                    return {
-                        key: `${messageIndex}-${eventIndex}`,
-                        event,
-                    };
-                }
-            }
-        }
-        return null;
-    })();
+    const rawActiveInput = findActiveAskInput(messages);
     const activeAskInput =
         rawActiveInput && !hiddenAskInputKeys.has(rawActiveInput.key)
             ? rawActiveInput
@@ -892,14 +863,18 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                         ? {
                               label: project.name,
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(
+                                      `/projects/${projectId}/assistant`,
+                                  ),
                               title: "Back to project",
                           }
                         : {
                               loading: true,
                               skeletonClassName: "w-32",
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(
+                                      `/projects/${projectId}/assistant`,
+                                  ),
                               title: "Back to project",
                           },
                     chatLoaded
@@ -926,16 +901,14 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     {
                                         label: "Rename",
                                         icon: Pencil,
-                                        onSelect: () =>
-                                            void handleRenameChat(),
+                                        onSelect: () => void handleRenameChat(),
                                     },
                                     {
                                         label: deletingChat
                                             ? "Deleting..."
                                             : "Delete",
                                         icon: Trash2,
-                                        onSelect: () =>
-                                            void handleDeleteChat(),
+                                        onSelect: () => void handleDeleteChat(),
                                         disabled: deletingChat,
                                         variant: "danger",
                                     },
@@ -1118,9 +1091,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     project?.documents ?? []
                                 ).find((d) => d.id === tab.documentId)
                                     ?.latest_version_number as
-                                    | number
-                                    | null
-                                    | undefined;
+                                    number | null | undefined;
                                 const showVersionBadge =
                                     typeof versionNumber === "number" &&
                                     Number.isFinite(versionNumber) &&
@@ -1331,9 +1302,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                             }
                                             errorChatId={chatId ?? undefined}
                                             citations={msg.citations}
-                                            citationStatus={
-                                                msg.citationStatus
-                                            }
+                                            citationStatus={msg.citationStatus}
                                             onCitationClick={
                                                 handleCitationClick
                                             }
