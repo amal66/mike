@@ -13,12 +13,6 @@
   <DisplayName DefaultValue="Mike" />
   <Description DefaultValue="AI-powered legal assistant for Word" />
 
-  <Requirements>
-    <Sets DefaultMinVersion="1.4">
-      <Set Name="WordApi" />
-    </Sets>
-  </Requirements>
-
   <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-80.png" />
   <SupportUrl DefaultValue="https://localhost:3000" />
@@ -31,9 +25,14 @@
     <Host Name="Document" />
   </Hosts>
 
+  <Requirements>
+    <Sets DefaultMinVersion="1.4">
+      <Set Name="WordApi" />
+    </Sets>
+  </Requirements>
+
   <DefaultSettings>
     <SourceLocation DefaultValue="https://localhost:3000/taskpane.html" />
-    <RequestedWidth>380</RequestedWidth>
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>
@@ -68,7 +67,6 @@
                   <Action xsi:type="ShowTaskpane">
                     <TaskpaneId>MikeTaskpane</TaskpaneId>
                     <SourceLocation resid="Taskpane.Url" />
-                    <RequestedWidth>380</RequestedWidth>
                   </Action>
                 </Control>
 

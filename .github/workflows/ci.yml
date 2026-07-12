@@ -177,6 +177,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
       - run: npm run build
+      - run: npx office-addin-manifest validate manifest.xml
+      - run: npx office-addin-manifest validate dist/manifest.xml
       - run: npm run build:e2e
       - run: npm run test:e2e
 
