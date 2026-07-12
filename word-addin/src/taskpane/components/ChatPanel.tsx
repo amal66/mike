@@ -21,7 +21,7 @@ export function ChatPanel(): React.ReactElement {
   const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
-  const { readDocumentText, insertAtCursor, insertWithTrackChanges } = useWordDoc();
+  const { readDocumentText, insertBelowSelection } = useWordDoc();
 
   // Auto-scroll on new content
   useEffect(() => {
@@ -149,16 +149,16 @@ export function ChatPanel(): React.ReactElement {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => void insertAtCursor(msg.content)}
+                        onClick={() => void insertBelowSelection(msg.content)}
                       >
-                        Insert at cursor
+                        Insert below cursor
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => void insertWithTrackChanges(msg.content)}
+                        onClick={() => void insertBelowSelection(msg.content, true)}
                       >
-                        Apply as tracked change
+                        Insert below (tracked)
                       </Button>
                     </>
                   ) : undefined

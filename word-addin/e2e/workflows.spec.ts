@@ -9,8 +9,8 @@
  *                                 workflow's prompt_md as the user message and the
  *                                 document text as documentContext; streams the
  *                                 answer into a result box
- *   - Insert at cursor         -> insertAtCursor(result): selection.insertText(..,
- *                                 replace) with track-changes OFF -> wordCalls.inserts
+ *   - Insert below cursor      -> paragraph insertion after the current paragraph
+ *                                 with track-changes OFF -> wordCalls.inserts
  *
  * All network is mocked via the shared fixture; no live backend is contacted.
  */
@@ -159,7 +159,7 @@ test("runs the selected workflow and streams the result", async ({
   ).toBeEnabled();
 });
 
-test("inserts the workflow result at the cursor", async ({ addin, page }) => {
+test("inserts the workflow result below the cursor without replacing text", async ({ addin, page }) => {
   await openWorkflows(addin, WORKFLOWS);
   await addin.mockChatStream(["Draft clause: ", "indemnification applies."]);
 
@@ -170,14 +170,14 @@ test("inserts the workflow result at the cursor", async ({ addin, page }) => {
     page.getByText("Draft clause: indemnification applies.")
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Insert at cursor" }).click();
+  await page.getByRole("button", { name: "Insert below cursor" }).click();
 
-  // insertAtCursor replaces the selection with track-changes OFF -> `inserts`.
+  // Generated blocks are inserted after the current paragraph and never replace.
   const calls = await addin.wordCalls();
   expect(calls.inserts).toHaveLength(1);
   expect(calls.inserts[0]).toMatchObject({
     text: "Draft clause: indemnification applies.",
-    location: "Replace",
+    location: "After",
   });
   expect(calls.trackedChanges).toHaveLength(0);
 });
@@ -197,7 +197,7 @@ test("surfaces a streaming error when the workflow run fails", async ({
   await expect(page.getByText("model unavailable")).toBeVisible();
   // No result was produced, so no Insert button appears.
   await expect(
-    page.getByRole("button", { name: "Insert at cursor" })
+    page.getByRole("button", { name: "Insert below cursor" })
   ).toHaveCount(0);
 });
 
@@ -220,6 +220,6 @@ test("clears a previous result when switching workflows", async ({
 
   await expect(page.getByText("Summary text.")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Insert at cursor" })
+    page.getByRole("button", { name: "Insert below cursor" })
   ).toHaveCount(0);
 });

@@ -148,6 +148,32 @@ jobs:
       - run: npm run build
 
   # -----------------------------------------------------------------------
+  # Word add-in: hermetic Office.js browser tests. Unlike the main web E2E
+  # suite, these use an in-page Word host mock and require no Supabase stack,
+  # model key, or external services, so they can gate every PR cheaply.
+  # -----------------------------------------------------------------------
+  word-addin:
+    name: Word add-in build and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: word-addin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: word-addin/package-lock.json
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run build:e2e
+      - run: npm run test:e2e
+
+  # -----------------------------------------------------------------------
   # Slower job: migration validation against real local Supabase (3-5 min)
   # Runs on PRs and pushes. Supabase's local stack applies the migrations
   # against a real Postgres/Auth environment, which catches SQL drift that
@@ -178,7 +204,7 @@ jobs:
   deploy-migrations:
     name: Deploy migrations
     runs-on: ubuntu-latest
-    needs: [api, packages, web, migrations, evals, python-sdk]
+    needs: [api, packages, web, word-addin, migrations, evals, python-sdk]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4

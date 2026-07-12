@@ -18,7 +18,7 @@ export function WorkflowPicker(): React.ReactElement {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState("");
   const [runError, setRunError] = useState<string | null>(null);
-  const { readDocumentText, insertAtCursor } = useWordDoc();
+  const { readDocumentText, insertBelowSelection } = useWordDoc();
 
   useEffect(() => {
     listWorkflows("assistant")
@@ -159,9 +159,9 @@ export function WorkflowPicker(): React.ReactElement {
               size="sm"
               variant="outline"
               className="self-start"
-              onClick={() => void insertAtCursor(result)}
+              onClick={() => void insertBelowSelection(result)}
             >
-              Insert at cursor
+              Insert below cursor
             </Button>
           )}
         </div>

@@ -24,7 +24,7 @@ test("shows the empty-state prompt before any message is sent", async ({
 
   await expect(page.getByText("Ask anything about your document")).toBeVisible();
   // No bubbles yet: the message list isn't rendered.
-  await expect(page.getByRole("button", { name: "Insert at cursor" })).toHaveCount(
+  await expect(page.getByRole("button", { name: "Insert below cursor" })).toHaveCount(
     0
   );
 });
@@ -109,7 +109,7 @@ test("the request omits documentContext when the context switch is off", async (
   expect(body.documentContext).toBeUndefined();
 });
 
-test("'Insert at cursor' replaces the selection via the Word API (track-changes OFF)", async ({
+test("'Insert below cursor' adds a paragraph without replacing the selection", async ({
   addin,
   page,
 }) => {
@@ -121,19 +121,19 @@ test("'Insert at cursor' replaces the selection via the Word API (track-changes 
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Insert me into the doc.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Insert at cursor" }).click();
+  await page.getByRole("button", { name: "Insert below cursor" }).click();
 
   await expect
     .poll(async () => (await addin.wordCalls()).inserts.length)
     .toBe(1);
   const calls = await addin.wordCalls();
   expect(calls.inserts[0].text).toBe("Insert me into the doc.");
-  expect(calls.inserts[0].location).toBe("Replace");
+  expect(calls.inserts[0].location).toBe("After");
   // A plain insert must NOT be recorded as a tracked change.
   expect(calls.trackedChanges).toHaveLength(0);
 });
 
-test("'Apply as tracked change' inserts a paragraph under track-changes ON", async ({
+test("'Insert below (tracked)' inserts a paragraph under track-changes ON", async ({
   addin,
   page,
 }) => {
@@ -145,7 +145,7 @@ test("'Apply as tracked change' inserts a paragraph under track-changes ON", asy
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Tracked suggestion text.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Apply as tracked change" }).click();
+  await page.getByRole("button", { name: "Insert below (tracked)" }).click();
 
   await expect
     .poll(async () => (await addin.wordCalls()).trackedChanges.length)

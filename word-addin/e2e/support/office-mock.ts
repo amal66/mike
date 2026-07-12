@@ -12,7 +12,7 @@
  *   - Office.FileType / Office.AsyncResultStatus enums
  *   - OfficeRuntime.storage.get/set/removeItem -> token storage, backed by a Map
  *   - Word.run(ctx) with a fake context: body.load/text/getOoxml()/search();
- *     document.getSelection() w/ insertText/insertParagraph/load; context.sync();
+ *     tracked selection ranges, paragraph insertion/formatting, context.sync();
  *     document.changeTrackingMode; Word.InsertLocation; Word.ChangeTrackingMode
  *
  * Read-side state (document text, selection text, stored token) is pre-seedable
@@ -28,7 +28,7 @@ export interface OfficeSeed {
   refreshToken?: string | null;
   /** Text returned by readDocumentText() / body.text. */
   documentText?: string;
-  /** Text returned by getSelectedText() / selection.text. */
+  /** Text exposed by the captured Word selection range. */
   selectionText?: string;
 }
 
@@ -36,7 +36,7 @@ export interface OfficeSeed {
 export interface WordCall {
   text: string;
   location: string;
-  /** Present when the write replaced a body.search() match (tracked changes). */
+  /** Present when a write replaced an exact captured selection. */
   original?: string;
 }
 
@@ -50,6 +50,8 @@ export interface WordCalls {
   changeTrackingMode: string;
   /** Number of times body.getOoxml() was read. */
   ooxmlReads: number;
+  /** Number of ambiguous whole-body searches requested by write code. */
+  searches: number;
 }
 
 /**
@@ -72,6 +74,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
     trackedChanges: [],
     changeTrackingMode: "Off",
     ooxmlReads: 0,
+    searches: 0,
   };
   w.__WORD_CALLS__ = wordCalls;
 
@@ -148,6 +151,10 @@ export function installOfficeMock(seed: OfficeSeed): void {
   };
 
   function makeContext() {
+    const context: any = {
+      document: null,
+      sync: () => Promise.resolve(),
+    };
     const doc: any = {
       changeTrackingMode: ChangeTrackingMode.off,
       // Office.js requires load()+sync() before reading changeTrackingMode; the
@@ -184,6 +191,7 @@ export function installOfficeMock(seed: OfficeSeed): void {
         };
       },
       search: (query: string, _opts?: any) => {
+        wordCalls.searches++;
         const docText: string = w.__OFFICE_SEED__.documentText || "";
         const found =
           !!query &&
@@ -201,28 +209,55 @@ export function installOfficeMock(seed: OfficeSeed): void {
       },
     };
 
-    const selection = {
+    const makeParagraph = (): any => {
+      const paragraph: any = {
+        style: "Normal",
+        alignment: "Left",
+        firstLineIndent: 0,
+        leftIndent: 0,
+        lineSpacing: 12,
+        rightIndent: 0,
+        spaceAfter: 0,
+        spaceBefore: 0,
+        load: (_p?: any) => undefined,
+        insertParagraph: (text: string, location: string) => {
+          recordWrite(text, location);
+          return makeParagraph();
+        },
+      };
+      return paragraph;
+    };
+
+    const selection: any = {
+      context,
       get text() {
         return w.__OFFICE_SEED__.selectionText as string;
       },
       load: (_p?: any) => undefined,
+      track: () => selection,
+      untrack: () => selection,
       insertText: (text: string, location: string) =>
-        recordWrite(text, location),
-      insertParagraph: (text: string, location: string) =>
-        recordWrite(text, location),
+        recordWrite(text, location, w.__OFFICE_SEED__.selectionText),
+      paragraphs: {
+        getLast: () => makeParagraph(),
+      },
     };
 
     doc.body = body;
     doc.getSelection = () => selection;
+    context.document = doc;
 
-    return {
-      document: doc,
-      sync: () => Promise.resolve(),
-    };
+    return context;
   }
 
   w.Word = {
-    run: (cb: any) => Promise.resolve().then(() => cb(makeContext())),
+    run: (objectOrCallback: any, maybeCallback?: any) => {
+      const callback = maybeCallback ?? objectOrCallback;
+      const context = maybeCallback
+        ? objectOrCallback.context
+        : makeContext();
+      return Promise.resolve().then(() => callback(context));
+    },
     InsertLocation,
     ChangeTrackingMode,
   };

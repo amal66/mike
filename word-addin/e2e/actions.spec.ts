@@ -3,11 +3,11 @@
  *
  * The tab exposes four AI actions, all streamed from POST /chat:
  *   1. Improve Writing  — rewrites the current SELECTION; on success offers
- *      "Apply as tracked change" (body.search replace) and "Insert at cursor".
+ *      exact captured-range replacement, tracked or untracked.
  *   2. Proofread        — reads the WHOLE document body, lists issues.
  *   3. Anonymise        — reads the WHOLE document body, lists PII replacements.
  *   4. Draft Clause     — drafts from a free-text prompt; offers "Insert at
- *      cursor" and "Apply as tracked change" (insertParagraph after).
+ *      below cursor, tracked or untracked (insertParagraph after).
  *
  * Every test starts signed-in (seeded token) and lands on the Actions tab.
  * The /chat SSE stream and document/selection state are mocked/seeded so the
@@ -51,10 +51,10 @@ test.describe("Improve Writing", () => {
     await expect(page.getByText("The parties hereby agree.")).toBeVisible();
     // Both apply options surface once the stream finishes.
     await expect(
-      page.getByRole("button", { name: "Apply as tracked change" })
+      page.getByRole("button", { name: "Replace selection (tracked)" })
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Insert at cursor" })
+      page.getByRole("button", { name: "Replace selection", exact: true })
     ).toBeVisible();
   });
 
@@ -71,7 +71,7 @@ test.describe("Improve Writing", () => {
 
     await page.getByRole("button", { name: "Improve selected text" }).click();
     await expect(page.getByText("The parties hereby agree.")).toBeVisible();
-    await page.getByRole("button", { name: "Apply as tracked change" }).click();
+    await page.getByRole("button", { name: "Replace selection (tracked)" }).click();
 
     const calls = await addin.wordCalls();
     expect(calls.trackedChanges).toEqual([
@@ -83,9 +83,10 @@ test.describe("Improve Writing", () => {
     ]);
     expect(calls.changeTrackingMode).toBe("TrackAll");
     expect(calls.inserts).toEqual([]);
+    expect(calls.searches).toBe(0);
   });
 
-  test("inserts the improvement at the cursor without tracking changes", async ({
+  test("replaces the exact captured selection without tracking changes", async ({
     addin,
     page,
   }) => {
@@ -97,13 +98,67 @@ test.describe("Improve Writing", () => {
 
     await page.getByRole("button", { name: "Improve selected text" }).click();
     await expect(page.getByText("The parties hereby agree.")).toBeVisible();
-    await page.getByRole("button", { name: "Insert at cursor" }).click();
+    await page.getByRole("button", { name: "Replace selection", exact: true }).click();
 
     const calls = await addin.wordCalls();
     expect(calls.inserts).toEqual([
-      { text: "The parties hereby agree.", location: "Replace" },
+      {
+        text: "The parties hereby agree.",
+        location: "Replace",
+        original: "the parties agree to this",
+      },
     ]);
     expect(calls.trackedChanges).toEqual([]);
+  });
+
+  test("never substitutes a different duplicate elsewhere in the document", async ({
+    addin,
+    page,
+  }) => {
+    const selection = "the Supplier shall comply";
+    await addin.mockChatStream(["The Supplier must comply."]);
+    await gotoActions(addin, {
+      selectionText: selection,
+      documentText: `${selection}. Middle. ${selection}.`,
+    });
+
+    await page.getByRole("button", { name: "Improve selected text" }).click();
+    await expect(page.getByText("The Supplier must comply.")).toBeVisible();
+    await page
+      .getByRole("button", { name: "Replace selection (tracked)" })
+      .click();
+
+    const calls = await addin.wordCalls();
+    expect(calls.searches).toBe(0);
+    expect(calls.trackedChanges).toEqual([
+      {
+        text: "The Supplier must comply.",
+        location: "Replace",
+        original: selection,
+      },
+    ]);
+  });
+
+  test("refuses to overwrite a selection edited while the model was responding", async ({
+    addin,
+    page,
+  }) => {
+    await addin.mockChatStream(["Improved wording."]);
+    await gotoActions(addin, { selectionText: "Original wording." });
+
+    await page.getByRole("button", { name: "Improve selected text" }).click();
+    await expect(page.getByText("Improved wording.")).toBeVisible();
+    await addin.setSelection("User changed this wording.");
+    await page
+      .getByRole("button", { name: "Replace selection (tracked)" })
+      .click();
+
+    await expect(
+      page.getByText(/selected text changed while Mike was responding/i)
+    ).toBeVisible();
+    const calls = await addin.wordCalls();
+    expect(calls.inserts).toHaveLength(0);
+    expect(calls.trackedChanges).toHaveLength(0);
   });
 
   test("warns when no text is selected and never calls the model", async ({
@@ -120,7 +175,7 @@ test.describe("Improve Writing", () => {
     ).toBeVisible();
     // No apply options because there is no improved text.
     await expect(
-      page.getByRole("button", { name: "Apply as tracked change" })
+      page.getByRole("button", { name: "Replace selection (tracked)" })
     ).toHaveCount(0);
   });
 
@@ -268,10 +323,10 @@ test.describe("Draft Clause", () => {
       )
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Insert at cursor" })
+      page.getByRole("button", { name: "Insert below cursor" })
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Apply as tracked change" })
+      page.getByRole("button", { name: "Insert below (tracked)" })
     ).toBeVisible();
   });
 
@@ -284,11 +339,11 @@ test.describe("Draft Clause", () => {
       .fill("indemnity clause");
     await page.getByRole("button", { name: "Draft clause" }).click();
     await expect(page.getByText("This is the drafted clause.")).toBeVisible();
-    await page.getByRole("button", { name: "Insert at cursor" }).click();
+    await page.getByRole("button", { name: "Insert below cursor" }).click();
 
     const calls = await addin.wordCalls();
     expect(calls.inserts).toEqual([
-      { text: "This is the drafted clause.", location: "Replace" },
+      { text: "This is the drafted clause.", location: "After" },
     ]);
     expect(calls.trackedChanges).toEqual([]);
   });
@@ -305,7 +360,7 @@ test.describe("Draft Clause", () => {
       .fill("indemnity clause");
     await page.getByRole("button", { name: "Draft clause" }).click();
     await expect(page.getByText("This is the drafted clause.")).toBeVisible();
-    await page.getByRole("button", { name: "Apply as tracked change" }).click();
+    await page.getByRole("button", { name: "Insert below (tracked)" }).click();
 
     const calls = await addin.wordCalls();
     expect(calls.trackedChanges).toEqual([
@@ -313,6 +368,32 @@ test.describe("Draft Clause", () => {
     ]);
     expect(calls.changeTrackingMode).toBe("TrackAll");
     expect(calls.inserts).toEqual([]);
+  });
+
+  test("normalises model Markdown into ordered Word paragraphs", async ({
+    addin,
+    page,
+  }) => {
+    await addin.mockChatStream([
+      "```markdown\n## Confidentiality\n\n- Keep **Information** confidential.\n- Notify [Acme](https://example.com).\n```",
+    ]);
+    await gotoActions(addin, { selectionText: "Existing paragraph." });
+
+    await page
+      .getByPlaceholder("e.g. limitation of liability for SaaS product")
+      .fill("confidentiality clause");
+    await page.getByRole("button", { name: "Draft clause" }).click();
+    await expect(page.getByText("Confidentiality")).toBeVisible();
+    await page.getByRole("button", { name: "Insert below cursor" }).click();
+
+    const calls = await addin.wordCalls();
+    expect(calls.inserts).toEqual([
+      { text: "Confidentiality", location: "After" },
+      { text: "", location: "After" },
+      { text: "• Keep Information confidential.", location: "After" },
+      { text: "• Notify Acme.", location: "After" },
+    ]);
+    expect(calls.trackedChanges).toHaveLength(0);
   });
 
   test("surfaces a streaming error message", async ({ addin, page }) => {

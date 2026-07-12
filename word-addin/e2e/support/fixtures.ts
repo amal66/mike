@@ -78,7 +78,7 @@ export interface Addin {
   seedRefreshToken(token: string): void;
   /** Pre-seed the document body text returned by readDocumentText(). */
   seedDocumentText(text: string): void;
-  /** Pre-seed the user's selected text returned by getSelectedText(). */
+  /** Pre-seed the user's selected Word range text. */
   seedSelection(text: string): void;
 
   // ----- navigation -----

@@ -1,5 +1,12 @@
 /// <reference types="office-js" />
 
+import { toWordParagraphs, toWordText } from "../lib/wordText";
+
+export interface WordSelectionAnchor {
+  range: Word.Range;
+  originalText: string;
+}
+
 /**
  * Hook exposing document read/write helpers that wrap the Word JS API.
  * All functions return Promises and must be called in a component context
@@ -87,95 +94,121 @@ export function useWordDoc() {
       );
     });
 
-  /** Replace the current selection with `text`. */
-  const insertAtCursor = (text: string): Promise<void> =>
+  /**
+   * Capture the exact selection the user asked Mike to rewrite. Tracking the
+   * range lets Word adjust its position if unrelated text changes while the
+   * model is responding, without falling back to an ambiguous body search.
+   */
+  const captureSelection = (): Promise<WordSelectionAnchor> =>
     Word.run(async (context) => {
-      const selection = context.document.getSelection();
-      selection.insertText(text, Word.InsertLocation.replace);
+      const range = context.document.getSelection();
+      range.load("text");
+      range.track();
+      await context.sync();
+      return { range, originalText: range.text };
+    });
+
+  const releaseSelection = (anchor: WordSelectionAnchor): Promise<void> =>
+    Word.run(anchor.range, async (context) => {
+      anchor.range.untrack();
       await context.sync();
     });
 
   /**
-   * Find the first occurrence of `originalText` in the document body and
-   * replace it with `newText` under tracked-changes mode.
+   * Replace the exact range captured for the rewrite. Refuse to apply if the
+   * user edited that range while Mike was responding.
    */
-  const insertTrackedChange = (
-    originalText: string,
-    newText: string
-  ): Promise<boolean> =>
-    Word.run(async (context) => {
+  const replaceSelection = (
+    anchor: WordSelectionAnchor,
+    newText: string,
+    tracked: boolean
+  ): Promise<"applied" | "stale"> =>
+    Word.run(anchor.range, async (context) => {
       const doc = context.document;
-      // Read (don't assume) the user's current setting so we can restore it.
+      anchor.range.load("text");
       doc.load("changeTrackingMode");
       await context.sync();
+
+      if (anchor.range.text !== anchor.originalText) return "stale";
+
       const originalMode = doc.changeTrackingMode;
 
       try {
-        doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-
-        const results = doc.body.search(originalText, {
-          matchCase: false,
-          matchWholeWord: false,
-        });
-        results.load("items");
+        if (tracked) doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+        anchor.range.insertText(toWordText(newText), Word.InsertLocation.replace);
         await context.sync();
-
-        if (results.items.length === 0) {
-          // Not found verbatim — e.g. the selection spans paragraph marks or
-          // exceeds Word's 255-char search limit. Report it so the caller can
-          // tell the user instead of silently doing nothing.
-          return false;
+        return "applied";
+      } finally {
+        if (tracked) {
+          doc.changeTrackingMode = originalMode;
+          await context.sync();
         }
-        results.items[0].insertText(newText, Word.InsertLocation.replace);
-        await context.sync();
-        return true;
-      } finally {
-        // Restore the user's prior setting rather than leaving tracking forced on.
-        doc.changeTrackingMode = originalMode;
-        await context.sync();
       }
     });
 
   /**
-   * Insert `text` as a new paragraph after the current cursor position with
-   * track-changes enabled so Word records the insertion as a tracked change.
-   * Track-changes mode is turned off again after the insertion.
+   * Insert generated content below the paragraph containing the current
+   * selection. This never overwrites selected text. Each model paragraph is a
+   * real Word paragraph and inherits the surrounding paragraph style and
+   * direct spacing/indentation, instead of inserting raw Markdown into one run.
    */
-  const insertWithTrackChanges = (text: string): Promise<void> =>
+  const insertBelowSelection = (text: string, tracked = false): Promise<void> =>
     Word.run(async (context) => {
       const doc = context.document;
+      const source = doc.getSelection().paragraphs.getLast();
+      source.load([
+        "style",
+        "alignment",
+        "firstLineIndent",
+        "leftIndent",
+        "lineSpacing",
+        "rightIndent",
+        "spaceAfter",
+        "spaceBefore",
+      ]);
       doc.load("changeTrackingMode");
       await context.sync();
+
+      const paragraphs = toWordParagraphs(text);
+      if (paragraphs.length === 0) throw new Error("There is no text to insert.");
+
       const originalMode = doc.changeTrackingMode;
 
       try {
-        doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-        doc.getSelection().insertParagraph(text, Word.InsertLocation.after);
+        if (tracked) doc.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+
+        let previous = source;
+        for (const paragraphText of paragraphs) {
+          const inserted = previous.insertParagraph(
+            paragraphText,
+            Word.InsertLocation.after
+          );
+          inserted.style = source.style;
+          inserted.alignment = source.alignment;
+          inserted.firstLineIndent = source.firstLineIndent;
+          inserted.leftIndent = source.leftIndent;
+          inserted.lineSpacing = source.lineSpacing;
+          inserted.rightIndent = source.rightIndent;
+          inserted.spaceAfter = source.spaceAfter;
+          inserted.spaceBefore = source.spaceBefore;
+          previous = inserted;
+        }
         await context.sync();
       } finally {
-        // Restore the user's prior setting. The old code hard-coded `off`,
-        // silently disabling track-changes for anyone who already had it on.
-        doc.changeTrackingMode = originalMode;
-        await context.sync();
+        if (tracked) {
+          doc.changeTrackingMode = originalMode;
+          await context.sync();
+        }
       }
-    });
-
-  /** Return the text currently selected by the user. */
-  const getSelectedText = (): Promise<string> =>
-    Word.run(async (context) => {
-      const selection = context.document.getSelection();
-      selection.load("text");
-      await context.sync();
-      return selection.text;
     });
 
   return {
     readDocumentText,
     readDocumentOoxml,
     getDocxBlob,
-    insertAtCursor,
-    insertTrackedChange,
-    insertWithTrackChanges,
-    getSelectedText,
+    captureSelection,
+    releaseSelection,
+    replaceSelection,
+    insertBelowSelection,
   };
 }

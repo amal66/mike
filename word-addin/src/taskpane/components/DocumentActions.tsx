@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { streamAssistant } from "../api/stream";
 import { useWordDoc } from "../hooks/useWordDoc";
+import type { WordSelectionAnchor } from "../hooks/useWordDoc";
 import { Button } from "@mike/shared/ui/button";
 import { Input } from "@mike/shared/ui/input";
 import { Label } from "@mike/shared/ui/label";
@@ -73,10 +74,10 @@ function Section({
 export function DocumentActions(): React.ReactElement {
   const {
     readDocumentText,
-    getSelectedText,
-    insertAtCursor,
-    insertTrackedChange,
-    insertWithTrackChanges,
+    captureSelection,
+    releaseSelection,
+    replaceSelection,
+    insertBelowSelection,
   } = useWordDoc();
 
   const [improve, setImprove] = useState<ActionSectionState>(emptySection());
@@ -85,6 +86,7 @@ export function DocumentActions(): React.ReactElement {
   const [draft, setDraft] = useState<ActionSectionState>(emptySection());
   const [draftPrompt, setDraftPrompt] = useState("");
   const [applyError, setApplyError] = useState<string | null>(null);
+  const improveAnchorRef = useRef<WordSelectionAnchor | null>(null);
 
   // Track mount + in-flight streams so switching tabs mid-action aborts the
   // request and never calls setState on an unmounted component.
@@ -97,6 +99,9 @@ export function DocumentActions(): React.ReactElement {
       mountedRef.current = false;
       controllers.forEach((c) => c.abort());
       controllers.clear();
+      const anchor = improveAnchorRef.current;
+      improveAnchorRef.current = null;
+      if (anchor) void releaseSelection(anchor);
     };
   }, []);
 
@@ -109,13 +114,20 @@ export function DocumentActions(): React.ReactElement {
     const controller = new AbortController();
     controllersRef.current.add(controller);
     try {
-      const selected = await getSelectedText();
+      const previousAnchor = improveAnchorRef.current;
+      improveAnchorRef.current = null;
+      if (previousAnchor) await releaseSelection(previousAnchor);
+
+      const anchor = await captureSelection();
+      const selected = anchor.originalText;
       if (!selected.trim()) {
+        await releaseSelection(anchor);
         setImprove({ loading: false, result: "Please select some text first." });
         return;
       }
+      improveAnchorRef.current = anchor;
       const originalText = selected;
-      const prompt = `Rewrite the following to improve clarity and professionalism while preserving meaning:\n\n${selected}`;
+      const prompt = `Rewrite the following selected legal text to improve clarity and professionalism while preserving its meaning. Preserve the number and order of paragraphs. Return only replacement text: no introduction, quotation marks, Markdown, or code fences.\n\n${selected}`;
       let accumulated = "";
       await streamAssistant(
         {
@@ -132,6 +144,9 @@ export function DocumentActions(): React.ReactElement {
         setImprove({ loading: false, result: accumulated, originalText });
     } catch (e) {
       if (controller.signal.aborted || !mountedRef.current) return;
+      const anchor = improveAnchorRef.current;
+      improveAnchorRef.current = null;
+      if (anchor) await releaseSelection(anchor);
       setImprove({
         loading: false,
         result: e instanceof Error ? e.message : "Error occurred.",
@@ -244,6 +259,32 @@ export function DocumentActions(): React.ReactElement {
     }
   };
 
+  const applyRewrite = async (tracked: boolean): Promise<void> => {
+    setApplyError(null);
+    const anchor = improveAnchorRef.current;
+    if (!anchor) return;
+
+    try {
+      const result = await replaceSelection(anchor, improve.result, tracked);
+      improveAnchorRef.current = null;
+      await releaseSelection(anchor);
+      setImprove((current) => ({
+        ...current,
+        originalText: undefined,
+      }));
+
+      if (result === "stale") {
+        setApplyError(
+          "The selected text changed while Mike was responding. Select it again and rerun the rewrite."
+        );
+      }
+    } catch (error) {
+      setApplyError(
+        error instanceof Error ? error.message : "Word couldn't apply the rewrite."
+      );
+    }
+  };
+
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto p-3 @sm:gap-4 @sm:p-4">
       {/* --- Improve Writing --- */}
@@ -269,34 +310,24 @@ export function DocumentActions(): React.ReactElement {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
-                    onClick={async () => {
-                      setApplyError(null);
-                      const applied = await insertTrackedChange(
-                        improve.originalText!,
-                        improve.result
-                      );
-                      if (!applied)
-                        setApplyError(
-                          "Couldn't locate the selected text to replace — it may have changed, span paragraphs, or exceed Word's search limit."
-                        );
-                    }}
+                    onClick={() => void applyRewrite(true)}
                   >
-                    Apply as tracked change
+                    Replace selection (tracked)
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => void insertAtCursor(improve.result)}
+                    onClick={() => void applyRewrite(false)}
                   >
-                    Insert at cursor
+                    Replace selection
                   </Button>
                 </div>
-                {applyError && (
-                  <p role="alert" className="text-xs text-destructive">
-                    {applyError}
-                  </p>
-                )}
               </>
+            )}
+            {applyError && (
+              <p role="alert" className="text-xs text-destructive">
+                {applyError}
+              </p>
             )}
           </>
         )}
@@ -370,16 +401,16 @@ export function DocumentActions(): React.ReactElement {
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  onClick={() => void insertAtCursor(draft.result)}
+                  onClick={() => void insertBelowSelection(draft.result)}
                 >
-                  Insert at cursor
+                  Insert below cursor
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => void insertWithTrackChanges(draft.result)}
+                  onClick={() => void insertBelowSelection(draft.result, true)}
                 >
-                  Apply as tracked change
+                  Insert below (tracked)
                 </Button>
               </div>
             )}
