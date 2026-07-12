@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireUserSession } from "../middleware/auth";
 import { parseBody, sendError } from "../lib/http";
 import { env } from "../lib/env";
+import { validateRemoteMcpUrl } from "../lib/mcpConnectors";
 import {
   WEBHOOK_EVENT_TYPES,
   createWebhookEndpoint,
@@ -24,7 +25,9 @@ webhooksRouter.use(requireAuth, requireUserSession);
 
 const createEndpointSchema = z.object({
   url: z.string().url(),
-  event_types: z.array(z.string()).nonempty("at least one event type is required"),
+  event_types: z
+    .array(z.string())
+    .nonempty("at least one event type is required"),
 });
 
 // GET /v1/webhooks/events — the catalogue of subscribable event types.
@@ -47,6 +50,21 @@ webhooksRouter.post("/endpoints", async (req, res) => {
   if (!isHttps && !(env.NODE_ENV !== "production" && isLocalhost)) {
     sendError(res, 400, "VALIDATION_ERROR", "Webhook URL must use HTTPS");
     return;
+  }
+  if (env.NODE_ENV === "production") {
+    try {
+      // Webhook delivery is server-side egress. Apply the same DNS-rebinding,
+      // metadata-host and private-network protections used by MCP connectors.
+      await validateRemoteMcpUrl(body.url);
+    } catch (error) {
+      sendError(
+        res,
+        400,
+        "VALIDATION_ERROR",
+        error instanceof Error ? error.message : "Webhook URL is not allowed",
+      );
+      return;
+    }
   }
 
   const invalid = body.event_types.filter((e) => !isWebhookEventType(e));
@@ -90,7 +108,9 @@ webhooksRouter.delete("/endpoints/:id", async (req, res) => {
 webhooksRouter.get("/deliveries", async (req, res) => {
   const userId = res.locals.userId as string;
   const endpointId =
-    typeof req.query.endpoint_id === "string" ? req.query.endpoint_id : undefined;
+    typeof req.query.endpoint_id === "string"
+      ? req.query.endpoint_id
+      : undefined;
   const limit =
     typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
   res.json(

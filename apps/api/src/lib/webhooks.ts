@@ -4,6 +4,7 @@ import {
   generateWebhookSecret,
   signWebhookPayload,
 } from "../core/webhookSignature";
+import { decryptString, encryptString, guardedFetch } from "./mcp/client";
 
 /**
  * Webhooks subsystem: lets developers register HTTPS endpoints that Mike calls
@@ -60,7 +61,9 @@ export type WebhookEndpointSummary = {
 
 type WebhookEndpointRow = WebhookEndpointSummary & {
   user_id: string;
-  secret: string;
+  encrypted_secret: string;
+  secret_iv: string;
+  secret_tag: string;
 };
 
 export type WebhookDeliverySummary = {
@@ -101,12 +104,15 @@ export async function createWebhookEndpoint(
   db: Db = createServerSupabase(),
 ): Promise<{ endpoint: WebhookEndpointSummary; secret: string }> {
   const secret = generateWebhookSecret();
+  const encrypted = encryptString(secret);
   const { data, error } = await db
     .from("webhook_endpoints")
     .insert({
       user_id: userId,
       url,
-      secret,
+      encrypted_secret: encrypted.encrypted,
+      secret_iv: encrypted.iv,
+      secret_tag: encrypted.tag,
       enabled: true,
       event_types: eventTypes,
     })
@@ -245,7 +251,7 @@ async function attemptDelivery(
 
   const { data: endpoint } = await db
     .from("webhook_endpoints")
-    .select("url, secret, enabled")
+    .select("url, encrypted_secret, secret_iv, secret_tag, enabled")
     .eq("id", delivery.endpoint_id)
     .single();
   if (!endpoint || endpoint.enabled === false) return;
@@ -258,7 +264,24 @@ async function attemptDelivery(
     created_at: new Date().toISOString(),
     data: delivery.payload ?? {},
   });
-  const signature = signWebhookPayload(body, endpoint.secret as string);
+  const secret = decryptString(
+    endpoint.encrypted_secret as string,
+    endpoint.secret_iv as string,
+    endpoint.secret_tag as string,
+  );
+  if (!secret) {
+    await db
+      .from("webhook_deliveries")
+      .update({
+        status: "failed",
+        attempts: attempt,
+        last_error: "Webhook signing secret could not be decrypted",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", deliveryId);
+    return;
+  }
+  const signature = signWebhookPayload(body, secret);
 
   let responseStatus: number | null = null;
   let responseBody: string | null = null;
@@ -268,7 +291,9 @@ async function attemptDelivery(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS);
   try {
-    const res = await fetch(endpoint.url as string, {
+    const fetchWebhook =
+      process.env.NODE_ENV === "production" ? guardedFetch : fetch;
+    const res = await fetchWebhook(endpoint.url as string, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -279,6 +304,7 @@ async function attemptDelivery(
       },
       body,
       signal: controller.signal,
+      redirect: "manual",
     });
     responseStatus = res.status;
     responseBody = (await res.text()).slice(0, 1000); // cap stored body
