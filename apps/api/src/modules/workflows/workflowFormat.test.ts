@@ -49,6 +49,40 @@ describe("workflow pack schema — validation behavior", () => {
     expect(workflowPackSchema.safeParse(validPack).success).toBe(true);
   });
 
+  it("accepts and preserves language and jurisdiction metadata", () => {
+    const result = workflowPackSchema.safeParse({
+      formatVersion: 1,
+      workflow: {
+        title: "Cross-border NDA",
+        type: "assistant",
+        language: "French",
+        jurisdictions: ["France", "England and Wales"],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflow.language).toBe("French");
+      expect(result.data.workflow.jurisdictions).toEqual([
+        "France",
+        "England and Wales",
+      ]);
+    }
+  });
+
+  it("rejects non-string jurisdiction entries", () => {
+    expect(
+      workflowPackSchema.safeParse({
+        formatVersion: 1,
+        workflow: {
+          title: "Invalid metadata",
+          type: "assistant",
+          jurisdictions: ["France", 42],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects a wrong formatVersion", () => {
     const result = workflowPackSchema.safeParse({
       ...validPack,
