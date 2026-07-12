@@ -228,6 +228,21 @@ test("delete chat: sidebar delete action removes the chat from history", async (
     // /assistant/chat/<id> on any attempt, so the final waitForURL still fails and
     // the regression this test guards is preserved.
     const newChatUrl = /\/assistant\/chat\/.+/;
+
+    // Sending the first message kicks off auto title-generation
+    // (useGenerateChatTitle → POST /chat/<id>/generate-title → renameChat). If it
+    // lands after the manual rename in step 4 it overwrites the unique title and
+    // the row can no longer be found. Wait for it to settle first, exactly as the
+    // rename test does. Best-effort: if it never fires, our rename is unopposed.
+    const titleGenerated = page
+        .waitForResponse(
+            (r) =>
+                /:3001\/chat\/.+\/generate-title$/.test(r.url()) &&
+                r.request().method() === "POST",
+            { timeout: 30_000 },
+        )
+        .catch(() => null);
+
     const CREATE_ATTEMPTS = 4;
     for (let attempt = 0; attempt < CREATE_ATTEMPTS; attempt++) {
         if (newChatUrl.test(page.url())) break;
@@ -245,6 +260,10 @@ test("delete chat: sidebar delete action removes the chat from history", async (
         }
     }
     await page.waitForURL(newChatUrl, { timeout: 20_000 });
+
+    // Let auto title-generation land before renaming, so it cannot clobber the
+    // unique title this test targets the row by.
+    await titleGenerated;
 
     // ── Step 3: ensure the sidebar is open ───────────────────────────────────────
     await ensureSidebarOpen(page);
@@ -326,6 +345,10 @@ test("project assistant: create a new chat and submit a question", async ({ page
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
     const projectName = `E2E Chat Route ${Date.now()}`;
     await nameInput.fill(projectName);
+
+    // NewProjectModal is a two-step wizard ("Details" → "Add Documents"); the
+    // "Create project" submit button only exists on the second step.
+    await page.getByRole("button", { name: "Next", exact: true }).click();
 
     // ── Step 4: submit the form (resilient to transient gateway 502s) ────────────
     // NewProjectModal.handleSubmit does NOT navigate itself — it calls onCreated()
