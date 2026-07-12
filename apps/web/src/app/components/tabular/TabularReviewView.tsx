@@ -23,7 +23,6 @@ import {
     getTabularReview,
     getProject,
     getTabularReviewPeople,
-    readSSE,
     listProjects,
     regenerateTabularCell,
     streamTabularGeneration,
@@ -412,17 +411,34 @@ export function TRView({ reviewId, projectId }: Props) {
             // or the reader ending without [DONE]).
             const consume = async (res: Response): Promise<boolean> => {
                 if (!res.body) return false;
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+                let sawDone = false;
                 try {
-                    const { done } = await readSSE(res, (data) =>
-                        applyFrame(data as Parameters<typeof applyFrame>[0]),
-                    );
-                    return done;
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop() ?? "";
+                        for (const line of lines) {
+                            if (!line.startsWith("data:")) continue;
+                            const dataStr = line.slice(5).trim();
+                            if (dataStr === "[DONE]") {
+                                sawDone = true;
+                                break;
+                            }
+                            try {
+                                applyFrame(JSON.parse(dataStr));
+                            } catch {}
+                        }
+                        if (sawDone) break;
+                    }
                 } catch (err) {
-                    // A dropped stream (network error) reads as "not done" so the
-                    // caller's bounded resume loop reconnects and tails the rest.
                     console.error("Generation stream dropped", err);
-                    return false;
                 }
+                return sawDone;
             };
 
             let sawDone = await consume(response);
