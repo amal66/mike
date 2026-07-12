@@ -742,9 +742,7 @@ export function TRChatPanel({
                             continue;
                         }
 
-                        if (
-                            data.type === "courtlistener_find_in_case_start"
-                        ) {
+                        if (data.type === "courtlistener_find_in_case_start") {
                             const searches = parseCourtlistenerCaseSearches(
                                 data.searches,
                             );
@@ -770,8 +768,7 @@ export function TRChatPanel({
                             );
                             updateMatchingEvent(
                                 (e) =>
-                                    e.type ===
-                                        "courtlistener_find_in_case" &&
+                                    e.type === "courtlistener_find_in_case" &&
                                     (searches?.length
                                         ? Array.isArray(e.searches)
                                         : e.cluster_id ===
@@ -779,8 +776,7 @@ export function TRChatPanel({
                                               "number"
                                                   ? (data.cluster_id as number)
                                                   : null) &&
-                                          e.query ===
-                                              (data.query as string)) &&
+                                          e.query === (data.query as string)) &&
                                     !!e.isStreaming,
                                 () => ({
                                     type: "courtlistener_find_in_case",
