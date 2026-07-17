@@ -107,6 +107,8 @@ vi.mock("../../lib/supabase", () => ({
 }));
 
 vi.mock("../../middleware/auth", () => ({
+    requireUserSession: (_req: unknown, _res: unknown, next: () => void) =>
+        next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },

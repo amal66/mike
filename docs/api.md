@@ -22,6 +22,27 @@ const projects = await listProjects();
 Public request and response shapes should be defined in `packages/core` before
 they are consumed by API handlers, the web app, or SDKs.
 
+## Authentication
+
+Protected routes accept **either**:
+
+- a **Supabase session JWT** (the web app's credential), or
+- a **programmatic API key** — `Authorization: Bearer mike_sk_...` — created
+  under **Settings → Developer**.
+
+API keys are opaque, hashed at rest, revocable, and carry `read`/`write` scopes.
+Key and webhook **management** routes (`/v1/api-keys`, `/v1/webhooks`) require a
+session JWT, not a key. Full details in the
+[Developer Platform guide](./developer-platform.md) and
+[ADR 0001](./adr/0001-developer-platform.md).
+
+## OpenAPI contract
+
+The public surface is described by an OpenAPI 3.1 document:
+
+- `GET /openapi.json` — the machine-readable spec (source of truth).
+- `GET /docs` — interactive Swagger UI rendered from it.
+
 ## OpenAI-Compatible Gateways
 
 The API can route OpenAI-model requests through an OpenAI-compatible gateway by

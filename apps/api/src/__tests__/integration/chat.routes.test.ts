@@ -72,6 +72,8 @@ vi.mock("../../lib/supabase", () => ({
 // JWT path. requireMfaIfEnrolled must be exported too — userRouter (mounted by
 // the app factory) imports it at module load.
 vi.mock("../../middleware/auth", () => ({
+    requireUserSession: (_req: unknown, _res: unknown, next: () => void) =>
+        next(),
     requireAuth: (
         _req: unknown,
         res: { locals: Record<string, unknown> },

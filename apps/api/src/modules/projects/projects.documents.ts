@@ -16,6 +16,7 @@ import {
   shouldConvertToPdf,
 } from "../../lib/documentTypes";
 import { checkProjectAccess, resolveContentOrgId } from "../../lib/access";
+import { emitWebhookEvent } from "../../lib/webhooks";
 import {
   type Db,
   type Log,
@@ -439,6 +440,18 @@ export async function processProjectDocumentUpload(
           active_version_number: 1,
         }
       : updated;
+
+    // Notify any registered webhook endpoints. Fire-and-forget: a webhook
+    // problem must never fail the upload the user just performed.
+    void emitWebhookEvent(userId, "document.uploaded", {
+      document_id: docId,
+      project_id: projectId,
+      filename,
+      file_type: suffix,
+      size_bytes: content.byteLength,
+      page_count: pageCount,
+    });
+
     return { ok: true, doc: responseDoc };
   } catch (e) {
     await db.from("documents").update({ status: "error" }).eq("id", doc.id);

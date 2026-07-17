@@ -5,6 +5,11 @@ export * from "@mike/api-client";
 
 export type MikeClientOptions = {
     baseUrl?: string;
+    /**
+     * A bearer credential. This can be a programmatic Mike API key
+     * (`mike_sk_...`, created on the Developer settings page) or a Supabase
+     * session JWT. Either way it is sent as `Authorization: Bearer <apiKey>`.
+     */
     apiKey?: string;
     getAuthHeaders?: AuthHeaderProvider;
     fetchImpl?: typeof fetch;
@@ -87,5 +92,63 @@ export class MikeClient {
                 >["documents"]["uploadStandalone"]
             >
         ) => this.client.documents.uploadStandalone(...args),
+    };
+
+    /** Manage programmatic API keys (requires a logged-in user session). */
+    apiKeys = {
+        list: (
+            ...args: Parameters<
+                ReturnType<typeof createMikeApiClient>["apiKeys"]["list"]
+            >
+        ) => this.client.apiKeys.list(...args),
+        create: (
+            ...args: Parameters<
+                ReturnType<typeof createMikeApiClient>["apiKeys"]["create"]
+            >
+        ) => this.client.apiKeys.create(...args),
+        revoke: (
+            ...args: Parameters<
+                ReturnType<typeof createMikeApiClient>["apiKeys"]["revoke"]
+            >
+        ) => this.client.apiKeys.revoke(...args),
+    };
+
+    /** Manage webhook endpoints and inspect deliveries. */
+    webhooks = {
+        listEventTypes: (
+            ...args: Parameters<
+                ReturnType<
+                    typeof createMikeApiClient
+                >["webhooks"]["listEventTypes"]
+            >
+        ) => this.client.webhooks.listEventTypes(...args),
+        listEndpoints: (
+            ...args: Parameters<
+                ReturnType<
+                    typeof createMikeApiClient
+                >["webhooks"]["listEndpoints"]
+            >
+        ) => this.client.webhooks.listEndpoints(...args),
+        createEndpoint: (
+            ...args: Parameters<
+                ReturnType<
+                    typeof createMikeApiClient
+                >["webhooks"]["createEndpoint"]
+            >
+        ) => this.client.webhooks.createEndpoint(...args),
+        deleteEndpoint: (
+            ...args: Parameters<
+                ReturnType<
+                    typeof createMikeApiClient
+                >["webhooks"]["deleteEndpoint"]
+            >
+        ) => this.client.webhooks.deleteEndpoint(...args),
+        listDeliveries: (
+            ...args: Parameters<
+                ReturnType<
+                    typeof createMikeApiClient
+                >["webhooks"]["listDeliveries"]
+            >
+        ) => this.client.webhooks.listDeliveries(...args),
     };
 }
