@@ -13,6 +13,7 @@ import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
+import { anyWorkerEnabled, startWorkers, stopWorkers } from "./workers";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -161,6 +162,42 @@ app.use("/case-law", caseLawRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Mike backend running on port ${PORT}`);
+  // Start in-process job-queue workers only when at least one async queue is
+  // enabled, so the default (synchronous) deployment needs no Redis.
+  if (anyWorkerEnabled()) {
+    startWorkers();
+  }
 });
+
+// Graceful shutdown: on SIGTERM/SIGINT (orchestrator rollout, Ctrl-C), stop
+// accepting new connections, let in-flight requests/streams drain, close the
+// job-queue workers + Redis, then exit 0. Without this the orchestrator's
+// grace period elapses and SIGKILL drops in-flight streams and leaves queue
+// state dirty. A hard timeout guards against a connection that never drains.
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Shutting down gracefully (${signal})`);
+  const forceExit = setTimeout(() => {
+    console.error("Graceful shutdown timed out — forcing exit");
+    process.exit(1);
+  }, 15_000);
+  forceExit.unref();
+  try {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    await stopWorkers();
+    console.log("Shutdown complete");
+    process.exit(0);
+  } catch (err) {
+    console.error("Error during graceful shutdown", err);
+    process.exit(1);
+  }
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
