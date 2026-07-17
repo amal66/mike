@@ -70,6 +70,7 @@ import {
     checkProjectAccess,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
+    resolveContentOrgId,
 } from "../lib/access";
 import {
     findMissingUserEmails,
@@ -504,6 +505,12 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         ? await filterAccessibleDocumentIds(document_ids, userId, userEmail, db)
         : [];
     const grouping = normalizeGrouping(document_grouping);
+    // Tenant assignment: inherit the project's org when project-scoped,
+    // otherwise the caller's personal org.
+    const orgId = await resolveContentOrgId(db, {
+        userId,
+        projectId: project_id ?? null,
+    });
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -515,6 +522,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
             document_grouping: grouping,
+            org_id: orgId,
         })
         .select("*")
         .single();
@@ -702,7 +710,7 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
 
     const { data: review } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id, shared_with")
+        .select("id, user_id, project_id, shared_with, org_id")
         .eq("id", reviewId)
         .single();
     if (!review)
@@ -956,7 +964,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
         .select(
-            "id, user_id, project_id, columns_config, updated_at, active_generation_id, generation_lease_expires_at",
+            "id, user_id, project_id, org_id, columns_config, updated_at, active_generation_id, generation_lease_expires_at",
         )
         .eq("id", reviewId)
         .single();
@@ -1753,7 +1761,7 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     // Verify access (owner or shared-project member).
     const { data: review, error } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id")
+        .select("id, user_id, project_id, org_id")
         .eq("id", reviewId)
         .single();
     if (error || !review)
@@ -1928,7 +1936,7 @@ tabularRouter.get(
 
         const { data: review } = await db
             .from("tabular_reviews")
-            .select("id, user_id, project_id")
+            .select("id, user_id, project_id, org_id")
             .eq("id", reviewId)
             .single();
         if (!review)

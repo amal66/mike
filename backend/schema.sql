@@ -73,6 +73,8 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_org_id uuid;
 begin
   insert into public.user_profiles (
     user_id,
@@ -102,9 +104,26 @@ begin
           excluded.organisation
         ),
         updated_at = now();
+
+  -- Multi-tenant RBAC: provision a personal organization + owner membership so
+  -- new content has a tenant to land in (one personal org per user, enforced by
+  -- idx_organizations_personal_owner).
+  if not exists (
+    select 1 from public.organizations
+    where created_by = new.id and personal
+  ) then
+    insert into public.organizations (name, personal, created_by)
+    values (coalesce(new.email, 'Personal'), true, new.id)
+    returning id into v_org_id;
+
+    insert into public.org_members (org_id, user_id, role)
+    values (v_org_id, new.id, 'owner')
+    on conflict (org_id, user_id) do nothing;
+  end if;
+
   return new;
 exception when others then
-  -- Never block signup if the profile insert fails.
+  -- Never block signup if the profile / org insert fails.
   return new;
 end;
 $$;
@@ -188,6 +207,72 @@ create index if not exists idx_auth_handoff_tickets_expires
   on public.auth_handoff_tickets(expires_at);
 
 alter table public.auth_handoff_tickets enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Organizations / RBAC (multi-tenant)
+-- Defined before projects/documents/workflows/tabular_reviews because those
+-- carry an org_id FK to organizations(id). See lib/access.ts for the
+-- owner/admin/member enforcement. SSO/SAML/SCIM are intentional extension
+-- points (future organizations.sso_config / scim_token / org_invitations).
+-- ---------------------------------------------------------------------------
+
+create table if not exists public.organizations (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  personal boolean not null default false,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_organizations_personal_owner
+  on public.organizations(created_by)
+  where personal;
+
+alter table public.organizations enable row level security;
+
+create table if not exists public.org_members (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member'
+    check (role in ('owner', 'admin', 'member')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(org_id, user_id)
+);
+
+create index if not exists idx_org_members_user on public.org_members(user_id);
+create index if not exists idx_org_members_org on public.org_members(org_id);
+
+alter table public.org_members enable row level security;
+
+create table if not exists public.teams (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  name text not null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(org_id, name)
+);
+
+create index if not exists idx_teams_org on public.teams(org_id);
+
+alter table public.teams enable row level security;
+
+create table if not exists public.team_members (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references public.teams(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique(team_id, user_id)
+);
+
+create index if not exists idx_team_members_user on public.team_members(user_id);
+create index if not exists idx_team_members_team on public.team_members(team_id);
+
+alter table public.team_members enable row level security;
 
 create table if not exists public.user_api_keys (
   id uuid primary key default gen_random_uuid(),
@@ -398,6 +483,9 @@ alter table public.user_mcp_tool_audit_logs enable row level security;
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  -- Multi-tenant: nullable so system/global rows stay valid; user_id remains
+  -- the hard cascade anchor (org_id uses SET NULL, not CASCADE).
+  org_id uuid references public.organizations(id) on delete set null,
   name text not null,
   cm_number text,
   practice text,
@@ -412,6 +500,9 @@ create index if not exists idx_projects_user
 
 create index if not exists projects_updated_at_idx
   on public.projects(updated_at desc, id);
+
+create index if not exists idx_projects_org
+  on public.projects(org_id);
 
 create index if not exists projects_shared_with_idx
   on public.projects using gin (shared_with);
@@ -450,6 +541,7 @@ create index if not exists idx_library_folders_parent
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
+  org_id uuid references public.organizations(id) on delete set null,
   user_id uuid not null references auth.users(id) on delete cascade,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
@@ -470,6 +562,9 @@ create index if not exists idx_documents_project_folder
 create index if not exists idx_documents_library_kind_folder
   on public.documents(user_id, library_kind, library_folder_id)
   where project_id is null;
+
+create index if not exists idx_documents_org
+  on public.documents(org_id);
 
 create table if not exists public.document_versions (
   id uuid primary key default gen_random_uuid(),
@@ -724,11 +819,15 @@ create table if not exists public.workflows (
   language text default 'English',
   practice text default 'General Transactions',
   jurisdictions text[] default array['General']::text[],
+  org_id uuid references public.organizations(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
 create index if not exists idx_workflows_user
   on public.workflows(user_id);
+
+create index if not exists idx_workflows_org
+  on public.workflows(org_id);
 
 create table if not exists public.hidden_workflows (
   id uuid primary key default gen_random_uuid(),
@@ -1368,10 +1467,47 @@ as $$
     where lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
       and (p_type is null or w.type = p_type)
   ),
+  org_shared as (
+    -- Workflows in an org the caller belongs to (read-only; edits stay
+    -- owner/share-gated). Mirrors the org branch in lib/access.ts.
+    select
+      w.id,
+      w.user_id::text as user_id,
+      w.title,
+      w.type,
+      w.prompt_md,
+      w.columns_config,
+      w.language,
+      w.practice,
+      w.jurisdictions,
+      false as is_system,
+      w.created_at,
+      false as allow_edit,
+      false as is_owner,
+      nullif(trim(up.display_name), '') as shared_by_name,
+      2 as sort_bucket
+    from public.workflows w
+    left join public.user_profiles up
+      on up.user_id::text = w.user_id::text
+    where w.org_id is not null
+      and (w.user_id is null or w.user_id::text <> p_user_id)
+      and (p_type is null or w.type = p_type)
+      and exists (
+        select 1 from public.org_members m
+        where m.org_id = w.org_id and m.user_id::text = p_user_id
+      )
+      and not exists (
+        select 1 from public.workflow_shares ws
+        where ws.workflow_id = w.id
+          and lower(ws.shared_with_email) = lower(coalesce(p_user_email, ''))
+      )
+  ),
   visible_workflows as (
     select * from owned
     union all
     select * from shared
+    union all
+    select * from org_shared
   )
   select
     vw.id,
@@ -1446,6 +1582,14 @@ as $$
      or (
        p.id is not null
        and p.user_id::text = p_user_id
+     )
+     or (
+       p.id is not null
+       and p.org_id is not null
+       and exists (
+         select 1 from public.org_members m
+         where m.org_id = p.org_id and m.user_id::text = p_user_id
+       )
      )
   order by c.created_at desc, c.id asc
   limit case
@@ -1595,6 +1739,7 @@ create table if not exists public.tabular_reviews (
   shared_with jsonb not null default '[]'::jsonb,
   active_generation_id uuid,
   generation_lease_expires_at timestamptz,
+  org_id uuid references public.organizations(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1604,6 +1749,9 @@ create index if not exists idx_tabular_reviews_user
 
 create index if not exists idx_tabular_reviews_project
   on public.tabular_reviews(project_id);
+
+create index if not exists idx_tabular_reviews_org
+  on public.tabular_reviews(org_id);
 
 create index if not exists tabular_reviews_shared_with_idx
   on public.tabular_reviews using gin (shared_with);
@@ -1642,6 +1790,14 @@ as $$
         coalesce(p_user_email, '') <> ''
         and p.user_id::text <> p_user_id
         and p.shared_with @> jsonb_build_array(p_user_email)
+      )
+       or (
+        p.org_id is not null
+        and p.user_id::text <> p_user_id
+        and exists (
+          select 1 from public.org_members m
+          where m.org_id = p.org_id and m.user_id::text = p_user_id
+        )
       )
   ),
   document_counts as (
@@ -1853,6 +2009,14 @@ as $$
         and p.user_id::text <> p_user_id
         and p.shared_with @> jsonb_build_array(p_user_email)
       )
+       or (
+        p.org_id is not null
+        and p.user_id::text <> p_user_id
+        and exists (
+          select 1 from public.org_members m
+          where m.org_id = p.org_id and m.user_id::text = p_user_id
+        )
+      )
   ),
   visible_reviews as (
     select tr.*
@@ -1899,6 +2063,15 @@ as $$
           and coalesce(p_user_email, '') <> ''
           and tr.user_id::text <> p_user_id
           and tr.shared_with @> jsonb_build_array(p_user_email)
+        )
+        or (
+          p_project_id is null
+          and tr.org_id is not null
+          and tr.user_id::text <> p_user_id
+          and exists (
+            select 1 from public.org_members m
+            where m.org_id = tr.org_id and m.user_id::text = p_user_id
+          )
         )
       )
   ),
@@ -3850,6 +4023,10 @@ as $$
 $$;
 
 revoke all on public.user_profiles from anon, authenticated;
+revoke all on public.organizations from anon, authenticated;
+revoke all on public.org_members from anon, authenticated;
+revoke all on public.teams from anon, authenticated;
+revoke all on public.team_members from anon, authenticated;
 revoke all on public.projects from anon, authenticated;
 revoke all on public.project_subfolders from anon, authenticated;
 revoke all on public.library_folders from anon, authenticated;
