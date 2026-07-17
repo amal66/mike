@@ -172,6 +172,21 @@ const envSchema = z.object({
     // registered, so there is zero overhead and no unauthenticated surface.
     // Set "true" to expose GET /metrics for a Prometheus scraper.
     METRICS_ENABLED: z.enum(["true", "false"]).default("false"),
+
+    // Stripe billing (all optional — when STRIPE_SECRET_KEY is unset, billing
+    // is disabled and every user stays on the generous self-host credit
+    // default). See docs/billing.md. The plan catalogue in
+    // lib/billing/plans.ts reads these from process.env directly so it can be
+    // unit-tested in isolation; they are declared here too so the schema stays
+    // the single inventory of supported environment variables.
+    STRIPE_SECRET_KEY: z.string().optional(),
+    STRIPE_WEBHOOK_SECRET: z.string().optional(),
+    STRIPE_PRICE_PRO: z.string().optional(),
+    STRIPE_PRICE_ENTERPRISE: z.string().optional(),
+    MONTHLY_CREDIT_LIMIT: z.coerce.number().positive().optional(),
+    FREE_TIER_CREDITS: z.coerce.number().positive().optional(),
+    PRO_TIER_CREDITS: z.coerce.number().positive().optional(),
+    ENTERPRISE_TIER_CREDITS: z.coerce.number().positive().optional(),
 });
 
 const result = envSchema.safeParse(process.env);

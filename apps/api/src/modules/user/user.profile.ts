@@ -19,8 +19,7 @@ import {
 } from "../../lib/userApiKeys";
 import { findProfileUserByEmail } from "../../lib/userLookup";
 import { type Db } from "./user.shared";
-
-const MONTHLY_CREDIT_LIMIT = 999999;
+import { creditLimitForTier } from "../../lib/billing/plans";
 
 type UserProfileRow = {
     display_name: string | null;
@@ -146,6 +145,11 @@ async function selectProfileLegacy(
 
 function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
     const creditsUsed = row.message_credits_used ?? 0;
+    // The limit is derived from the user's tier (and falls back to the generous
+    // self-host default when billing is disabled). Keeping the profile and the
+    // /billing/subscription endpoint on the same `creditLimitForTier` source of
+    // truth means the credits shown in Settings always match what's enforced.
+    const creditsLimit = creditLimitForTier(row.tier);
     const titleFallback = apiKeyStatus?.gemini
         ? DEFAULT_TITLE_MODEL
         : apiKeyStatus?.openai
@@ -158,7 +162,8 @@ function serializeProfile(row: UserProfileRow, apiKeyStatus?: ApiKeyStatus) {
         organisation: row.organisation,
         messageCreditsUsed: creditsUsed,
         creditsResetDate: row.credits_reset_date,
-        creditsRemaining: Math.max(MONTHLY_CREDIT_LIMIT - creditsUsed, 0),
+        messageCreditsLimit: creditsLimit,
+        creditsRemaining: Math.max(creditsLimit - creditsUsed, 0),
         tier: row.tier || "Free",
         titleModel: resolveModel(row.title_model, titleFallback),
         tabularModel: resolveModel(row.tabular_model, DEFAULT_TABULAR_MODEL),

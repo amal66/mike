@@ -17,6 +17,7 @@ import { userRouter } from "./modules/user/user.routes";
 import { downloadsRouter } from "./modules/downloads/downloads.routes";
 import { caseLawRouter } from "./modules/case-law/caseLaw.routes";
 import { guestRouter } from "./modules/auth/auth.routes";
+import { billingRouter, billingWebhookHandler } from "./modules/billing/billing.routes";
 import { getAdminClient } from "./lib/supabase";
 import { checkStorageReady } from "./lib/storage";
 import { env } from "./lib/env";
@@ -160,6 +161,20 @@ if (metricsEnabled()) {
     app.get("/metrics", metricsHandler);
 }
 
+// Stripe webhook — MUST be registered BEFORE the global rate limiter and the
+// `express.json` body parser below.
+//   * Raw body: Stripe signs the exact bytes it sends. If `express.json`
+//     parsed and re-serialised the body first, the signature would no longer
+//     match and every event would be rejected. We attach `express.raw` to this
+//     one path so `req.body` is the original Buffer (see lib/billing/webhook.ts).
+//   * Before the rate limiter: Stripe retries failed deliveries and can burst;
+//     we don't want legitimate, signature-verified webhooks throttled.
+app.post(
+    "/billing/webhook",
+    express.raw({ type: "application/json" }),
+    billingWebhookHandler,
+);
+
 app.use(generalLimiter);
 
 // 10 MB cap on JSON bodies. The API never legitimately receives larger payloads
@@ -196,6 +211,7 @@ app.use("/single-documents", documentsRouter);
 app.use("/library", libraryRouter);
 app.use("/tabular-review", tabularRouter);
 app.use("/workflows", workflowsRouter);
+app.use("/billing", billingRouter);
 app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);

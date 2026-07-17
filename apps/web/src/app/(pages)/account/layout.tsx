@@ -14,6 +14,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
     { id: "general", label: "General", href: "/account" },
+    { id: "billing", label: "Billing", href: "/account/billing" },
     { id: "features", label: "Features", href: "/account/features" },
     {
         id: "privacy-data",

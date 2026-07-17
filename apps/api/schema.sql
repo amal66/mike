@@ -25,6 +25,15 @@ create table if not exists public.user_profiles (
   quote_model text,
   mfa_on_login boolean not null default false,
   legal_research_us boolean not null default true,
+  -- Stripe billing (see docs/adr/0002-stripe-billing.md). These live on
+  -- user_profiles because a Mike user has exactly one Stripe customer and one
+  -- subscription, so a 1:1 column layout avoids an extra join on every credit
+  -- check. All nullable: a user who never touches billing leaves them unset,
+  -- and self-hosters without Stripe never populate them at all.
+  stripe_customer_id text unique,
+  stripe_subscription_id text,
+  subscription_status text,
+  subscription_current_period_end timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -38,6 +47,28 @@ create unique index if not exists user_profiles_email_lower_unique
 
 create index if not exists idx_user_profiles_email
   on public.user_profiles(email);
+
+create index if not exists idx_user_profiles_stripe_customer
+  on public.user_profiles(stripe_customer_id);
+
+-- ---------------------------------------------------------------------------
+-- Billing webhook idempotency ledger
+-- ---------------------------------------------------------------------------
+-- Stripe delivers webhook events at-least-once and retries on timeout, so the
+-- same event id can arrive multiple times. We record each processed event id
+-- here; the primary key makes a duplicate insert fail, which is our signal to
+-- skip reprocessing (see apps/api/src/lib/billing/webhook.ts).
+create table if not exists public.billing_events (
+  event_id text primary key,
+  type text not null,
+  received_at timestamptz not null default now()
+);
+
+-- Only the backend (service role) touches billing data. Enable RLS and revoke
+-- direct anon/authenticated grants — matches the deny-all convention in
+-- 20260524000000_rls_deny_all.sql.
+alter table public.billing_events enable row level security;
+revoke all on public.billing_events from anon, authenticated;
 
 create or replace function public.handle_new_user()
 returns trigger
