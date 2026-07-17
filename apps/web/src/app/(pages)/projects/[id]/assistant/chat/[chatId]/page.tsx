@@ -62,6 +62,7 @@ import type {
 } from "@/app/components/shared/types";
 import {
     expandCitationToEntries,
+    isDocxFilename,
     isSpreadsheetFilename,
 } from "@/app/components/shared/types";
 
@@ -87,11 +88,6 @@ type EditScrollTarget = {
     ins_w_id?: string | null;
     del_w_id?: string | null;
 };
-
-function isDocxTab(filename: string) {
-    const ext = filename.split(".").pop()?.toLowerCase();
-    return ext === "docx" || ext === "doc";
-}
 
 const ICON_SIZE = 28;
 const GAP = 14;
@@ -1148,7 +1144,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                         {activeTab ? (
-                            isDocxTab(activeTab.filename) ? (
+                            isDocxFilename(activeTab.filename) ? (
                                 <DocxView
                                     key={activeTab.documentId}
                                     documentId={activeTab.documentId}
@@ -1346,6 +1342,21 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}
                                     hideAddDocButton
+                                    projectId={projectId}
+                                    onDocumentsUploaded={(documents) =>
+                                        setProject((prev) =>
+                                            prev
+                                                ? {
+                                                      ...prev,
+                                                      documents: [
+                                                          ...(prev.documents ??
+                                                              []),
+                                                          ...documents,
+                                                      ],
+                                                  }
+                                                : prev,
+                                        )
+                                    }
                                     projectName={project?.name}
                                     projectCmNumber={project?.cm_number}
                                 />
