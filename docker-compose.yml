@@ -1,0 +1,135 @@
+# Docker Compose — local development environment
+#
+# QUICK START
+# ===========
+# 1. Copy backend/.env.example to backend/.env and fill in your credentials.
+# 2. docker compose up
+#
+# Services:
+#   api  — Express backend on http://localhost:3001 (hot-reload via tsx watch)
+#   web  — Next.js frontend on http://localhost:3000 (hot-reload)
+#   minio — local S3-compatible object storage on http://localhost:9000
+#   redis — queue backend for future BullMQ workers on redis://localhost:6379
+#
+# Both services mount their source directory as a volume so code changes are
+# reflected instantly without rebuilding the image.  Node module changes
+# (package.json edits) do require a rebuild: `docker compose build`.
+#
+# EXTERNAL DEPENDENCIES
+# =====================
+# Supabase and LLM API keys are external services. For local Supabase, run
+# `supabase start` in another terminal and copy the printed API URL/keys into
+# backend/.env and frontend/.env.local. Object storage is provided by MinIO.
+# For a fully embedded, no-external-dependency stack (including Supabase), see
+# airgapped/docker-compose.airgapped.yml.
+#
+# PRODUCTION
+# ==========
+# Use the "production" build target for a multi-stage optimised image:
+#   docker build --target production -t mike-api backend
+#   docker build --target production -t mike-web frontend
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: dev
+    volumes:
+      # Mount the source so hot-reload sees all source changes. The named volume
+      # for node_modules prevents the host from overwriting the container's
+      # installed modules with the host's (possibly absent or OS-incompatible)
+      # node_modules.
+      - ./backend:/app
+      - api_node_modules:/app/node_modules
+    ports:
+      - "3001:3001"
+    env_file:
+      - backend/.env
+    environment:
+      NODE_ENV: development
+      R2_ENDPOINT_URL: http://minio:9000
+      R2_ACCESS_KEY_ID: minioadmin
+      R2_SECRET_ACCESS_KEY: minioadmin
+      R2_BUCKET_NAME: mike
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    volumes:
+      - ./frontend:/app
+      - web_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb --ignore-existing local/mike
+        mc anonymous set none local/mike
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  api_node_modules:
+  web_node_modules:
+  minio_data:
+  redis_data:

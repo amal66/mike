@@ -1,0 +1,17 @@
+node_modules
+
+# Build artifacts
+dist
+
+# Development files that should not leak into images
+.env
+.env.local
+
+# VCS and editor noise
+.gitignore
+*.md
+!.env.example
+
+# Test outputs
+coverage
+.nyc_output

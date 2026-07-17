@@ -13,6 +13,11 @@ import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
 import { caseLawRouter } from "./routes/caseLaw";
+import { assertSecretsHardened } from "./lib/secretGuard";
+
+// Refuse to boot an air-gapped deployment (AIRGAPPED=true) on demo/placeholder
+// secrets — a forged service_role token would otherwise bypass RLS entirely.
+assertSecretsHardened();
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
