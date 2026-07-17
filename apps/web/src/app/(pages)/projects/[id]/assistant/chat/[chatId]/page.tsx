@@ -38,6 +38,8 @@ import { UserMessage } from "@/app/components/assistant/UserMessage";
 import { AssistantMessage } from "@/app/components/assistant/AssistantMessage";
 import { ChatInput } from "@/app/components/assistant/ChatInput";
 import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
+import { AskInputPopup } from "@/app/components/assistant/AskInputPopup";
+import { findActiveAskInput } from "@/app/components/assistant/activeAskInput";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
@@ -50,6 +52,7 @@ import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import type {
+    AssistantEvent,
     CitationQuote,
     Citation,
     Document,
@@ -508,6 +511,56 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         [activeTab, handleChat],
     );
 
+    // ask_inputs picker: swap the composer for AskInputPopup while the model
+    // waits on the user. Submissions/dismissals are tracked per message key
+    // (mirroring ChatView) and reset when the chat changes.
+    const [hiddenAskInputKeys, setHiddenAskInputKeys] = useState<Set<string>>(
+        () => new Set(),
+    );
+    useEffect(() => {
+        setHiddenAskInputKeys(new Set());
+    }, [chatId]);
+
+    const rawActiveInput = findActiveAskInput(messages);
+    const activeAskInput =
+        rawActiveInput && !hiddenAskInputKeys.has(rawActiveInput.key)
+            ? rawActiveInput
+            : null;
+
+    const handleAskInputsSubmit = useCallback(
+        (
+            response: Extract<AssistantEvent, { type: "ask_inputs_response" }>,
+            content: string,
+            files: { filename: string; document_id: string }[],
+        ) => {
+            if (rawActiveInput) {
+                const key = rawActiveInput.key;
+                setHiddenAskInputKeys((prev) => new Set(prev).add(key));
+            }
+            void handleChat(
+                { role: "user", content, files },
+                {
+                    askInputsResponse: response,
+                    displayedDoc: activeTab
+                        ? {
+                              filename: activeTab.filename,
+                              documentId: activeTab.documentId,
+                          }
+                        : null,
+                },
+            );
+        },
+        [activeTab, handleChat, rawActiveInput],
+    );
+
+    const handleAskInputsDismiss = useCallback(() => {
+        if (rawActiveInput) {
+            const key = rawActiveInput.key;
+            setHiddenAskInputKeys((prev) => new Set(prev).add(key));
+        }
+        cancel();
+    }, [cancel, rawActiveInput]);
+
     const handleDocClick = (doc: Document) => {
         openTab(doc.id, doc.filename);
     };
@@ -806,14 +859,18 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                         ? {
                               label: project.name,
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(
+                                      `/projects/${projectId}/assistant`,
+                                  ),
                               title: "Back to project",
                           }
                         : {
                               loading: true,
                               skeletonClassName: "w-32",
                               onClick: () =>
-                                  router.push(`/projects/${projectId}/assistant`),
+                                  router.push(
+                                      `/projects/${projectId}/assistant`,
+                                  ),
                               title: "Back to project",
                           },
                     chatLoaded
@@ -840,16 +897,14 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     {
                                         label: "Rename",
                                         icon: Pencil,
-                                        onSelect: () =>
-                                            void handleRenameChat(),
+                                        onSelect: () => void handleRenameChat(),
                                     },
                                     {
                                         label: deletingChat
                                             ? "Deleting..."
                                             : "Delete",
                                         icon: Trash2,
-                                        onSelect: () =>
-                                            void handleDeleteChat(),
+                                        onSelect: () => void handleDeleteChat(),
                                         disabled: deletingChat,
                                         variant: "danger",
                                     },
@@ -1032,9 +1087,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     project?.documents ?? []
                                 ).find((d) => d.id === tab.documentId)
                                     ?.latest_version_number as
-                                    | number
-                                    | null
-                                    | undefined;
+                                    number | null | undefined;
                                 const showVersionBadge =
                                     typeof versionNumber === "number" &&
                                     Number.isFinite(versionNumber) &&
@@ -1245,9 +1298,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                             }
                                             errorChatId={chatId ?? undefined}
                                             citations={msg.citations}
-                                            citationStatus={
-                                                msg.citationStatus
-                                            }
+                                            citationStatus={msg.citationStatus}
                                             onCitationClick={
                                                 handleCitationClick
                                             }
@@ -1273,33 +1324,43 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                         </div>
                     )}
 
-                    {/* ChatInput */}
+                    {/* ChatInput (or the ask_inputs picker when the model paused) */}
                     <div className="absolute bottom-2 left-0 right-0 z-30 w-full md:bottom-3">
                         <div className="pointer-events-none absolute -bottom-2 left-4 right-4 z-0 h-7 bg-white/50 backdrop-blur-[1px] md:-bottom-3" />
                         <div className="relative z-20 w-full px-4">
-                            <ChatInput
-                                ref={chatInputRef}
-                                onSubmit={handleSubmit}
-                                onCancel={cancel}
-                                isLoading={isResponseLoading}
-                                hideAddDocButton
-                                projectId={projectId}
-                                onDocumentsUploaded={(documents) =>
-                                    setProject((prev) =>
-                                        prev
-                                            ? {
-                                                  ...prev,
-                                                  documents: [
-                                                      ...(prev.documents ?? []),
-                                                      ...documents,
-                                                  ],
-                                              }
-                                            : prev,
-                                    )
-                                }
-                                projectName={project?.name}
-                                projectCmNumber={project?.cm_number}
-                            />
+                            {activeAskInput ? (
+                                <AskInputPopup
+                                    key={activeAskInput.key}
+                                    event={activeAskInput.event}
+                                    onSubmit={handleAskInputsSubmit}
+                                    onDismiss={handleAskInputsDismiss}
+                                />
+                            ) : (
+                                <ChatInput
+                                    ref={chatInputRef}
+                                    onSubmit={handleSubmit}
+                                    onCancel={cancel}
+                                    isLoading={isResponseLoading}
+                                    hideAddDocButton
+                                    projectId={projectId}
+                                    onDocumentsUploaded={(documents) =>
+                                        setProject((prev) =>
+                                            prev
+                                                ? {
+                                                      ...prev,
+                                                      documents: [
+                                                          ...(prev.documents ??
+                                                              []),
+                                                          ...documents,
+                                                      ],
+                                                  }
+                                                : prev,
+                                        )
+                                    }
+                                    projectName={project?.name}
+                                    projectCmNumber={project?.cm_number}
+                                />
+                            )}
                         </div>
                     </div>
                 </div>
