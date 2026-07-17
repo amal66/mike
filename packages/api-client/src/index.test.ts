@@ -6,7 +6,25 @@ import {
     isMfaRequiredError,
     mapTRMessages,
     MikeApiError,
+    readSSE,
 } from "./index";
+
+// Build a fake `Response` whose body is a `ReadableStream` that emits the given
+// chunks (as UTF-8 bytes). Lets readSSE be exercised without a network.
+function sseResponse(chunks: string[]): Response {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+            for (const chunk of chunks) {
+                controller.enqueue(encoder.encode(chunk));
+            }
+            controller.close();
+        },
+    });
+    return new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+    });
+}
 
 // This client hand-remaps the server's snake_case JSON into the camelCase (and
 // event-flattened) shapes the apps render. That remap is exactly where contract
@@ -279,6 +297,73 @@ describe("error-shape mapping", () => {
             code: null,
             message: "upstream boom",
         });
+    });
+});
+
+describe("readSSE", () => {
+    it("delivers content frames to onEvent in order", async () => {
+        const events: unknown[] = [];
+        await readSSE(
+            sseResponse([
+                'data: {"type":"content","text":"Hello "}\n',
+                'data: {"type":"content","text":"world"}\n',
+                "data: [DONE]\n",
+            ]),
+            (data) => events.push(data),
+        );
+        expect(events).toEqual([
+            { type: "content", text: "Hello " },
+            { type: "content", text: "world" },
+        ]);
+    });
+
+    it("treats [DONE] as terminal — frames after it are not delivered", async () => {
+        const events: unknown[] = [];
+        await readSSE(
+            sseResponse([
+                'data: {"type":"content","text":"hi"}\n',
+                "data: [DONE]\n",
+                // The backend emits this harmless trailing frame after [DONE];
+                // callers rely on never seeing it.
+                'data: {"type":"error"}\n',
+            ]),
+            (data) => events.push(data),
+        );
+        expect(events).toEqual([{ type: "content", text: "hi" }]);
+    });
+
+    it("ignores non-data lines and unparseable JSON", async () => {
+        const events: unknown[] = [];
+        await readSSE(
+            sseResponse([
+                "event: message\n",
+                ": this is an SSE comment\n",
+                "data: not-json{\n",
+                "\n",
+                'data: {"type":"content","text":"ok"}\n',
+                "data: [DONE]\n",
+            ]),
+            (data) => events.push(data),
+        );
+        expect(events).toEqual([{ type: "content", text: "ok" }]);
+    });
+
+    it("reports done:true when [DONE] terminates the stream, false otherwise", async () => {
+        const withDone = await readSSE(
+            sseResponse([
+                'data: {"type":"content","text":"x"}\n',
+                "data: [DONE]\n",
+            ]),
+            () => {},
+        );
+        expect(withDone).toEqual({ done: true });
+
+        // Stream that ends (reader EOF) without ever sending [DONE].
+        const withoutDone = await readSSE(
+            sseResponse(['data: {"type":"content","text":"x"}\n']),
+            () => {},
+        );
+        expect(withoutDone).toEqual({ done: false });
     });
 });
 

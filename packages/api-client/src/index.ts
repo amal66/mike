@@ -1171,6 +1171,7 @@ export async function streamChat(payload: {
     chat_id?: string;
     project_id?: string;
     model?: string;
+    documentContext?: string;
     ask_inputs_response?: {
         responses: (
             | {
@@ -1202,6 +1203,78 @@ export async function streamChat(payload: {
         body: JSON.stringify(body),
         signal,
     });
+}
+
+/**
+ * Read an SSE (text/event-stream) response body frame-by-frame and hand each
+ * parsed `data:` payload to `onEvent`. Pure transport: it does not interpret
+ * event types — that is the caller's job. The Word add-in uses this shared
+ * transport instead of carrying a second, subtly different SSE parser.
+ *
+ * `[DONE]` is terminal: the backend emits a harmless trailing `{"type":"error"}`
+ * frame after it, and callers rely on never seeing anything past `[DONE]`.
+ */
+export async function readSSE(
+    response: Response,
+    onEvent: (data: unknown) => void,
+    options?: { signal?: AbortSignal },
+): Promise<{ done: boolean }> {
+    if (!response.body) {
+        throw new Error("Response body is null — streaming not supported");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let cancelled = false;
+    const cancel = async () => {
+        if (cancelled) return;
+        cancelled = true;
+        await reader.cancel().catch(() => {});
+    };
+
+    // Abort the read if the caller's signal fires mid-stream.
+    const signal = options?.signal;
+    const onAbort = () => {
+        void cancel();
+    };
+    signal?.addEventListener("abort", onAbort);
+
+    // Returns true when the line was the terminal [DONE] frame.
+    const processLine = (line: string): boolean => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (!trimmed.startsWith("data:")) return false;
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === "[DONE]") return true;
+        try {
+            const parsed = JSON.parse(dataStr);
+            onEvent(parsed);
+        } catch {
+            // Malformed control noise — swallow silently.
+        }
+        return false;
+    };
+
+    try {
+        if (signal?.aborted) return { done: false };
+        let buffer = "";
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) {
+                // Flush any trailing partial line; report whether it was [DONE].
+                return { done: processLine(buffer) };
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+                if (processLine(line)) return { done: true };
+            }
+        }
+    } finally {
+        signal?.removeEventListener("abort", onAbort);
+        await cancel();
+    }
 }
 
 type StreamChatMessage = {
