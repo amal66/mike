@@ -32,8 +32,9 @@ vi.mock("../../lib/env", () => ({
 // ---------------------------------------------------------------------------
 // Configurable Supabase stub. Each test seeds `supabaseState` in beforeEach;
 // terminal query operations (.single()/.maybeSingle()/thenable) resolve to the
-// per-table result, and rpc() resolves to a per-call result. Insert payloads
-// are recorded so tests can assert on normalisation (lowercasing / dedupe).
+// per-table result, and rpc() resolves to a per-call result. Insert and update
+// payloads are recorded so tests can assert on normalisation (lowercasing /
+// dedupe / trim-to-null).
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
@@ -41,6 +42,7 @@ let supabaseState: {
     rpc: QueryResult;
     tables: Record<string, QueryResult>;
     inserts: { table: string; payload: unknown }[];
+    updates: { table: string; payload: unknown }[];
 };
 
 function resetSupabaseState() {
@@ -48,6 +50,7 @@ function resetSupabaseState() {
         rpc: { data: [], error: null },
         tables: {},
         inserts: [],
+        updates: [],
     };
 }
 resetSupabaseState();
@@ -59,13 +62,17 @@ function resultForTable(table: string): QueryResult {
 function makeQuery(table: string) {
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "update", "delete", "upsert",
+        "select", "delete", "upsert",
         "eq", "neq", "in", "is", "or", "lt", "gt", "gte", "lte",
         "filter", "order", "limit", "range", "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
     q.insert = vi.fn((payload: unknown) => {
         supabaseState.inserts.push({ table, payload });
+        return q;
+    });
+    q.update = vi.fn((payload: unknown) => {
+        supabaseState.updates.push({ table, payload });
         return q;
     });
     q.single = vi.fn(() => Promise.resolve(resultForTable(table)));
@@ -256,6 +263,44 @@ describe("projects.routes", () => {
             ).toBeUndefined();
         });
 
+        it("trims the practice label and persists it on the insert", async () => {
+            supabaseState.tables.projects = {
+                data: { id: "p10", name: "Epsilon", practice: "Corporate" },
+                error: null,
+            };
+
+            const res = await request(app)
+                .post("/projects")
+                .set(...AUTH)
+                .send({ name: "Epsilon", practice: "  Corporate  " });
+
+            expect(res.status).toBe(201);
+            expect(res.body).toMatchObject({ practice: "Corporate" });
+
+            const insert = supabaseState.inserts.find(
+                (i) => i.table === "projects",
+            );
+            // Trimmed non-empty string reaches the DB verbatim.
+            expect(insert?.payload).toMatchObject({ practice: "Corporate" });
+        });
+
+        it("stores a blank practice label as null", async () => {
+            supabaseState.tables.projects = {
+                data: { id: "p11", name: "Zeta", practice: null },
+                error: null,
+            };
+
+            await request(app)
+                .post("/projects")
+                .set(...AUTH)
+                .send({ name: "Zeta", practice: "   " });
+
+            const insert = supabaseState.inserts.find(
+                (i) => i.table === "projects",
+            );
+            expect((insert?.payload as { practice: unknown }).practice).toBeNull();
+        });
+
         it("returns 500 when the insert errors", async () => {
             supabaseState.tables.projects = {
                 data: null,
@@ -402,6 +447,48 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
+        });
+
+        it("updates the practice label (trimmed) and echoes it back", async () => {
+            supabaseState.tables.projects = {
+                data: { id: "p1", user_id: "u1", practice: "Litigation" },
+                error: null,
+            };
+            supabaseState.tables.documents = { data: [], error: null };
+            supabaseState.tables.project_subfolders = { data: [], error: null };
+
+            const res = await request(app)
+                .patch("/projects/p1")
+                .set(...AUTH)
+                .send({ practice: "  Litigation  " });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({ practice: "Litigation" });
+
+            const update = supabaseState.updates.find(
+                (u) => u.table === "projects",
+            );
+            expect(update?.payload).toMatchObject({ practice: "Litigation" });
+        });
+
+        it("clears the practice label when sent blank", async () => {
+            supabaseState.tables.projects = {
+                data: { id: "p1", user_id: "u1", practice: null },
+                error: null,
+            };
+            supabaseState.tables.documents = { data: [], error: null };
+            supabaseState.tables.project_subfolders = { data: [], error: null };
+
+            await request(app)
+                .patch("/projects/p1")
+                .set(...AUTH)
+                .send({ practice: "" });
+
+            const update = supabaseState.updates.find(
+                (u) => u.table === "projects",
+            );
+            // Presence-based handling: an empty string is an explicit clear.
+            expect((update?.payload as { practice: unknown }).practice).toBeNull();
         });
     });
 
