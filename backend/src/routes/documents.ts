@@ -1462,3 +1462,160 @@ async function countPdfPages(buf: ArrayBuffer): Promise<number | null> {
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Create a document from uploaded bytes (initial upload pipeline), callable
+// outside an Express handler. This is the same pipeline handleDocumentUpload
+// runs — documents row, storage write, optional Office→PDF rendition, V1
+// document_versions row — parameterized on the version `source` so the DMS
+// import (lib/dms/import.ts) can land a fetched document as source
+// "dms_import" instead of "upload".
+// ---------------------------------------------------------------------------
+
+export async function createDocumentFromUpload(
+  params: {
+    userId: string;
+    projectId: string | null;
+    filename: string;
+    suffix: string;
+    content: Buffer;
+    // Provenance recorded on the V1 document_versions row. Defaults to the
+    // interactive "upload" path; the DMS import pipeline passes "dms_import" so
+    // a document pulled from iManage/NetDocuments is distinguishable from a
+    // user upload (must be an allowed document_versions.source value).
+    source?: string;
+  },
+  db: ReturnType<typeof createServerSupabase>,
+): Promise<
+  | { ok: true; doc: unknown }
+  | { ok: false; kind: "create_failed" }
+  | { ok: false; kind: "processing_failed"; detail: string }
+> {
+  const { userId, projectId, filename, suffix, content } = params;
+  const source = params.source ?? "upload";
+
+  const { data: doc, error: insertErr } = await db
+    .from("documents")
+    .insert({
+      project_id: projectId,
+      user_id: userId,
+      status: "processing",
+      library_kind: "file",
+      library_folder_id: null,
+    })
+    .select("*")
+    .single();
+
+  if (insertErr || !doc) {
+    console.error("[single-documents/upload] failed to create document row", {
+      userId,
+      projectId,
+      filename,
+      suffix,
+      error: insertErr,
+    });
+    return { ok: false, kind: "create_failed" };
+  }
+
+  try {
+    const docId = doc.id as string;
+    const key = storageKey(userId, docId, filename);
+    const contentType = contentTypeForDocumentType(suffix);
+    await uploadFile(
+      key,
+      content.buffer.slice(
+        content.byteOffset,
+        content.byteOffset + content.byteLength,
+      ) as ArrayBuffer,
+      contentType,
+    );
+
+    const rawBuf = content.buffer.slice(
+      content.byteOffset,
+      content.byteOffset + content.byteLength,
+    ) as ArrayBuffer;
+    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
+
+    // Convert Office files → PDF for display. PDFs are their own rendition.
+    let pdfStoragePath: string | null = null;
+    if (shouldConvertToPdf(suffix)) {
+      try {
+        const pdfBuf = await docxToPdf(content);
+        const pdfKey = convertedPdfKey(userId, docId);
+        await uploadFile(
+          pdfKey,
+          pdfBuf.buffer.slice(
+            pdfBuf.byteOffset,
+            pdfBuf.byteOffset + pdfBuf.byteLength,
+          ) as ArrayBuffer,
+          "application/pdf",
+        );
+        pdfStoragePath = pdfKey;
+      } catch (err) {
+        console.error(
+          `[upload] Office→PDF conversion failed for ${filename}:`,
+          err,
+        );
+      }
+    } else if (suffix === "pdf") {
+      pdfStoragePath = key;
+    }
+
+    // storage_path / pdf_storage_path live on document_versions now —
+    // create the V1 row and point documents.current_version_id at it.
+    const { data: versionRow, error: verErr } = await db
+      .from("document_versions")
+      .insert({
+        document_id: docId,
+        storage_path: key,
+        pdf_storage_path: pdfStoragePath,
+        source,
+        version_number: 1,
+        filename: filename,
+        file_type: suffix,
+        size_bytes: content.byteLength,
+        page_count: pageCount,
+      })
+      .select("id")
+      .single();
+    if (verErr || !versionRow) {
+      throw new Error(
+        `Failed to record upload version: ${verErr?.message ?? "unknown"}`,
+      );
+    }
+
+    await db
+      .from("documents")
+      .update({
+        current_version_id: versionRow.id,
+        status: "ready",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", docId);
+
+    const { data: updated } = await db
+      .from("documents")
+      .select("*")
+      .eq("id", docId)
+      .single();
+    // Surface storage paths to the caller for backward compatibility.
+    const responseDoc = updated
+      ? {
+          ...updated,
+          filename,
+          storage_path: key,
+          pdf_storage_path: pdfStoragePath,
+          folder_id:
+            (updated.library_folder_id as string | null | undefined) ?? null,
+          file_type: suffix,
+          size_bytes: content.byteLength,
+          page_count: pageCount,
+          active_version_number: 1,
+        }
+      : updated;
+    return { ok: true, doc: responseDoc };
+  } catch (e) {
+    await db.from("documents").update({ status: "error" }).eq("id", doc.id);
+    return { ok: false, kind: "processing_failed", detail: String(e) };
+  }
+}

@@ -1,4 +1,19 @@
 import "dotenv/config";
+
+// DMS secret handling reuses the MCP crypto (lib/mcp/client.ts), whose master
+// secret resolves MCP_CONNECTORS_ENCRYPTION_SECRET → USER_API_KEYS_ENCRYPTION_SECRET.
+// To let operators name the variable after the DMS feature without a second
+// crypto implementation, alias DMS_CONNECTORS_ENCRYPTION_SECRET onto the MCP
+// slot when the MCP one is not itself set. Runs at env load, before any
+// encrypt/decrypt call (those read process.env lazily).
+if (
+  process.env.DMS_CONNECTORS_ENCRYPTION_SECRET &&
+  !process.env.MCP_CONNECTORS_ENCRYPTION_SECRET
+) {
+  process.env.MCP_CONNECTORS_ENCRYPTION_SECRET =
+    process.env.DMS_CONNECTORS_ENCRYPTION_SECRET;
+}
+
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
