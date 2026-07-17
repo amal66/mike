@@ -78,6 +78,20 @@ export const workflowPackSchema = z.strictObject({
       .describe(
         "Optional legal practice area tag (e.g. 'corporate', 'ip', 'employment'). Used for filtering in the workflow picker.",
       ),
+    language: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "Optional drafting/analysis language (e.g. 'English', 'French'). Defaults to 'English' on import when omitted.",
+      ),
+    jurisdictions: z
+      .array(z.string())
+      .nullable()
+      .optional()
+      .describe(
+        "Optional governing-law jurisdiction tags (e.g. ['England and Wales', 'Singapore']). Defaults to ['General'] on import when omitted.",
+      ),
   }),
 });
 
@@ -122,6 +136,8 @@ export function buildWorkflowPackJsonSchema(): Record<string, unknown> {
             "Review the provided NDA and identify:\n1. Key definitions and their scope\n2. Exclusions from confidential information\n3. Duration of confidentiality obligations\n4. Any unusual or unfair clauses\n\nProvide a structured summary with a risk rating (Low / Medium / High).",
           columns_config: null,
           practice: "corporate",
+          language: "English",
+          jurisdictions: ["General"],
         },
       },
       {
@@ -157,6 +173,8 @@ export function buildWorkflowPackJsonSchema(): Record<string, unknown> {
             },
           ],
           practice: "corporate",
+          language: "English",
+          jurisdictions: ["England and Wales"],
         },
       },
     ],
