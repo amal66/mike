@@ -947,6 +947,235 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     }
 });
 
+/** How often the DB-poll backstop reconciles cell state (ms). */
+const RECONCILE_INTERVAL_MS = 3_000;
+/** Hard ceiling on a single stream so a vanished run can't hold it open forever. */
+const STREAM_MAX_MS = 15 * 60 * 1000;
+
+const cellKey = (documentId: string, columnIndex: number) =>
+    `${documentId}:${columnIndex}`;
+
+/** One progress frame — the same shape the SSE `cell_update` event carries. */
+interface CellUpdate {
+    type: "cell_update";
+    document_id: string;
+    column_index: number;
+    content: unknown;
+    status: "generating" | "done" | "error";
+}
+
+/**
+ * Given the review's columns, its documents, and current cell state, compute
+ * the set of cells that still need extracting and the documents that own at
+ * least one of them. Pure and side-effect free so it can be unit-tested.
+ */
+export function targetPendingCells(
+    columns: { index: number }[],
+    docs: { id: string }[],
+    cellMap: Map<string, Record<string, unknown>>,
+): { docIds: string[]; pending: Set<string> } {
+    const pending = new Set<string>();
+    const docIds: string[] = [];
+    for (const doc of docs) {
+        const docId = doc.id;
+        let hasPending = false;
+        for (const col of columns) {
+            const cell = cellMap.get(`${docId}:${col.index}`);
+            if (!(cell?.status === "done" && cell?.content)) {
+                pending.add(cellKey(docId, col.index));
+                hasPending = true;
+            }
+        }
+        if (hasPending) docIds.push(docId);
+    }
+    return { docIds, pending };
+}
+
+// GET /tabular-review/:reviewId/generate/stream — reconnect to an in-flight (or
+// just-finished) generate run without re-triggering work. A client whose POST
+// /generate stream dropped can resume here and catch up on the remaining cells.
+// Pure observer: it never triggers extraction — it polls `tabular_cells` (the
+// source of truth the generate run keeps writing to) and forwards each newly
+// terminal cell as the same `cell_update` SSE frame, until every targeted cell
+// is terminal, the client disconnects, or the cap elapses.
+tabularRouter.get("/:reviewId/generate/stream", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { reviewId } = req.params;
+    const db = createServerSupabase();
+
+    const { data: review, error: reviewError } = await db
+        .from("tabular_reviews")
+        .select("*")
+        .eq("id", reviewId)
+        .single();
+    if (reviewError || !review)
+        return void res.status(404).json({ detail: "Review not found" });
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Review not found" });
+
+    const columns: {
+        index: number;
+        name: string;
+        prompt: string;
+        format?: string;
+        tags?: string[];
+    }[] = review.columns_config ?? [];
+    if (columns.length === 0)
+        return void res.status(400).json({ detail: "No columns configured" });
+
+    const { data: cells } = await db
+        .from("tabular_cells")
+        .select("*")
+        .eq("review_id", reviewId);
+    const cellMap = new Map<string, Record<string, unknown>>();
+    for (const cell of cells ?? [])
+        cellMap.set(`${cell.document_id}:${cell.column_index}`, cell);
+
+    const docIds = [...new Set((cells ?? []).map((c) => c.document_id))];
+    const allowedDocIds = new Set(
+        await filterAccessibleDocumentIds(docIds, userId, userEmail, db),
+    );
+    let docs: Record<string, unknown>[] = [];
+    if (docIds.length > 0) {
+        const filteredIds = docIds.filter((id) => allowedDocIds.has(id));
+        const { data } =
+            filteredIds.length > 0
+                ? await db
+                      .from("documents")
+                      .select("id, current_version_id")
+                      .in("id", filteredIds)
+                : { data: [] as Record<string, unknown>[] };
+        docs = data ?? [];
+    } else if (review.project_id) {
+        const { data } = await db
+            .from("documents")
+            .select("id, current_version_id")
+            .eq("project_id", review.project_id)
+            .order("created_at", { ascending: true });
+        docs = data ?? [];
+    }
+
+    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
+    const missingKey = missingModelApiKey(tabular_model, api_keys);
+    if (missingKey) {
+        return void res.status(422).json({
+            code: "missing_api_key",
+            ...missingKey,
+        });
+    }
+
+    const { pending } = targetPendingCells(
+        columns,
+        docs as { id: string }[],
+        cellMap,
+    );
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    const write = (payload: unknown) => {
+        try {
+            if (!res.writableEnded)
+                res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        } catch {
+            // Client gone; the "close" handler will tear the stream down.
+        }
+    };
+
+    let poll: ReturnType<typeof setInterval> | null = null;
+    let cap: ReturnType<typeof setTimeout> | null = null;
+    let finished = false;
+
+    const cleanup = () => {
+        if (poll) clearInterval(poll);
+        if (cap) clearTimeout(cap);
+    };
+    // End the SSE response (client saw [DONE]). The generate run keeps running
+    // regardless — this only closes the *view*.
+    const finish = () => {
+        if (finished) return;
+        finished = true;
+        try {
+            if (!res.writableEnded) res.write("data: [DONE]\n\n");
+        } catch {
+            /* client already gone */
+        }
+        cleanup();
+        if (!res.writableEnded) res.end();
+    };
+    // Client disconnected first: stop tailing but do NOT end (already closed),
+    // and leave the generate run alone so the extraction still completes.
+    const abandon = () => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+    };
+
+    // Terminal update for a pending cell: forward it and drop it from the set.
+    const resolve = (key: string, update: CellUpdate) => {
+        if (!pending.delete(key)) return;
+        write(update);
+        if (pending.size === 0) finish();
+    };
+
+    res.on("close", abandon);
+
+    // Nothing to do — every targeted cell is already done.
+    if (pending.size === 0) return void finish();
+
+    // Reconcile against the DB on an interval, replaying progress that happened
+    // while the client was away and forwarding cells as they turn terminal.
+    poll = setInterval(() => {
+        if (finished) return;
+        void (async () => {
+            const { data: rows } = await db
+                .from("tabular_cells")
+                .select("document_id, column_index, status, content")
+                .eq("review_id", reviewId);
+            for (const r of (rows ?? []) as {
+                document_id: string;
+                column_index: number;
+                status: string;
+                content: unknown;
+            }[]) {
+                const key = cellKey(r.document_id, r.column_index);
+                if (!pending.has(key)) continue;
+                if (r.status === "done" && r.content) {
+                    resolve(key, {
+                        type: "cell_update",
+                        document_id: r.document_id,
+                        column_index: r.column_index,
+                        content: parseCellContent(r.content),
+                        status: "done",
+                    });
+                } else if (r.status === "error") {
+                    resolve(key, {
+                        type: "cell_update",
+                        document_id: r.document_id,
+                        column_index: r.column_index,
+                        content: null,
+                        status: "error",
+                    });
+                }
+            }
+        })().catch((err) =>
+            console.error(
+                "[tabular/generate/stream] reconcile poll failed",
+                safeErrorLog(err),
+            ),
+        );
+    }, RECONCILE_INTERVAL_MS);
+    if (typeof poll.unref === "function") poll.unref();
+
+    cap = setTimeout(finish, STREAM_MAX_MS);
+    if (typeof cap.unref === "function") cap.unref();
+});
+
 // GET /tabular-review/:reviewId/chats — list chats (metadata only, no messages)
 tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
