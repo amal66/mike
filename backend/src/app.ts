@@ -5,6 +5,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
+import { orgsRouter } from "./routes/orgs";
 import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
 import { libraryRouter } from "./routes/library";
@@ -148,6 +149,7 @@ app.use((req, res, next) =>
 
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
+app.use("/orgs", orgsRouter);
 app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
 app.use("/library", libraryRouter);
