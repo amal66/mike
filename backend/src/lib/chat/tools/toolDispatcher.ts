@@ -55,6 +55,11 @@ import {
   type DocReplicatedResult,
   type TextMatch,
 } from "./documentOps";
+import {
+  getActiveEmbeddingProvider,
+  resolveEmbeddingModel,
+} from "../../llm/embeddings";
+import { searchDocumentChunks } from "../../rag/searchDocuments";
 
 
 type CourtlistenerCaseRecord = {
@@ -432,6 +437,9 @@ function cachedCaseNotFetchedResult(clusterId: number | null) {
   };
 }
 
+const DEFAULT_SEARCH_TOP_K = 8;
+const MAX_SEARCH_TOP_K = 25;
+
 export async function runToolCalls(
   toolCalls: ToolCall[],
   docStore: DocStore,
@@ -696,6 +704,129 @@ export async function runToolCalls(
         });
       }
       toolResults.push({ role: "tool", tool_call_id: tc.id, content });
+    } else if (tc.function.name === "search_documents") {
+      // Semantic top-k search across the chat's documents (RAG). Embeds the
+      // query with the SAME model used at ingest, runs a cosine search scoped
+      // to the document ids the chat already granted access to, and returns
+      // each chunk citable. The cosine search is scoped to docIndex's document
+      // ids (the access-checked set for this turn), so service_role can't
+      // return another tenant's chunks.
+      const pushSearchResult = (content: string) =>
+        toolResults.push({ role: "tool", tool_call_id: tc.id, content });
+      const query = typeof args.query === "string" ? args.query.trim() : "";
+      const rawTopK =
+        typeof args.top_k === "number" ? args.top_k : DEFAULT_SEARCH_TOP_K;
+      const topK = Math.max(1, Math.min(MAX_SEARCH_TOP_K, Math.floor(rawTopK)));
+
+      if (!query) {
+        pushSearchResult(JSON.stringify({ error: "query is required." }));
+        continue;
+      }
+      if (!docIndex) {
+        pushSearchResult(
+          JSON.stringify({ matches: [], note: "No documents in context." }),
+        );
+        continue;
+      }
+
+      // Map document_id -> { label, filename } from the access-checked doc
+      // index. This is BOTH the citation-label source and the authz scope for
+      // the search.
+      const byDocumentId = new Map<string, { label: string; filename: string }>();
+      for (const [label, indexed] of Object.entries(docIndex)) {
+        if (!byDocumentId.has(indexed.document_id)) {
+          byDocumentId.set(indexed.document_id, {
+            label,
+            filename: indexed.filename,
+          });
+        }
+      }
+
+      // Optional narrowing to a single doc (accepts a doc-N label or a raw id).
+      let documentIds = [...byDocumentId.keys()];
+      if (typeof args.doc_id === "string" && args.doc_id.trim()) {
+        const label =
+          resolveDocLabel(args.doc_id as string, docStore, docIndex) ??
+          (args.doc_id as string);
+        const target = docIndex[label]?.document_id ?? (args.doc_id as string);
+        documentIds = documentIds.filter((id) => id === target);
+      }
+
+      if (documentIds.length === 0) {
+        pushSearchResult(
+          JSON.stringify({
+            matches: [],
+            note: "No matching documents in context.",
+          }),
+        );
+        continue;
+      }
+
+      const provider = getActiveEmbeddingProvider();
+      if (!provider) {
+        // Embeddings unconfigured. Degrade gracefully — the model can still
+        // fall back to read_document.
+        pushSearchResult(
+          JSON.stringify({
+            matches: [],
+            note: "Semantic search is unavailable in this deployment; use read_document or find_in_document instead.",
+          }),
+        );
+        continue;
+      }
+
+      const model = resolveEmbeddingModel();
+      let matches;
+      try {
+        const [queryEmbedding] = await provider.embed([query], apiKeys);
+        matches = await searchDocumentChunks({
+          db,
+          queryEmbedding: queryEmbedding ?? [],
+          model,
+          documentIds,
+          topK,
+        });
+      } catch (err) {
+        pushSearchResult(
+          JSON.stringify({ error: `Semantic search failed: ${String(err)}` }),
+        );
+        continue;
+      }
+
+      if (matches.length === 0) {
+        pushSearchResult(
+          JSON.stringify({ matches: [], note: "No relevant passages found." }),
+        );
+        continue;
+      }
+
+      // Record one docsFound entry per matched document for the UI chips.
+      const perDoc = new Map<string, number>();
+      for (const m of matches)
+        perDoc.set(m.document_id, (perDoc.get(m.document_id) ?? 0) + 1);
+      for (const [documentId, count] of perDoc) {
+        const info = byDocumentId.get(documentId);
+        if (info) {
+          docsFound.push({
+            filename: info.filename,
+            query,
+            total_matches: count,
+          });
+        }
+      }
+
+      // Attach the doc-N citation reminder to each chunk, matching
+      // read_document/find_in_document.
+      const parts = matches.map((m) => {
+        const info = byDocumentId.get(m.document_id);
+        const label = info?.label ?? m.document_id;
+        const filename = info?.filename ?? m.document_id;
+        const pageLine = m.page != null ? ` (page ${m.page})` : "";
+        const header = `--- ${label} ("${filename}")${pageLine} ---\n${citationReminder(label, filename)}`;
+        return `${header}\n\n${m.content}`;
+      });
+
+      pushSearchResult(parts.join("\n\n"));
     } else if (tc.function.name === "list_documents") {
       const list = Array.from(docStore.entries()).map(([doc_id, info]) => ({
         doc_id,

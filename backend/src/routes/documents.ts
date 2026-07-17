@@ -12,6 +12,7 @@ import {
 } from "../lib/storage";
 import { docxToPdf, convertedPdfKey } from "../lib/convert";
 import { enqueueConversion } from "../lib/queue/conversionQueue";
+import { maybeEnqueueEmbedding } from "../lib/queue/embeddingQueue";
 import {
   extractTrackedChangeIds,
   resolveTrackedChange,
@@ -557,6 +558,14 @@ documentsRouter.post(
         .json({ detail: "Failed to update document current version." });
     }
 
+    // Re-index the new current version for semantic search (no-op unless
+    // ASYNC_EMBEDDING); mirrors the conversion enqueue on the upload path.
+    await maybeEnqueueEmbedding({
+      documentId,
+      versionId: versionRow.id as string,
+      userId,
+    });
+
     if (willDeleteSource) {
       const { error: deleteErr } = await deleteDocumentAndVersionFiles(
         db,
@@ -728,6 +737,12 @@ documentsRouter.post(
         .status(500)
         .json({ detail: "Failed to update document current version." });
     }
+
+    await maybeEnqueueEmbedding({
+      documentId,
+      versionId: versionRow.id as string,
+      userId,
+    });
 
     res.status(201).json(versionRow);
   },
@@ -922,6 +937,10 @@ documentsRouter.put(
         .filter((path): path is string => !!path)
         .map((path) => deleteFile(path).catch(() => {})),
     );
+
+    // The version's bytes changed in place — re-index it if it is the current
+    // version (the ingestion job skips it otherwise).
+    await maybeEnqueueEmbedding({ documentId, versionId, userId });
 
     res.json(updated);
   },
@@ -1436,6 +1455,13 @@ export async function handleDocumentUpload(
         fileType: suffix,
       });
     }
+
+    // Index the new version for semantic search (no-op unless ASYNC_EMBEDDING).
+    await maybeEnqueueEmbedding({
+      documentId: docId,
+      versionId: versionRow.id,
+      userId,
+    });
 
     const { data: updated } = await db
       .from("documents")

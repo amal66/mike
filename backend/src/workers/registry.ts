@@ -6,8 +6,13 @@ import {
     createExtractionWorker,
     stopExtractionWorker,
 } from "./extractionWorker";
+import {
+    createEmbeddingWorker,
+    stopEmbeddingWorker,
+} from "./embeddingWorker";
 import { closeConversionQueue } from "../lib/queue/conversionQueue";
 import { closeExtractionQueue } from "../lib/queue/extractionQueue";
+import { closeEmbeddingQueue } from "../lib/queue/embeddingQueue";
 
 /**
  * One background queue's lifecycle, described declaratively. `startWorkers()` /
@@ -47,5 +52,12 @@ export const WORKER_REGISTRY: WorkerDescriptor[] = [
         create: createExtractionWorker,
         stop: stopExtractionWorker,
         closeQueue: closeExtractionQueue,
+    },
+    {
+        name: "document-embedding",
+        enabled: () => process.env.ASYNC_EMBEDDING === "true",
+        create: createEmbeddingWorker,
+        stop: stopEmbeddingWorker,
+        closeQueue: closeEmbeddingQueue,
     },
 ];
