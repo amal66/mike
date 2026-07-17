@@ -1,17 +1,13 @@
 import { Router } from "express";
-import { requireAuth } from "../middleware/auth";
-import { getCourtlistenerCaseOpinions } from "../lib/courtlistener";
-import { createServerSupabase } from "../lib/supabase";
-import { getUserModelSettings } from "../lib/userSettings";
+import { requireAuth } from "../../middleware/auth";
+import { getCourtlistenerCaseOpinions } from "../../lib/courtlistener";
+import { createServerSupabase } from "../../lib/supabase";
+import { getUserModelSettings } from "../../lib/userSettings";
+import { logger } from "../../lib/logger";
 
 export const caseLawRouter = Router();
 
 caseLawRouter.use(requireAuth);
-
-const isDev = process.env.NODE_ENV !== "production";
-const devLog = (...args: Parameters<typeof console.log>) => {
-    if (isDev) console.log(...args);
-};
 
 const sidepanelOpinionFetches = new Map<string, Promise<unknown>>();
 
@@ -40,16 +36,12 @@ caseLawRouter.post("/case-opinions", async (req, res) => {
     try {
         const userId = String(res.locals.userId ?? "");
         const settings = await getUserModelSettings(userId);
-        devLog("[case-law/case-opinions] loading sidepanel opinions", {
-            clusterId,
-        });
+        logger.debug({ clusterId }, "[case-law/case-opinions] loading sidepanel opinions");
         const db = createServerSupabase();
         const fetchKey = `${userId}:${clusterId}`;
         let fetchPromise = sidepanelOpinionFetches.get(fetchKey);
         if (fetchPromise) {
-            devLog("[case-law/case-opinions] joining in-flight fetch", {
-                clusterId,
-            });
+            logger.debug({ clusterId }, "[case-law/case-opinions] joining in-flight fetch");
         } else {
             fetchPromise = getCourtlistenerCaseOpinions({
                 clusterId,
@@ -70,10 +62,10 @@ caseLawRouter.post("/case-opinions", async (req, res) => {
         const opinions = Array.isArray(fetchedRecord.opinions)
             ? fetchedRecord.opinions
             : [];
-        devLog("[case-law/case-opinions] returning sidepanel opinions", {
-            clusterId,
-            opinionCount: opinions.length,
-        });
+        logger.debug(
+            { clusterId, opinionCount: opinions.length },
+            "[case-law/case-opinions] returning sidepanel opinions",
+        );
 
         return res.json({ opinions });
     } catch (err) {
