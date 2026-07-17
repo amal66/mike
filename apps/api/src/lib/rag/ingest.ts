@@ -7,10 +7,7 @@ import {
     resolveEmbeddingModel,
     type EmbeddingProviderAdapter,
 } from "../llm/embeddings";
-import {
-    extractPdfMarkdown,
-    extractDocxMarkdown,
-} from "../../modules/tabular/tabular.extract";
+import { extractDocumentMarkdown } from "../../modules/tabular/tabular.extract";
 import { chunkMarkdown } from "./chunker";
 import { logger } from "../logger";
 import type { OtelCarrier } from "../observability/traceContext";
@@ -42,10 +39,9 @@ async function defaultExtractMarkdown(
     buf: ArrayBuffer,
     fileType: string,
 ): Promise<string> {
-    const t = fileType.toLowerCase();
-    if (t === "pdf") return extractPdfMarkdown(buf);
-    if (t === "docx" || t === "doc") return extractDocxMarkdown(buf);
-    return "";
+    // Same choke point the tabular extractor uses, so RAG embeds spreadsheets
+    // and presentations too — not just pdf/docx.
+    return extractDocumentMarkdown(buf, fileType);
 }
 
 function defaultDeps(): EmbeddingIngestDeps {

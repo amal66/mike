@@ -7,6 +7,12 @@ import {
 } from "../docxTrackedChanges";
 import { logger } from "../logger";
 import type { DocStore, DocIndex } from "../chatToolDefs";
+import {
+    isSpreadsheetDocumentType,
+    isPresentationDocumentType,
+} from "../documentTypes";
+import { spreadsheetToLLMText } from "../spreadsheet";
+import { extractPresentationText } from "../officeText";
 import { extractPdfText } from "./pdfText";
 import { loadCurrentVersionBytes } from "./editDocument";
 
@@ -119,6 +125,29 @@ export async function readDocumentContent(
                 { length: text.length, filename: docInfo.filename },
                 "[read_document] pdf extracted",
             );
+        } else if (isSpreadsheetDocumentType(docInfo.file_type)) {
+            // SheetJS reads .xlsx/.xlsm/.xls directly into cell-addressed
+            // markdown — no PDF/text detour, and cells stay addressable.
+            text = spreadsheetToLLMText(Buffer.from(raw));
+            logger.debug(
+                { length: text.length, filename: docInfo.filename },
+                "[read_document] spreadsheet extracted",
+            );
+        } else if (isPresentationDocumentType(docInfo.file_type)) {
+            // .pptx text via jszip; legacy .ppt (OLE2) yields "" and falls back
+            // to mammoth below so we never surface an empty document.
+            text = await extractPresentationText(Buffer.from(raw));
+            logger.debug(
+                { length: text.length, filename: docInfo.filename },
+                "[read_document] presentation extracted",
+            );
+            if (!text) {
+                const mammoth = await import("mammoth");
+                const result = await mammoth
+                    .extractRawText({ buffer: Buffer.from(raw) })
+                    .catch(() => ({ value: "" }));
+                text = result.value;
+            }
         } else if (docInfo.file_type === "docx") {
             // Use the same flattening as the edit_document matcher so the
             // LLM sees exactly the characters it can anchor against.

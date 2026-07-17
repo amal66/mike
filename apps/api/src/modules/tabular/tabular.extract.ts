@@ -4,16 +4,16 @@
 import { logger } from "../../lib/logger";
 import { docxToPdf, normalizeDocxZipPaths } from "../../lib/convert";
 import {
+    extractDocxRedlines,
+    formatRedlineSummary,
+} from "../../lib/docxTrackedChanges";
+import {
     isPresentationDocumentType,
     isSpreadsheetDocumentType,
     isWordDocumentType,
 } from "../../lib/documentTypes";
 import { extractPresentationText } from "../../lib/officeText";
 import { spreadsheetToLLMText } from "../../lib/spreadsheet";
-import {
-    extractDocxRedlines,
-    formatRedlineSummary,
-} from "../../lib/docxTrackedChanges";
 import { type TabularCellStore } from "../../lib/chat";
 import {
     completeText,
@@ -261,10 +261,15 @@ Rules:
 // ---------------------------------------------------------------------------
 
 /**
- * Route a document buffer to the right text extractor for its file type:
- * PDFs and DOCX extract directly; spreadsheets go through SheetJS; PPTX has a
- * native XML extractor; remaining Office types take the LibreOffice → PDF
- * detour.
+ * Extract one document's text as markdown for the tabular extractor, dispatched
+ * on its declared file type. This is the single choke point so every caller
+ * (sync generate, regenerate-cell, async worker) handles all formats the same:
+ *
+ *   - pdf              → pdf.js text per page
+ *   - docx             → mammoth HTML → markdown
+ *   - xlsx/xlsm/xls    → SheetJS cell-addressed markdown (no PDF detour)
+ *   - pptx             → jszip slide-text extraction
+ *   - doc/ppt (legacy) → LibreOffice → PDF → pdf.js text
  */
 export async function extractDocumentMarkdown(
     buf: ArrayBuffer,
@@ -284,6 +289,7 @@ export async function extractDocumentMarkdown(
         isPresentationDocumentType(normalizedType) ||
         isWordDocumentType(normalizedType)
     ) {
+        // Legacy .doc/.ppt (OLE2): route through LibreOffice → PDF → text.
         const pdfBuf = await docxToPdf(Buffer.from(buf));
         const pdfArrayBuffer = pdfBuf.buffer.slice(
             pdfBuf.byteOffset,
@@ -291,6 +297,7 @@ export async function extractDocumentMarkdown(
         ) as ArrayBuffer;
         return extractPdfMarkdown(pdfArrayBuffer);
     }
+    // Unknown type: best-effort docx/mammoth extraction (matches prior default).
     return extractDocxMarkdown(buf);
 }
 
