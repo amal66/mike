@@ -1,4 +1,20 @@
 import "dotenv/config";
+// Initialize OpenTelemetry FIRST — before any instrumented module
+// (http/express) is imported — because the Node auto-instrumentations patch
+// modules at load time. otel.ts reads its enable/disable gate straight from
+// process.env to stay import-order-safe. Complete no-op when
+// OTEL_EXPORTER_OTLP_ENDPOINT is unset.
+import { initOtel, shutdownOtel } from "./lib/observability/otel";
+initOtel();
+// Initialize Sentry BEFORE importing any instrumented module (express/http):
+// the Node SDK patches modules at load time, so init must run first. No-op
+// when SENTRY_DSN is unset.
+import {
+  initSentry,
+  captureException,
+  setupSentryErrorHandler,
+} from "./lib/observability/sentry";
+initSentry();
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -161,6 +177,61 @@ app.use("/case-law", caseLawRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
+// Sentry's Express error handler must run after all routes but before any
+// other error-handling middleware, so Sentry records the error first. No-op
+// when SENTRY_DSN is unset.
+setupSentryErrorHandler(app);
+
+// Catch async errors that escape all route handlers and middleware.
+// Without these handlers, an unhandled Promise rejection or uncaught
+// exception prints a warning and may silently continue — or in older
+// Node.js versions, crash without a stack trace.
+// Here we log them (and forward them to Sentry when enabled) and exit
+// cleanly so the process manager can restart the process with a
+// known-good state. Note: "exit cleanly" is intentional — a process with
+// unknown corrupted state is more dangerous than a fresh restart.
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection — exiting", reason);
+  captureException(reason);
+  process.exit(1);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception — exiting", err);
+  captureException(err);
+  process.exit(1);
+});
+
+const server = app.listen(PORT, () => {
   console.log(`Mike backend running on port ${PORT}`);
 });
+
+// Graceful shutdown: on SIGTERM/SIGINT (orchestrator rollout, Ctrl-C), stop
+// accepting new connections, let in-flight requests/streams drain, then exit
+// 0. A hard timeout guards against a connection that never drains.
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Shutting down gracefully (${signal})`);
+  const forceExit = setTimeout(() => {
+    console.error("Graceful shutdown timed out — forcing exit");
+    process.exit(1);
+  }, 15_000);
+  forceExit.unref();
+  try {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    // Flush any pending spans before exit (no-op when tracing is disabled).
+    await shutdownOtel();
+    console.log("Shutdown complete");
+    process.exit(0);
+  } catch (err) {
+    console.error("Error during graceful shutdown", err);
+    process.exit(1);
+  }
+}
+
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
