@@ -7,6 +7,11 @@ import {
   type SystemWorkflow,
 } from "../lib/systemWorkflows";
 import { findMissingUserEmails } from "../lib/userLookup";
+import {
+  WORKFLOW_PACK_FORMAT_VERSION,
+  describeWorkflowPackIssues,
+  workflowPackSchema,
+} from "../lib/workflowFormat";
 
 export const workflowsRouter = Router();
 
@@ -769,6 +774,153 @@ workflowsRouter.post("/:workflowId/share", requireAuth, asyncRoute(async (req, r
   if (error) return void res.status(500).json({ detail: error.message });
 
   res.status(204).send();
+}));
+
+// ---------------------------------------------------------------------------
+// Import / export (.mikeworkflow.json)
+// ---------------------------------------------------------------------------
+
+export async function exportWorkflow(
+  db: Db,
+  params: { workflowId: string; userId: string },
+): Promise<
+  | { ok: true; payload: Record<string, unknown>; filename: string }
+  | { ok: false }
+> {
+  const { workflowId, userId } = params;
+
+  const { data: wf } = await db
+    .from("workflows")
+    .select(
+      "title, type, prompt_md, columns_config, practice, language, jurisdictions",
+    )
+    .eq("id", workflowId)
+    .eq("user_id", userId)
+    .single();
+
+  if (!wf) return { ok: false };
+
+  const payload = {
+    formatVersion: WORKFLOW_PACK_FORMAT_VERSION,
+    exportedAt: new Date().toISOString(),
+    workflow: {
+      title: wf.title,
+      type: wf.type,
+      prompt_md: wf.prompt_md ?? null,
+      columns_config: wf.columns_config ?? null,
+      practice: wf.practice ?? null,
+      language: wf.language ?? null,
+      jurisdictions: wf.jurisdictions ?? null,
+    },
+  };
+
+  // Produce a safe filename from the workflow title.
+  const safeName = String(wf.title ?? "workflow")
+    .replace(/[^a-zA-Z0-9 _-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .slice(0, 80) || "workflow";
+
+  return { ok: true, payload, filename: `${safeName}.mikeworkflow.json` };
+}
+
+export type ImportWorkflowResult =
+  | { ok: true; workflow: Record<string, unknown> }
+  | { ok: false; kind: "validation"; detail: string }
+  | { ok: false; kind: "db_error"; detail: string };
+
+export async function importWorkflow(
+  db: Db,
+  params: { userId: string; body: Record<string, unknown> },
+): Promise<ImportWorkflowResult> {
+  const { userId, body } = params;
+
+  // Validate against the same schema we publish as
+  // schemas/workflow.schema.json — one definition of the format, so the API
+  // can never accept a file the published schema rejects (or vice versa).
+  const parsed = workflowPackSchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      kind: "validation",
+      detail: `Invalid workflow file: ${describeWorkflowPackIssues(parsed.error)}`,
+    };
+  }
+  const wf = parsed.data.workflow;
+  const title = wf.title.trim();
+  if (!title)
+    return { ok: false, kind: "validation", detail: "workflow.title is required." };
+
+  const { data, error } = await db
+    .from("workflows")
+    .insert({
+      user_id: userId,
+      title,
+      type: wf.type,
+      prompt_md: wf.prompt_md ?? null,
+      columns_config: wf.columns_config ?? null,
+      practice: wf.practice ?? null,
+      // Imported files may predate these fields — normalize to the defaults.
+      language:
+        normalizeOptionalString(wf.language) ?? DEFAULT_WORKFLOW_LANGUAGE,
+      jurisdictions:
+        normalizeJurisdictions(wf.jurisdictions) ??
+        DEFAULT_WORKFLOW_JURISDICTIONS,
+    })
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    return {
+      ok: false,
+      kind: "db_error",
+      detail: error?.message ?? "Failed to import workflow.",
+    };
+  }
+
+  return { ok: true, workflow: withDatabaseWorkflow(data as WorkflowRecord) };
+}
+
+// GET /workflows/:workflowId/export
+// Returns the workflow as a downloadable .mikeworkflow.json file.
+// Only the owner can export — the exported file contains the full prompt
+// content which may be proprietary.
+workflowsRouter.get("/:workflowId/export", requireAuth, asyncRoute(async (req, res) => {
+  const userId = res.locals.userId as string;
+  const { workflowId } = req.params;
+  const db = createServerSupabase();
+
+  const result = await exportWorkflow(db, { workflowId, userId });
+  if (!result.ok)
+    return void res.status(404).json({ detail: "Workflow not found" });
+
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${result.filename}"`,
+  );
+  res.json(result.payload);
+}));
+
+// POST /workflows/import
+// Accepts a .mikeworkflow.json payload (the body, not a file upload) and
+// creates a new workflow owned by the authenticated user.  The imported
+// workflow always gets a fresh ID — it is never merged with an existing one.
+workflowsRouter.post("/import", requireAuth, asyncRoute(async (req, res) => {
+  const userId = res.locals.userId as string;
+  const db = createServerSupabase();
+
+  const result = await importWorkflow(db, {
+    userId,
+    body: req.body as Record<string, unknown>,
+  });
+  if (!result.ok) {
+    if (result.kind === "validation")
+      return void res.status(400).json({ detail: result.detail });
+    return void res.status(500).json({ detail: result.detail });
+  }
+
+  res.status(201).json(result.workflow);
 }));
 
 workflowsRouter.use(
