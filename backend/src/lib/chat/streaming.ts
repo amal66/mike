@@ -5,6 +5,7 @@ import {
   type LlmMessage,
   type OpenAIToolSchema,
 } from "../llm";
+import { isAirgapped } from "../airgap";
 import { safeErrorMessage } from "../safeError";
 import { createServerSupabase } from "../supabase";
 import {
@@ -186,8 +187,13 @@ export async function runLLMStream(params: {
     signal,
     projectId,
   } = params;
-  const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
-  const mcpTools = await buildUserMcpTools(userId, db);
+  // Air-gapped: strip every tool that could reach an external host. CourtListener
+  // fetches courtlistener.com; user MCP connectors can target public hosts. Only
+  // local tools remain.
+  const airgapped = isAirgapped();
+  const researchTools =
+    includeResearchTools && !airgapped ? COURTLISTENER_TOOLS : [];
+  const mcpTools = airgapped ? [] : await buildUserMcpTools(userId, db);
   const baseTools = [...TOOLS, ...researchTools, ...WORKFLOW_TOOLS];
   const activeTools = extraTools?.length
     ? [...baseTools, ...mcpTools, ...extraTools]
