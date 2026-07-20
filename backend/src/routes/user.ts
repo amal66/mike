@@ -29,6 +29,19 @@ import {
     updateUserMcpConnector,
 } from "../lib/mcpConnectors";
 import {
+    completeDmsConnectorOAuth,
+    createDmsConnector,
+    deleteDmsConnector,
+    DmsOAuthRequiredError,
+    getDmsConnector,
+    importDmsDocument,
+    listDmsConnectors,
+    searchDms,
+    startDmsConnectorOAuth,
+    syncDmsConnector,
+    updateDmsConnector,
+} from "../lib/dmsConnectors";
+import {
     deleteAllUserChats,
     deleteAllUserTabularReviews,
     deleteUserAccountData,
@@ -950,6 +963,327 @@ userRouter.patch(
                 error: detail,
             });
             res.status(400).json({ detail });
+        }
+    },
+);
+
+// ---------------------------------------------------------------------------
+// DMS connectors (iManage / NetDocuments). Same auth posture as the MCP
+// connector routes: requireAuth on reads, requireAuth + requireMfaIfEnrolled on
+// writes. The OAuth callback is unauthenticated (the DMS redirects the browser
+// to it) and validated by the one-time state token.
+// ---------------------------------------------------------------------------
+
+// GET /user/dms-connectors
+userRouter.get("/dms-connectors", requireAuth, async (_req, res) => {
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    try {
+        res.json(await listDmsConnectors(userId, db));
+    } catch (err) {
+        const detail = errorMessage(err);
+        console.error("[user/dms-connectors] list failed", {
+            userId,
+            error: detail,
+        });
+        res.status(500).json({ detail });
+    }
+});
+
+// GET /user/dms-connectors/:connectorId
+userRouter.get(
+    "/dms-connectors/:connectorId",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        try {
+            res.json(
+                await getDmsConnector(userId, req.params.connectorId, db),
+            );
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] get failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                error: detail,
+            });
+            res.status(404).json({ detail });
+        }
+    },
+);
+
+// POST /user/dms-connectors
+userRouter.post(
+    "/dms-connectors",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const kind = typeof req.body?.kind === "string" ? req.body.kind : "";
+        const name = typeof req.body?.name === "string" ? req.body.name : "";
+        const baseUrl =
+            typeof req.body?.baseUrl === "string" ? req.body.baseUrl : "";
+        const config =
+            req.body?.config &&
+            typeof req.body.config === "object" &&
+            !Array.isArray(req.body.config)
+                ? (req.body.config as Record<string, unknown>)
+                : undefined;
+        const db = createServerSupabase();
+        try {
+            const connector = await createDmsConnector(
+                userId,
+                { kind, name, baseUrl, config },
+                db,
+            );
+            res.status(201).json(connector);
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] create failed", {
+                userId,
+                error: detail,
+            });
+            res.status(400).json({ detail });
+        }
+    },
+);
+
+// PATCH /user/dms-connectors/:connectorId
+userRouter.patch(
+    "/dms-connectors/:connectorId",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        const body = req.body ?? {};
+        try {
+            const connector = await updateDmsConnector(
+                userId,
+                req.params.connectorId,
+                {
+                    ...(typeof body.name === "string"
+                        ? { name: body.name }
+                        : {}),
+                    ...(typeof body.baseUrl === "string"
+                        ? { baseUrl: body.baseUrl }
+                        : {}),
+                    ...(typeof body.enabled === "boolean"
+                        ? { enabled: body.enabled }
+                        : {}),
+                    ...(body.config &&
+                    typeof body.config === "object" &&
+                    !Array.isArray(body.config)
+                        ? { config: body.config as Record<string, unknown> }
+                        : {}),
+                },
+                db,
+            );
+            res.json(connector);
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] update failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                error: detail,
+            });
+            res.status(400).json({ detail });
+        }
+    },
+);
+
+// DELETE /user/dms-connectors/:connectorId
+userRouter.delete(
+    "/dms-connectors/:connectorId",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        try {
+            await deleteDmsConnector(userId, req.params.connectorId, db);
+            res.status(204).send();
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] delete failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                error: detail,
+            });
+            res.status(500).json({ detail });
+        }
+    },
+);
+
+// POST /user/dms-connectors/:connectorId/oauth/start
+userRouter.post(
+    "/dms-connectors/:connectorId/oauth/start",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        try {
+            const redirectUri = `${backendPublicUrl(req)}/user/dms-connectors/oauth/callback`;
+            const result = await startDmsConnectorOAuth(
+                userId,
+                req.params.connectorId,
+                redirectUri,
+                db,
+            );
+            res.json(result);
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] oauth start failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                error: detail,
+            });
+            res.status(400).json({ detail });
+        }
+    },
+);
+
+// GET /user/dms-connectors/oauth/callback
+userRouter.get("/dms-connectors/oauth/callback", async (req, res) => {
+    const nonce = crypto.randomBytes(16).toString("base64");
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const error =
+        typeof req.query.error === "string" ? req.query.error : undefined;
+    const db = createServerSupabase();
+    try {
+        if (error) throw new Error(error);
+        if (!state || !code)
+            throw new Error("OAuth callback is missing state or code.");
+        const result = await completeDmsConnectorOAuth(state, code, db);
+        res.set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
+            .type("html")
+            .send(
+                mcpOAuthPopupHtml(
+                    { success: true, connectorId: result.connectorId },
+                    nonce,
+                ),
+            );
+    } catch (err) {
+        const detail = errorMessage(err);
+        console.error("[user/dms-connectors] oauth callback failed", {
+            error: detail,
+            stateHash: shortHash(state),
+            hasCode: !!code,
+        });
+        res.status(400)
+            .set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
+            .type("html")
+            .send(mcpOAuthPopupHtml({ success: false, detail }, nonce));
+    }
+});
+
+// POST /user/dms-connectors/:connectorId/sync — verify credentials reach the DMS
+userRouter.post(
+    "/dms-connectors/:connectorId/sync",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        try {
+            res.json(await syncDmsConnector(userId, req.params.connectorId, db));
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] sync failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                error: detail,
+            });
+            if (err instanceof DmsOAuthRequiredError) {
+                return void res
+                    .status(401)
+                    .json({ code: err.code, detail });
+            }
+            res.status(400).json({ detail });
+        }
+    },
+);
+
+// POST /user/dms-connectors/:connectorId/search
+userRouter.post(
+    "/dms-connectors/:connectorId/search",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const db = createServerSupabase();
+        const query = typeof req.body?.query === "string" ? req.body.query : "";
+        const folderId =
+            typeof req.body?.folderId === "string" ? req.body.folderId : null;
+        const limit =
+            typeof req.body?.limit === "number" ? req.body.limit : undefined;
+        try {
+            res.json(
+                await searchDms(
+                    userId,
+                    req.params.connectorId,
+                    query,
+                    { folderId, limit },
+                    db,
+                ),
+            );
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] search failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                error: detail,
+            });
+            res.status(400).json({ detail });
+        }
+    },
+);
+
+// POST /user/dms-connectors/:connectorId/import — pull a DMS doc into a project
+userRouter.post(
+    "/dms-connectors/:connectorId/import",
+    requireAuth,
+    requireMfaIfEnrolled,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const db = createServerSupabase();
+        const dmsDocId =
+            typeof req.body?.dmsDocId === "string" ? req.body.dmsDocId : "";
+        const projectId =
+            typeof req.body?.projectId === "string" ? req.body.projectId : null;
+        if (!dmsDocId)
+            return void res.status(400).json({ detail: "dmsDocId is required." });
+        try {
+            const result = await importDmsDocument(
+                userId,
+                userEmail,
+                req.params.connectorId,
+                dmsDocId,
+                projectId,
+                db,
+            );
+            if (!result.ok)
+                return void res
+                    .status(result.status)
+                    .json({ detail: result.detail });
+            res.status(201).json({
+                documentId: result.documentId,
+                doc: result.doc,
+            });
+        } catch (err) {
+            const detail = errorMessage(err);
+            console.error("[user/dms-connectors] import failed", {
+                userId,
+                connectorId: req.params.connectorId,
+                dmsDocId,
+                error: detail,
+            });
+            const status = err instanceof DmsOAuthRequiredError ? 401 : 500;
+            res.status(status).json({ detail });
         }
     },
 );
