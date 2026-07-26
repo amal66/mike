@@ -72,6 +72,7 @@ import {
     filterAccessibleDocumentIds,
     resolveContentOrgId,
 } from "../lib/access";
+import { can } from "../lib/permissions";
 import {
     findMissingUserEmails,
     loadProfileUsersByEmail,
@@ -492,13 +493,14 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         return void res.status(selectedModel.status).json(selectedModel.body);
     }
     if (project_id) {
+        // Creating a review inside a project contributes content to it.
         const access = await checkProjectAccess(
             project_id,
             userId,
             userEmail,
             db,
         );
-        if (!access.ok)
+        if (!access.ok || !can(access.projectRole, "content.edit"))
             return void res.status(404).json({ detail: "Project not found" });
     }
     const allowedDocumentIds = Array.isArray(document_ids)
@@ -687,6 +689,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         review: {
             ...clientReview,
             is_owner: access.isOwner,
+            access_role: access.projectRole,
             is_running: isReviewGenerationRunning(review),
         },
         cells: (cells ?? []).map((cell) => ({
@@ -803,15 +806,22 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     );
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    // Per-field gates, generalising #175's owner-only "settings" rule to
+    // the role ladder: title, document set and column set are structural
+    // (manager+ — renaming the container and re-shaping the grid, which
+    // destroys cells when narrowed); sharing is manager+; moving the
+    // review between projects stays owner-only. For shared_with
+    // collaborators this is exactly #175's behaviour; only org
+    // owners/admins gain these rights.
     if (
         (req.body.title != null ||
-            req.body.document_ids != null ||
+            Array.isArray(req.body.document_ids) ||
             req.body.document_grouping != null ||
             modelUpdateProvided) &&
-        !access.isOwner
+        !can(access.projectRole, "structure.manage")
     ) {
         return void res.status(403).json({
-            detail: "Only the review owner can change review settings",
+            detail: "Only a review manager can change review settings",
         });
     }
     if (modelUpdateProvided) {
@@ -828,9 +838,9 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         updates.model = selectedModel.model;
     }
     if (req.body.columns_config != null) {
-        if (!access.isOwner) {
+        if (!can(access.projectRole, "structure.manage")) {
             return void res.status(403).json({
-                detail: "Only the review owner can change columns",
+                detail: "Only a review manager can change columns",
             });
         }
         updates.columns_config = req.body.columns_config;
@@ -855,10 +865,10 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         );
     }
     if (sharedWithUpdate !== undefined) {
-        if (!access.isOwner)
+        if (!can(access.projectRole, "members.manage"))
             return void res
                 .status(403)
-                .json({ detail: "Only the review owner can change sharing" });
+                .json({ detail: "Only a review manager can change sharing" });
         const missingSharedUsers = await findMissingUserEmails(
             db,
             sharedWithUpdate,
@@ -973,6 +983,12 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    // Blanking extracted cells is bulk-destructive, so manager+ — the
+    // analogue of deleting a folder tree.
+    if (!can(access.projectRole, "structure.manage"))
+        return void res.status(403).json({
+            detail: "Only a review manager can clear cells",
+        });
     if (isReviewGenerationRunning(review)) {
         return void res.status(409).json({
             code: "review_running",
@@ -1094,7 +1110,7 @@ tabularRouter.post(
         if (reviewError || !review)
             return void res.status(404).json({ detail: "Review not found" });
         const access = await ensureReviewAccess(review, userId, userEmail, db);
-        if (!access.ok)
+        if (!access.ok || !can(access.projectRole, "content.edit"))
             return void res.status(404).json({ detail: "Review not found" });
         if (isReviewGenerationRunning(review)) {
             return void res.status(409).json({
@@ -2115,7 +2131,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         userEmail,
         db,
     );
-    if (!reviewAccess.ok)
+    if (!reviewAccess.ok || !can(reviewAccess.projectRole, "content.edit"))
         return void res.status(404).json({ detail: "Review not found" });
 
     // Fetch all cells and logical review rows for this review.

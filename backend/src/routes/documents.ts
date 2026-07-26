@@ -30,6 +30,7 @@ import {
   downloadFilenameForVersion,
   loadActiveVersion,
 } from "../lib/documentVersions";
+import { can } from "../lib/permissions";
 import {
     checkProjectAccess,
     ensureDocAccess,
@@ -627,13 +628,8 @@ documentsRouter.post(
       .single();
     if (!targetDoc)
       return void res.status(404).json({ detail: "Document not found" });
-    const targetAccess = await ensureDocAccess(
-      targetDoc,
-      userId,
-      userEmail,
-      db,
-    );
-    if (!targetAccess.ok || !targetAccess.canEdit)
+    const targetAccess = await ensureDocAccess(targetDoc, userId, userEmail, db);
+    if (!targetAccess.ok || !can(targetAccess.projectRole, "content.edit"))
       return void res.status(404).json({ detail: "Document not found" });
 
     const { data: sourceDoc } = await db
