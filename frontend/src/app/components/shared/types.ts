@@ -38,6 +38,8 @@ export interface Project {
     id: string;
     user_id: string;
     is_owner?: boolean;
+    /** Server-computed project role for the caller (detail endpoints only). */
+    access_role?: "owner" | "manager" | "editor" | "viewer";
     owner_display_name?: string | null;
     owner_email?: string | null;
     name: string;
@@ -727,6 +729,8 @@ export interface TabularReview {
     is_owner?: boolean;
     /** Server-set: true while another generation request holds the review lease. */
     is_running?: boolean;
+    /** Server-computed role for the caller (detail endpoint only). */
+    access_role?: "owner" | "manager" | "editor" | "viewer";
     created_at: string;
     updated_at: string;
     document_count?: number;

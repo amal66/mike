@@ -1,12 +1,14 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Upload, User, X } from "lucide-react";
 import {
+    type Org,
     UploadBatchError,
     addDocumentToProject,
     createProject,
     failedUploadMessage,
+    listOrgs,
     uploadProjectDocuments,
 } from "@/app/lib/mikeApi";
 import { FileDirectory } from "../shared/FileDirectory";
@@ -16,9 +18,12 @@ import type { UserLookupResult } from "@/app/lib/mikeApi";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { Modal } from "../modals/Modal";
 import { FieldLabel, FormTextInput } from "../ui/form-field";
+import { ModalSelect } from "../modals/ModalSelect";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/shared/ui/LiquidGlassUI";
+
+const PERSONAL_WORKSPACE = "__personal__";
 
 interface Props {
     open: boolean;
@@ -32,6 +37,8 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [cmNumber, setCmNumber] = useState("");
     const [practice, setPractice] = useState("");
     const [sharedUsers, setSharedUsers] = useState<UserLookupResult[]>([]);
+    const [orgs, setOrgs] = useState<Org[]>([]);
+    const [orgId, setOrgId] = useState<string>(PERSONAL_WORKSPACE);
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [loading, setLoading] = useState(false);
@@ -47,6 +54,22 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const { user } = useAuth();
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
     const formId = "new-project-modal-form";
+
+    // Load the caller's organizations so a project can be created inside a
+    // firm instead of the private personal workspace. Best-effort: without
+    // orgs the field simply doesn't render.
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        listOrgs()
+            .then((rows) => {
+                if (!cancelled) setOrgs(rows.filter((o) => !o.personal));
+            })
+            .catch(() => {});
+        return () => {
+            cancelled = true;
+        };
+    }, [open]);
 
     if (!open) return null;
 
@@ -99,6 +122,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                               .map((user) => user.email)
                               .filter((email) => email !== ownEmail)
                         : sharedUsers.map((user) => user.email),
+                    orgId !== PERSONAL_WORKSPACE ? orgId : undefined,
                 ));
             createdProjectRef.current = project;
 
@@ -184,6 +208,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setSharedUsers([]);
         setSelectedDocuments([]);
         setPendingFiles([]);
+        setOrgId(PERSONAL_WORKSPACE);
         setError("");
     }
 
@@ -341,6 +366,29 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                 onChange={setPractice}
                             />
                         </div>
+
+                        {orgs.length > 0 && (
+                            <div>
+                                <FieldLabel htmlFor="new-project-org">
+                                    Organization
+                                </FieldLabel>
+                                <ModalSelect
+                                    id="new-project-org"
+                                    value={orgId}
+                                    onChange={setOrgId}
+                                    options={[
+                                        {
+                                            value: PERSONAL_WORKSPACE,
+                                            label: "Personal workspace",
+                                        },
+                                        ...orgs.map((org) => ({
+                                            value: org.id,
+                                            label: org.name,
+                                        })),
+                                    ]}
+                                />
+                            </div>
+                        )}
 
                         <div className="space-y-2">
                             <FieldLabel as="p">Share with</FieldLabel>
