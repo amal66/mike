@@ -36,7 +36,9 @@ import {
     checkProjectAccess,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
+    resolveContentOrgId,
 } from "../lib/access";
+import { can } from "../lib/permissions";
 import { safeErrorLog, safeErrorMessage } from "../lib/safeError";
 import {
     findMissingUserEmails,
@@ -122,13 +124,14 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
 
     const db = createServerSupabase();
     if (project_id) {
+        // Creating a review inside a project contributes content to it.
         const access = await checkProjectAccess(
             project_id,
             userId,
             userEmail,
             db,
         );
-        if (!access.ok)
+        if (!access.ok || !can(access.projectRole, "content.edit"))
             return void res.status(404).json({ detail: "Project not found" });
     }
     const allowedDocumentIds = Array.isArray(document_ids)
@@ -139,6 +142,12 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
               db,
           )
         : [];
+    // Tenant assignment: inherit the project's org when project-scoped,
+    // otherwise the caller's personal org.
+    const orgId = await resolveContentOrgId(db, {
+        userId,
+        projectId: project_id ?? null,
+    });
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -148,6 +157,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             document_ids: allowedDocumentIds,
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
+            org_id: orgId,
         })
         .select("*")
         .single();
@@ -282,7 +292,11 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     await attachActiveVersionPaths(db, docs);
 
     res.json({
-        review: { ...review, is_owner: access.isOwner },
+        review: {
+            ...review,
+            is_owner: access.isOwner,
+            access_role: access.projectRole,
+        },
         cells: (cells ?? []).map((cell) => ({
             ...cell,
             content: parseCellContent(cell.content),
@@ -303,7 +317,7 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
 
     const { data: review } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id, shared_with")
+        .select("id, user_id, project_id, shared_with, org_id")
         .eq("id", reviewId)
         .single();
     if (!review)
@@ -395,19 +409,34 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     );
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    // Per-field gates, generalising #175's owner-only "settings" rule to
+    // the role ladder: title, document set and column set are structural
+    // (manager+ — renaming the container and re-shaping the grid, which
+    // destroys cells when narrowed); sharing is manager+; moving the
+    // review between projects stays owner-only. For shared_with
+    // collaborators this is exactly #175's behaviour; only org
+    // owners/admins gain these rights.
+    if (
+        (req.body.title != null || Array.isArray(req.body.document_ids)) &&
+        !can(access.projectRole, "structure.manage")
+    ) {
+        return void res.status(403).json({
+            detail: "Only a review manager can change review settings",
+        });
+    }
     if (req.body.columns_config != null) {
-        if (!access.isOwner) {
+        if (!can(access.projectRole, "structure.manage")) {
             return void res.status(403).json({
-                detail: "Only the review owner can change columns",
+                detail: "Only a review manager can change columns",
             });
         }
         updates.columns_config = req.body.columns_config;
     }
     if (sharedWithUpdate !== undefined) {
-        if (!access.isOwner)
+        if (!can(access.projectRole, "members.manage"))
             return void res
                 .status(403)
-                .json({ detail: "Only the review owner can change sharing" });
+                .json({ detail: "Only a review manager can change sharing" });
         const missingSharedUsers = await findMissingUserEmails(
             db,
             sharedWithUpdate,
@@ -595,7 +624,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id")
+        .select("id, user_id, project_id, org_id")
         .eq("id", reviewId)
         .single();
     if (reviewError || !review)
@@ -603,6 +632,12 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
+    // Blanking extracted cells is bulk-destructive, so manager+ — the
+    // analogue of deleting a folder tree.
+    if (!can(access.projectRole, "structure.manage"))
+        return void res.status(403).json({
+            detail: "Only a review manager can clear cells",
+        });
 
     const { error } = await db
         .from("tabular_cells")
@@ -640,7 +675,7 @@ tabularRouter.post(
         if (reviewError || !review)
             return void res.status(404).json({ detail: "Review not found" });
         const access = await ensureReviewAccess(review, userId, userEmail, db);
-        if (!access.ok)
+        if (!access.ok || !can(access.projectRole, "content.edit"))
             return void res.status(404).json({ detail: "Review not found" });
 
         const column = (
@@ -755,7 +790,8 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (reviewError || !review)
         return void res.status(404).json({ detail: "Review not found" });
     const access = await ensureReviewAccess(review, userId, userEmail, db);
-    if (!access.ok)
+    // Generation overwrites cell contents and spends LLM budget: editor+.
+    if (!access.ok || !can(access.projectRole, "content.edit"))
         return void res.status(404).json({ detail: "Review not found" });
 
     const columns: {
@@ -957,7 +993,7 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     // Verify access (owner or shared-project member).
     const { data: review, error } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id")
+        .select("id, user_id, project_id, org_id")
         .eq("id", reviewId)
         .single();
     if (error || !review)
@@ -1032,7 +1068,7 @@ tabularRouter.get(
 
         const { data: review } = await db
             .from("tabular_reviews")
-            .select("id, user_id, project_id")
+            .select("id, user_id, project_id, org_id")
             .eq("id", reviewId)
             .single();
         if (!review)
@@ -1198,7 +1234,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         userEmail,
         db,
     );
-    if (!reviewAccess.ok)
+    if (!reviewAccess.ok || !can(reviewAccess.projectRole, "content.edit"))
         return void res.status(404).json({ detail: "Review not found" });
 
     // Fetch all cells and documents for this review
