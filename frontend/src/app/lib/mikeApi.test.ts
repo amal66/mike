@@ -29,7 +29,9 @@ import {
     deleteTabularReview,
     downloadDocumentsZip,
     exportAccountData,
+    exportAuditHistory,
     generateTabularColumnPrompt,
+    getAuditHistory,
     getChat,
     getDocumentUrl,
     getTabularChatMessages,
@@ -325,6 +327,97 @@ describe("blob requests (exportAccountData)", () => {
         await expect(exportAccountData()).rejects.toMatchObject({
             status: 403,
             message: "not allowed",
+        });
+    });
+});
+
+describe("getAuditHistory", () => {
+    it("builds the query string from the provided filters", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ events: [], total: 0, page: 2, pageSize: 50 }),
+        );
+
+        const result = await getAuditHistory({
+            q: "notice",
+            action: "chat.message",
+            from: "2026-07-01",
+            to: "2026-07-31",
+            page: 2,
+        });
+
+        const { url, init } = lastFetchCall();
+        expect(url).toContain("/audit?");
+        const qs = new URLSearchParams(url.split("?")[1]);
+        expect(qs.get("q")).toBe("notice");
+        expect(qs.get("action")).toBe("chat.message");
+        expect(qs.get("from")).toBe("2026-07-01");
+        expect(qs.get("to")).toBe("2026-07-31");
+        expect(qs.get("page")).toBe("2");
+        expect((init.headers as Record<string, string>).Authorization).toBe(
+            "Bearer token-123",
+        );
+        expect(result).toEqual({ events: [], total: 0, page: 2, pageSize: 50 });
+    });
+
+    it("omits unset filters and forwards the abort signal", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ events: [], total: 0, page: 1, pageSize: 50 }),
+        );
+        const controller = new AbortController();
+
+        await getAuditHistory({}, controller.signal);
+
+        const { url, init } = lastFetchCall();
+        expect(url.endsWith("/audit?")).toBe(true);
+        expect(init.signal).toBe(controller.signal);
+    });
+
+    it("throws a MikeApiError on failure", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: "MFA required" }, { status: 403 }),
+        );
+
+        await expect(getAuditHistory({})).rejects.toMatchObject({
+            status: 403,
+            message: "MFA required",
+        });
+    });
+});
+
+describe("exportAuditHistory", () => {
+    it("requests the CSV export with the filters and returns blob + filename", async () => {
+        fetchMock.mockResolvedValue(
+            new Response("csv-bytes", {
+                status: 200,
+                headers: {
+                    "content-disposition": 'attachment; filename="audit.csv"',
+                },
+            }),
+        );
+
+        const { blob, filename } = await exportAuditHistory({
+            q: "notice",
+            action: "doc.upload",
+        });
+
+        const { url } = lastFetchCall();
+        expect(url).toContain("/audit/export?");
+        const qs = new URLSearchParams(url.split("?")[1]);
+        expect(qs.get("q")).toBe("notice");
+        expect(qs.get("action")).toBe("doc.upload");
+        expect(qs.get("from")).toBeNull();
+        expect(filename).toBe("audit.csv");
+        expect(await blob.text()).toBe("csv-bytes");
+    });
+
+    it("surfaces the export limiter's error as a MikeApiError", async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ detail: "Too many export requests" }, { status: 429 }),
+        );
+
+        await expect(exportAuditHistory({})).rejects.toMatchObject({
+            status: 429,
+            message: "Too many export requests",
         });
     });
 });
