@@ -440,12 +440,17 @@ export function DocTable({
 
     const openAddDocuments = useCallback(() => {
         if (loadingRef.current) return;
+        // Same capability the header Add button is gated on — this also
+        // covers the empty-state click, which calls openAddDocuments
+        // directly.
+        if (!requireCapability("content.edit", "add documents", "editor"))
+            return;
         if (renderAddDocumentsModalRef.current) {
             setAddDocsOpen(true);
             return;
         }
         documentUploadInputRef.current?.click();
-    }, []);
+    }, [requireCapability]);
 
     useEffect(() => {
         onAddDocumentsActionChange?.(openAddDocuments);
@@ -1393,6 +1398,12 @@ export function DocTable({
         baseFolderId: string | null = viewedFolderIdRef.current,
     ) {
         if (entries.length === 0) return;
+        // Drag-and-drop and the folder picker bypass the
+        // (capability-gated) Add button, so they need the same
+        // content.edit check: viewers get the role popup instead of a
+        // doomed upload that the backend would 403 anyway.
+        if (!requireCapability("content.edit", "add documents", "editor"))
+            return;
         const { supported, unsupported } = partitionSupportedDocumentFiles(
             entries.map((entry) => entry.file),
         );
