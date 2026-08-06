@@ -12,14 +12,14 @@ import { getUserModelSettings } from "../lib/userSettings";
 import {
     extractRowColumns,
     finalizeCell,
-} from "../lib/tabular/tabular.extractRow";
-import { loadReviewRow } from "../lib/tabular/tabular.rows";
+} from "../modules/tabular/tabular.extractRow";
+import { loadReviewRow } from "../modules/tabular/tabular.rows";
 import {
     finishGenerationIfIdle,
     renewGeneration,
     TABULAR_GENERATION_HEARTBEAT_MS,
     type Column,
-} from "../lib/tabular/tabular.shared";
+} from "../modules/tabular/tabular.shared";
 import { createServerSupabase } from "../lib/supabase";
 
 type Db = ReturnType<typeof createServerSupabase>;

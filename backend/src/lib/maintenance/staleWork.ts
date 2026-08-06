@@ -32,8 +32,8 @@
 import { createServerSupabase } from "../supabase";
 import { getConversionQueue, conversionJobId } from "../queue/conversionQueue";
 import { getExtractionQueue, extractionJobId } from "../queue/extractionQueue";
-import { finalizeCell } from "../tabular/tabular.extractRow";
-import { finishGenerationIfIdle } from "../tabular/tabular.shared";
+import { finalizeCell } from "../../modules/tabular/tabular.extractRow";
+import { finishGenerationIfIdle } from "../../modules/tabular/tabular.shared";
 import { redisEnabled } from "../dbq/driver";
 import { liveDbJobExists } from "../dbq/enqueue";
 
