@@ -79,6 +79,18 @@ export function parseQuery(
   };
 }
 
+/**
+ * Escape a user-supplied string for use inside a LIKE/ILIKE pattern.
+ * Backslash is the pattern's own escape character, so it must be neutralized
+ * along with the wildcards % and _ — a lone trailing "\" would otherwise
+ * swallow the escape we prepend to the closing wildcard, and raw wildcards
+ * would silently broaden the search. One character-class pass escapes all
+ * three without the escape-the-escaper ordering trap of chained replaces.
+ */
+export function escapeLikePattern(input: string): string {
+  return input.replace(/[\\%_]/g, "\\$&");
+}
+
 export async function queryEvents(
   db: ReturnType<typeof createServerSupabase>,
   userId: string,
@@ -98,7 +110,7 @@ export async function queryEvents(
       )
     : query.eq("user_id", userId);
   if (q.action) query = query.eq("action", q.action);
-  if (q.q) query = query.ilike("title", `%${q.q.replace(/[%_]/g, "\\$&")}%`);
+  if (q.q) query = query.ilike("title", `%${escapeLikePattern(q.q)}%`);
   if (q.from) query = query.gte("created_at", q.from);
   if (q.to) query = query.lte("created_at", `${q.to}T23:59:59.999Z`);
   return query

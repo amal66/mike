@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
     csvCell,
+    escapeLikePattern,
     parseQuery,
     queryEvents,
     accessibleProjectIds,
@@ -100,7 +101,11 @@ describe("parseQuery", () => {
  * records the .or / .eq filter it was given so tests can assert scoping.
  */
 function makeDb(owned: string[], shared: string[]) {
-    const calls: { or?: string; eq?: [string, unknown] } = {};
+    const calls: {
+        or?: string;
+        eq?: [string, unknown];
+        ilike?: [string, string];
+    } = {};
 
     function projectsBuilder() {
         let mode: "owned" | "shared" = "owned";
@@ -133,7 +138,10 @@ function makeDb(owned: string[], shared: string[]) {
                 calls.eq = [col, val];
                 return b;
             },
-            ilike: () => b,
+            ilike: (col: string, pattern: string) => {
+                calls.ilike = [col, pattern];
+                return b;
+            },
             gte: () => b,
             lte: () => b,
             order: () => b,
@@ -175,5 +183,43 @@ describe("queryEvents visibility scoping", () => {
             "u1@example.com",
         );
         expect([...both].sort()).toEqual(["p1", "p2", "p3"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// escapeLikePattern — ILIKE metacharacter escaping (CodeQL js/incomplete-
+// sanitization: backslash must be escaped along with % and _)
+// ---------------------------------------------------------------------------
+
+describe("escapeLikePattern", () => {
+    it("leaves ordinary search text untouched", () => {
+        expect(escapeLikePattern("termination notice")).toBe(
+            "termination notice",
+        );
+    });
+
+    it("escapes the wildcards % and _", () => {
+        expect(escapeLikePattern("50% off_deal")).toBe("50\\% off\\_deal");
+    });
+
+    it("escapes backslash itself, including a lone trailing one", () => {
+        expect(escapeLikePattern("C:\\docs")).toBe("C:\\\\docs");
+        // A trailing "\" left unescaped would swallow the escape prepended to
+        // a following wildcard and distort the pattern.
+        expect(escapeLikePattern("dangling\\")).toBe("dangling\\\\");
+    });
+
+    it("does not double-escape: each metacharacter gets exactly one backslash", () => {
+        expect(escapeLikePattern("\\%")).toBe("\\\\\\%");
+    });
+
+    it("is applied to the title filter that queryEvents builds", async () => {
+        const { db, calls } = makeDb([], []);
+        await queryEvents(db, "u1", "u1@example.com", {
+            page: 1,
+            limit: 50,
+            q: "50%_\\ off",
+        });
+        expect(calls.ilike).toEqual(["title", "%50\\%\\_\\\\ off%"]);
     });
 });
