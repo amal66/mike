@@ -211,9 +211,14 @@ export function TRView({ reviewId, projectId }: Props) {
     }, [actionsOpen]);
 
     useEffect(() => {
+        // Cancellation flag: on a rapid reviewId change the previous fetch
+        // can resolve AFTER the new one and clobber fresh state with stale
+        // data; drop its results instead.
+        let cancelled = false;
         const fetches: Promise<unknown>[] = [
             getTabularReview(reviewId).then(
                 ({ review, cells, rows, documents }) => {
+                    if (cancelled) return;
                     setReview(review);
                     setCells(cells);
                     setRows(rows);
@@ -239,17 +244,28 @@ export function TRView({ reviewId, projectId }: Props) {
         if (projectId) {
             fetches.push(
                 getProject(projectId)
-                    .then(setProject)
+                    .then((loaded) => {
+                        if (!cancelled) setProject(loaded);
+                    })
                     .catch(() => {}),
             );
         } else {
             fetches.push(
                 listProjects()
-                    .then(setAvailableProjects)
-                    .catch(() => setAvailableProjects([])),
+                    .then((loaded) => {
+                        if (!cancelled) setAvailableProjects(loaded);
+                    })
+                    .catch(() => {
+                        if (!cancelled) setAvailableProjects([]);
+                    }),
             );
         }
-        Promise.all(fetches).finally(() => setLoading(false));
+        Promise.all(fetches).finally(() => {
+            if (!cancelled) setLoading(false);
+        });
+        return () => {
+            cancelled = true;
+        };
     }, [reviewId, projectId]);
 
     function getNextColumnIndex() {
@@ -1212,15 +1228,38 @@ export function TRView({ reviewId, projectId }: Props) {
                                     type: "custom",
                                     render: (
                                         <DocumentUploadMenu
-                                            onSavedFiles={() =>
-                                                setAddDocsOpen(true)
-                                            }
-                                            onUploadFiles={() =>
-                                                reviewFileUploadInputRef.current?.click()
-                                            }
-                                            onUploadFolder={() =>
-                                                reviewFolderUploadInputRef.current?.click()
-                                            }
+                                            onSavedFiles={() => {
+                                                // Same pre-modal gate as
+                                                // openNewReview: stop
+                                                // non-editors before the
+                                                // modal, not after a doomed
+                                                // submit.
+                                                if (
+                                                    !requireStructure(
+                                                        "edit the document set",
+                                                    )
+                                                )
+                                                    return;
+                                                setAddDocsOpen(true);
+                                            }}
+                                            onUploadFiles={() => {
+                                                if (
+                                                    !requireStructure(
+                                                        "edit the document set",
+                                                    )
+                                                )
+                                                    return;
+                                                reviewFileUploadInputRef.current?.click();
+                                            }}
+                                            onUploadFolder={() => {
+                                                if (
+                                                    !requireStructure(
+                                                        "edit the document set",
+                                                    )
+                                                )
+                                                    return;
+                                                reviewFolderUploadInputRef.current?.click();
+                                            }}
                                             disabled={
                                                 loading ||
                                                 savingColumnsConfig ||
@@ -1487,7 +1526,15 @@ export function TRView({ reviewId, projectId }: Props) {
                                 onUpdateColumn={handleUpdateColumn}
                                 onDeleteColumn={handleDeleteColumn}
                                 onAddColumn={() => setAddColOpen(true)}
-                                onAddDocuments={() => setAddDocsOpen(true)}
+                                onAddDocuments={() => {
+                                    if (
+                                        !requireStructure(
+                                            "edit the document set",
+                                        )
+                                    )
+                                        return;
+                                    setAddDocsOpen(true);
+                                }}
                             />
                         </div>
                     </div>
@@ -1503,6 +1550,7 @@ export function TRView({ reviewId, projectId }: Props) {
                             }}
                             initialChatId={selectedChatId}
                             onChatIdChange={setSelectedChatId}
+                            canSend={canEditContent}
                         />
                     )}
                 </div>
