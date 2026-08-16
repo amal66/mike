@@ -15,7 +15,12 @@ import { LIQUID_GLASS_SUBTLE_CLASS } from "@/shared/ui/LiquidGlassUI";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface AddUserInputProps {
-    onAdd: (user: UserLookupResult) => Promise<void> | void;
+    /**
+     * Return `false` to signal the add did NOT happen (skipped or failed) —
+     * the email stays in the input for another try. Any other result
+     * (including void) counts as success and clears the field.
+     */
+    onAdd: (user: UserLookupResult) => Promise<void | boolean> | void | boolean;
     validateEmail?: (email: string) => Promise<string | null> | string | null;
     busy?: boolean;
     placeholder?: string;
@@ -63,8 +68,8 @@ export function AddUserInput({
                 return;
             }
 
-            await onAdd(user);
-            setInput("");
+            const result = await onAdd(user);
+            if (result !== false) setInput("");
         } catch (err) {
             setError(
                 userFacingApiError(
