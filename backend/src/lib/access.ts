@@ -208,11 +208,29 @@ type ResourceAccess =
       }
     | { ok: false };
 
+/** Build the non-owner ResourceAccess for a derived project role. */
+function resourceAccessFor(
+    projectRole: ProjectRole,
+    role: OrgRole | null,
+): ResourceAccess {
+    return {
+        ok: true,
+        isOwner: false,
+        role,
+        canManage: can(projectRole, "members.manage"),
+        projectRole,
+    };
+}
+
 /**
  * Check whether the current user can access a document the caller has
  * already loaded (saves a round-trip vs. having the helper re-fetch).
- * Owner-of-doc passes immediately; then a direct org-membership check on the
- * doc's own org_id; otherwise we fall through to a project-membership check.
+ * Owner-of-doc passes immediately; then the project fall-through — which
+ * carries the `shared_with` editor branch and must not be shadowed by a
+ * weaker org "viewer" (see the precedence note in the file header) — and
+ * finally a direct org-membership check on the doc's own org_id, which
+ * covers org-tagged docs outside any project and can only upgrade (an org
+ * owner/admin is a manager even where the project branch said viewer).
  */
 export async function ensureDocAccess(
     doc: {
@@ -233,36 +251,26 @@ export async function ensureDocAccess(
             canManage: true,
             projectRole: "owner",
         };
+    const access = doc.project_id
+        ? await checkProjectAccess(doc.project_id, userId, userEmail, db)
+        : ({ ok: false } as const);
+    if (access.ok && access.projectRole !== "viewer") {
+        // isOwner keeps meaning "owns this row": the project owner is
+        // not the owner of a collaborator's document, but inherits the
+        // project role for capability checks.
+        return resourceAccessFor(access.projectRole, access.role);
+    }
     const docRole = await getOrgRole(userId, doc.org_id, db);
     if (docRole) {
-        const projectRole = orgRoleToProjectRole(docRole);
-        return {
-            ok: true,
-            isOwner: false,
-            role: docRole,
-            canManage: can(projectRole, "members.manage"),
-            projectRole,
-        };
-    }
-    if (doc.project_id) {
-        const access = await checkProjectAccess(
-            doc.project_id,
-            userId,
-            userEmail,
-            db,
+        const orgProjectRole = orgRoleToProjectRole(docRole);
+        return resourceAccessFor(
+            access.ok && orgProjectRole === "viewer"
+                ? access.projectRole
+                : orgProjectRole,
+            docRole,
         );
-        if (access.ok)
-            return {
-                ok: true,
-                // isOwner keeps meaning "owns this row": the project owner is
-                // not the owner of a collaborator's document, but inherits the
-                // project role for capability checks.
-                isOwner: false,
-                role: access.role,
-                canManage: access.canManage,
-                projectRole: access.projectRole,
-            };
     }
+    if (access.ok) return resourceAccessFor(access.projectRole, access.role);
     if (doc.workflow_id) {
         const normalizedEmail = (userEmail ?? "").trim().toLowerCase();
         if (!normalizedEmail) return { ok: false };
@@ -273,13 +281,10 @@ export async function ensureDocAccess(
             .eq("shared_with_email", normalizedEmail)
             .maybeSingle();
         if (share) {
-            return {
-                ok: true,
-                isOwner: false,
-                role: null,
-                canManage: false,
-                projectRole: share.allow_edit === true ? "editor" : "viewer",
-            };
+            return resourceAccessFor(
+                share.allow_edit === true ? "editor" : "viewer",
+                null,
+            );
         }
     }
     return { ok: false };
@@ -314,44 +319,32 @@ export async function ensureReviewAccess(
             canManage: true,
             projectRole: "owner",
         };
-    const email = (userEmail ?? "").toLowerCase();
+    const email = (userEmail ?? "").trim().toLowerCase();
     if (email && Array.isArray(review.shared_with)) {
         if (review.shared_with.some((e) => (e ?? "").toLowerCase() === email)) {
-            return {
-                ok: true,
-                isOwner: false,
-                role: null,
-                canManage: false,
-                projectRole: "editor",
-            };
+            return resourceAccessFor("editor", null);
         }
+    }
+    // Project fall-through before the review's own org branch — the project
+    // check carries the `shared_with` editor branch, which must not be
+    // shadowed by a weaker org "viewer" (precedence note in the file header).
+    const access = review.project_id
+        ? await checkProjectAccess(review.project_id, userId, userEmail, db)
+        : ({ ok: false } as const);
+    if (access.ok && access.projectRole !== "viewer") {
+        return resourceAccessFor(access.projectRole, access.role);
     }
     const reviewRole = await getOrgRole(userId, review.org_id, db);
     if (reviewRole) {
-        const projectRole = orgRoleToProjectRole(reviewRole);
-        return {
-            ok: true,
-            isOwner: false,
-            role: reviewRole,
-            canManage: can(projectRole, "members.manage"),
-            projectRole,
-        };
+        const orgProjectRole = orgRoleToProjectRole(reviewRole);
+        return resourceAccessFor(
+            access.ok && orgProjectRole === "viewer"
+                ? access.projectRole
+                : orgProjectRole,
+            reviewRole,
+        );
     }
-    if (!review.project_id) return { ok: false };
-    const access = await checkProjectAccess(
-        review.project_id,
-        userId,
-        userEmail,
-        db,
-    );
-    if (access.ok)
-        return {
-            ok: true,
-            isOwner: false,
-            role: access.role,
-            canManage: access.canManage,
-            projectRole: access.projectRole,
-        };
+    if (access.ok) return resourceAccessFor(access.projectRole, access.role);
     return { ok: false };
 }
 
