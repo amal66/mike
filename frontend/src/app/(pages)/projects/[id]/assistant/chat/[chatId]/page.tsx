@@ -556,6 +556,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         ].join("|");
     }, [messages]);
 
+
     useEffect(() => {
         void refreshProject();
     }, [projectMutationSignature, refreshProject]);
