@@ -101,7 +101,7 @@ test("rename chat: sidebar rename interaction updates the title", async ({ page 
     await textarea.fill(message);
 
     // Sending the first message triggers auto title-generation
-    // (useGenerateChatTitle → POST /chat/<id>/generate-title → renameChat). That
+    // (the chat_title SSE frame the backend streams on the first turn). That
     // would overwrite our manual rename below if it lands afterwards, so wait for
     // it to settle first. Best-effort: if it never fires (e.g. the LLM errors),
     // proceed — our manual rename is then unopposed.
@@ -194,7 +194,7 @@ test("delete chat: sidebar delete action removes the chat from history", async (
     const newChatUrl = /\/assistant\/chat\/.+/;
 
     // Sending the first message kicks off auto title-generation
-    // (useGenerateChatTitle → POST /chat/<id>/generate-title → renameChat). If it
+    // (the chat_title SSE frame the backend streams on the first turn). If it
     // lands after the manual rename in step 4 it overwrites the unique title and
     // the row can no longer be found. Wait for it to settle first, exactly as the
     // rename test does. Best-effort: if it never fires, our rename is unopposed.
