@@ -145,7 +145,9 @@ beforeEach(() => {
 
 describe("runExtractionJob", () => {
     it("marks every column generating then done and publishes each", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
             tabular_cells: { select: { data: [] } }, // no cells yet
@@ -181,7 +183,9 @@ describe("runExtractionJob", () => {
     });
 
     it("reuses existing cell records (update, not insert) when they already exist", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
             tabular_cells: {
@@ -209,7 +213,9 @@ describe("runExtractionJob", () => {
     });
 
     it("skips columns already done with content — no LLM call", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
             tabular_cells: {
@@ -229,7 +235,9 @@ describe("runExtractionJob", () => {
     });
 
     it("throws when the model omits a column so BullMQ retries", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
             tabular_cells: { select: { data: [] } },
@@ -247,7 +255,9 @@ describe("runExtractionJob", () => {
     });
 
     it("restricts a single-cell job (columnIndex) to its one column", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
             tabular_cells: {
@@ -355,7 +365,9 @@ describe("runExtractionJob", () => {
     });
 
     it("returns early when the review has no columns", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: [] } } },
         });
@@ -368,7 +380,9 @@ describe("runExtractionJob", () => {
     });
 
     it("returns early when the row no longer exists (deleted between enqueue and run)", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         loadReviewRow.mockResolvedValue(null);
         const db = makeDb({
             tabular_reviews: { select: { data: { columns_config: COLUMNS } } },
@@ -383,7 +397,9 @@ describe("runExtractionJob", () => {
 
 describe("markExtractionFailed", () => {
     it("only touches its own column for a single-cell job", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_cells: {
                 select: {
@@ -415,7 +431,9 @@ describe("markExtractionFailed", () => {
     });
 
     it("marks only unfinished cells error and publishes them", async () => {
-        const publish = vi.fn(async () => {});
+        const publish = vi.fn(
+            async (_reviewId: string, _update: unknown) => {},
+        );
         const db = makeDb({
             tabular_cells: {
                 select: {
