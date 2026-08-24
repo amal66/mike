@@ -95,6 +95,25 @@ describe("readSseFrames", () => {
         expect(cancel).toHaveBeenCalled();
     });
 
+    it("swallows a failing reader.cancel() so the frames still surface", async () => {
+        // cancel() rejects on a connection that is already torn down. That is
+        // cleanup of a stream the consumer has finished with, so it must not
+        // become the caller's error — the frames already read are the result.
+        const response = sseResponse(['data: {"n":1}\n\n']);
+        const reader = response.body!.getReader();
+        vi.spyOn(reader, "cancel").mockRejectedValue(
+            new Error("connection already closed"),
+        );
+        vi.spyOn(response, "body", "get").mockReturnValue({
+            getReader: () => reader,
+        } as unknown as Response["body"]);
+
+        const frames: unknown[] = [];
+        for await (const frame of readSseFrames(response)) frames.push(frame);
+
+        expect(frames).toEqual([{ n: 1 }]);
+    });
+
     it("throws an AbortError once the signal is aborted", async () => {
         const controller = new AbortController();
         controller.abort();
