@@ -8,17 +8,23 @@ import JSZip from "jszip";
 // helper and the real token signer, because a mocked key or a mocked download
 // URL cannot show whether the title survived either of them.
 
-const uploadFile = vi.fn(async () => {});
+// Declaring the parameters keeps the `uploadFile.mock.calls` lookups below
+// type-checked; a zero-arity stub records an empty call tuple, so every index
+// into it is `never`.
+const uploadFile = vi.fn(
+    async (_key: string, _content: ArrayBuffer, _contentType: string) => {},
+);
 
 vi.mock("../../../storage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../storage")>()),
-  uploadFile: (...a: unknown[]) => uploadFile(...a),
+  uploadFile: (key: string, content: ArrayBuffer, contentType: string) =>
+    uploadFile(key, content, contentType),
   downloadFile: vi.fn(async () => null),
 }));
 
-const docxToPdf = vi.fn(async () => Buffer.from("pdf-bytes"));
+const docxToPdf = vi.fn(async (_input: unknown) => Buffer.from("pdf-bytes"));
 vi.mock("../../../convert", () => ({
-  docxToPdf: (...a: unknown[]) => docxToPdf(...a),
+  docxToPdf: (input: unknown) => docxToPdf(input),
   convertedPdfKey: (userId: string, docId: string) =>
     `converted-pdfs/${userId}/${docId}.pdf`,
 }));
@@ -97,9 +103,9 @@ async function generate(extension: "docx" | "xlsx" | "pptx", title: string) {
   expect(result).not.toHaveProperty("error");
   const generated = result as Generated;
   const version = db.inserts.find((i) => i.table === "document_versions");
-  const upload = uploadFile.mock.calls.slice(uploadCallStart).find(
-    (call) => typeof call[0] === "string" && call[0].endsWith(`.${extension}`),
-  ) as unknown as [string, ArrayBuffer, string] | undefined;
+  const upload = uploadFile.mock.calls
+    .slice(uploadCallStart)
+    .find((call) => call[0].endsWith(`.${extension}`));
   expect(upload).toBeDefined();
 
   return {

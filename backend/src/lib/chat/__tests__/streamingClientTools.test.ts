@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { streamChatWithTools, buildMemoryTurn } = vi.hoisted(() => ({
-  streamChatWithTools: vi.fn(async () => ({ fullText: "" })),
+  streamChatWithTools: vi.fn(async (_params: StreamChatCall) => ({
+    fullText: "",
+  })),
   buildMemoryTurn: vi.fn(async (args: { systemPrompt: string }) => ({
-    message: null,
+    message: null as { role: string; content: string } | null,
     systemPrompt: args.systemPrompt,
   })),
 }));
 
 vi.mock("../../llm", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("../../llm/models")),
-  streamChatWithTools: (...args: unknown[]) => streamChatWithTools(...args),
+  streamChatWithTools: (params: StreamChatCall) => streamChatWithTools(params),
 }));
 
 vi.mock("../../mcpConnectors", () => ({
@@ -18,7 +20,7 @@ vi.mock("../../mcpConnectors", () => ({
 }));
 
 vi.mock("../../memory/prompt", () => ({
-  buildMemoryTurn: (...args: unknown[]) => buildMemoryTurn(...args),
+  buildMemoryTurn: (args: { systemPrompt: string }) => buildMemoryTurn(args),
 }));
 
 import { runLLMStream, type ClientToolsAdapter } from "../streaming";
@@ -26,6 +28,20 @@ import { runLLMStream, type ClientToolsAdapter } from "../streaming";
 type RunToolsFn = (
   calls: { id: string; name: string; input: Record<string, unknown> }[],
 ) => Promise<{ tool_use_id: string; content: string }[]>;
+
+// The mock stands in for llm.streamChatWithTools; declaring its parameter
+// (rather than leaving the stub zero-arity) is what lets tsc check the
+// `mock.calls[0][0]` lookups and the mockImplementation overrides below —
+// with `vi.fn(async () => …)` the call tuple is empty and every assertion on
+// it type-checks vacuously.
+type StreamChatCall = {
+  systemPrompt: string;
+  messages: { role: string; content: string }[];
+  tools: { function: { name: string } }[];
+  maxIterations: number;
+  runTools?: RunToolsFn;
+  [key: string]: unknown;
+};
 
 function fakeDb(): never {
   return {} as never;
@@ -47,7 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   streamChatWithTools.mockResolvedValue({ fullText: "" });
   buildMemoryTurn.mockImplementation(async (args: { systemPrompt: string }) => ({
-    message: null,
+    message: null as { role: string; content: string } | null,
     systemPrompt: args.systemPrompt,
   }));
 });
@@ -81,10 +97,7 @@ describe("runLLMStream client-tool dispatch", () => {
       sharedAudience: true,
     });
 
-    const call = streamChatWithTools.mock.calls[0]?.[0] as {
-      systemPrompt: string;
-      messages: { role: string; content: string }[];
-    };
+    const call = streamChatWithTools.mock.calls[0]![0];
     expect(call.systemPrompt).toContain("BASE SYSTEM");
     expect(call.systemPrompt).toContain("MEMORY POLICY");
     // Memory content itself never reaches system-role authority.
@@ -128,10 +141,7 @@ describe("runLLMStream client-tool dispatch", () => {
     };
     await runLLMStream({ ...baseParams(), clientTools: adapter });
 
-    const params = streamChatWithTools.mock.calls[0]?.[0] as {
-      tools: { function: { name: string } }[];
-      maxIterations: number;
-    };
+    const params = streamChatWithTools.mock.calls[0]![0];
     const names = params.tools.map((tool) => tool.function.name);
     expect(names).toContain("apply_word_edits");
     expect(names).toContain("read_document");
@@ -140,9 +150,7 @@ describe("runLLMStream client-tool dispatch", () => {
 
   it("honours an explicit iteration budget", async () => {
     await runLLMStream({ ...baseParams(), maxIterations: 16 });
-    const params = streamChatWithTools.mock.calls[0]?.[0] as {
-      maxIterations: number;
-    };
+    const params = streamChatWithTools.mock.calls[0]![0];
     expect(params.maxIterations).toBe(16);
   });
 

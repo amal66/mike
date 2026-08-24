@@ -14,30 +14,40 @@ export default defineConfig({
         coverage: {
             provider: "v8",
             reporter: ["text", "lcov"],
-            include: ["src/lib/**", "src/modules/**"],
-            // No-regression RATCHET floor, not a target. The measured set is
-            // src/lib/** (the tested libs — access, storage keys/dispositions,
-            // downloadTokens, userApiKeys, chat doc resolution, llm model
-            // resolution, chat citations, documentVersions, userDataCleanup,
-            // docxTrackedChanges, workflow catalog ingestion — AND the large,
-            // lightly tested feature libs: courtlistener, mcp, chat tool
-            // dispatch, llm providers, spreadsheet handling) PLUS
-            // src/modules/** (every domain's route handlers and service
-            // layers; the tabular extraction core moved here from lib/).
-            // Widening the include grew the denominator by previously
-            // unmeasured route/service code; the module split then added
-            // service-level unit tests (tabular, uploads, chat, workflows
-            // add-ons, models) and, after the 2026-09-14 rebase onto main,
-            // main's own org-access, memory and connector suites now running
-            // against the modules, which raised the measurement to 61.34%
-            // statements, 52.31% branches, 66.28% functions, 63.97% lines.
-            // The floors sit just below that — CI fails on a *drop* from
-            // here. Floors only go up: when you add tests, raise them in the
-            // same PR. Backlog + per-area status: docs/testing-coverage.md.
+            // The whole server, not just src/lib/** + src/modules/**. The
+            // previous scope still left workers/, middleware/, jobs/ and
+            // app.ts out of the report entirely, so the ratchet could not see
+            // a regression there — and the headline percentage described a
+            // part of the codebase rather than the codebase.
+            include: ["src/**"],
+            // Test files and their fixtures are the measuring instrument, not
+            // the thing measured. (Spelled out rather than left to vitest's
+            // defaults because setting `exclude` at all replaces them.)
+            exclude: ["src/**/__tests__/**", "src/**/*.test.ts", "**/*.d.ts"],
+            // No-regression RATCHET floor, not a target. The measured scope
+            // spans well-tested libs (access, storage keys/dispositions,
+            // downloadTokens, api-key provider/env checks, chat doc
+            // resolution, llm model resolution, chat citations, userLookup,
+            // documentVersions, userDataCleanup, docxTrackedChanges,
+            // documentTypes, chat prompts, workflow catalog ingestion), the
+            // route/service layer the integration and service suites drive,
+            // and the large still-untested feature libs (courtlistener, mcp,
+            // chat tool dispatch, llm providers, spreadsheet handling) — so
+            // the global number stays modest.
+            //
+            // Measured on THIS tree with the widened src/** scope: 60.59%
+            // statements, 51.98% branches, 64.77% functions, 63.18% lines —
+            // slightly under the src/lib + src/modules numbers (61.34 / 52.31
+            // / 66.28 / 63.97), because the workers, jobs and app wiring the
+            // widening pulled in are covered only by the stack suites.
+            // The floors below sit just under that, so CI fails on a real
+            // *drop* rather than on measurement noise. Floors only go up: when
+            // you add tests, raise them in the same PR. Backlog + per-area
+            // status: docs/testing-coverage.md.
             thresholds: {
-                statements: 61,
-                branches: 52,
-                functions: 66,
+                statements: 60,
+                branches: 51,
+                functions: 64,
                 lines: 63,
             },
         },
