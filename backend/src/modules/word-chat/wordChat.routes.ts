@@ -10,6 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import {
   AssistantStreamError,
@@ -191,7 +192,7 @@ function parseProposedWordEdit(
 }
 
 // GET /word-chat?document_id=<embedded document UUID>&limit=10
-wordChatRouter.get("/", requireAuth, async (req, res) => {
+wordChatRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const parsedDocumentId = parseDocumentId(req.query.document_id);
   if (!parsedDocumentId.ok) {
@@ -216,10 +217,10 @@ wordChatRouter.get("/", requireAuth, async (req, res) => {
     return void res.status(500).json({ detail: "Failed to load Word chats" });
   }
   res.json(result.chats);
-});
+}));
 
 // GET /word-chat/:chatId?document_id=<embedded document UUID>
-wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
+wordChatRouter.get("/:chatId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const parsedDocumentId = parseDocumentId(req.query.document_id);
   if (!parsedDocumentId.ok) {
@@ -241,11 +242,11 @@ wordChatRouter.get("/:chatId", requireAuth, async (req, res) => {
     return void res.status(500).json({ detail: "Failed to load Word chat" });
   }
   res.json({ chat: result.chat, messages: result.messages });
-});
+}));
 
 // PATCH /word-chat/:chatId/model?document_id=<embedded document UUID>
 // Selection-time persistence for an existing cloud Word chat.
-wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
+wordChatRouter.patch("/:chatId/model", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const parsedDocumentId = parseDocumentId(req.query.document_id);
   if (!parsedDocumentId.ok) {
@@ -281,10 +282,10 @@ wordChatRouter.patch("/:chatId/model", requireAuth, async (req, res) => {
     return void res.status(500).json({ detail: "Failed to save chat model" });
   }
   res.json({ id: req.params.chatId, model: result.model });
-});
+}));
 
 // PATCH /word-chat/:chatId/reasoning?document_id=<embedded document UUID>
-wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
+wordChatRouter.patch("/:chatId/reasoning", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const parsedDocumentId = parseDocumentId(req.query.document_id);
   if (!parsedDocumentId.ok) {
@@ -319,7 +320,7 @@ wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
     id: req.params.chatId,
     reasoning_level: parsedReasoning.value,
   });
-});
+}));
 
 // PUT /word-chat/messages/:messageId/edits/:blockIndex
 // Idempotently creates the canonical edit row as soon as a streamed edit
@@ -328,7 +329,7 @@ wordChatRouter.patch("/:chatId/reasoning", requireAuth, async (req, res) => {
 wordChatRouter.put(
   "/messages/:messageId/edits/:blockIndex",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const parsedDocumentId = parseDocumentId(req.query.document_id);
     if (!parsedDocumentId.ok) {
@@ -360,7 +361,7 @@ wordChatRouter.put(
       return void res.status(500).json({ detail: "Failed to save Word edit" });
     }
     res.json(result.edit);
-  },
+  }),
 );
 
 // PATCH /word-chat/messages/:messageId/edits/:blockIndex
@@ -369,7 +370,7 @@ wordChatRouter.put(
 wordChatRouter.patch(
   "/messages/:messageId/edits/:blockIndex",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const parsedDocumentId = parseDocumentId(req.query.document_id);
     if (!parsedDocumentId.ok) {
@@ -461,7 +462,7 @@ wordChatRouter.patch(
         .json({ detail: "Failed to update Word edit" });
     }
     res.json(result.edit);
-  },
+  }),
 );
 
 // POST /word-chat/tool-result — the task pane's return channel for a
@@ -494,7 +495,7 @@ wordChatRouter.post("/tool-result", requireAuth, (req, res) => {
 });
 
 // POST /word-chat — Word-specific streaming endpoint.
-wordChatRouter.post("/", requireAuth, async (req, res) => {
+wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const body =
@@ -837,4 +838,6 @@ wordChatRouter.post("/", requireAuth, async (req, res) => {
       }
     }
   }
-});
+}));
+
+wordChatRouter.use(routerErrorHandler("[word-chat]"));

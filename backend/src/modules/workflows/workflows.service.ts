@@ -228,7 +228,10 @@ function metadataFromWorkflowRecord(
   };
 }
 
-function withDatabaseWorkflow(workflow: WorkflowRecord) {
+// Exported for the workflow-addons import route, whose 201 body must match
+// GET /workflows/:id. Hand-rebuilding that shape there had already drifted on
+// metadata.name, contributors, version and is_default.
+export function withDatabaseWorkflow(workflow: WorkflowRecord) {
   const {
     title: _title,
     type: _type,

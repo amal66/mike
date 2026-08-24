@@ -25,7 +25,6 @@ import {
 } from "../../lib/serviceResult";
 
 export {
-  accessibleProjectIds,
   buildAuditCsv,
   csvCell,
   escapeLikePattern,

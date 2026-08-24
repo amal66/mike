@@ -9,6 +9,7 @@ import type { ParamsFlatDictionary } from "express-serve-static-core";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import { buildContentDisposition, createFileReadStream } from "../../lib/storage";
@@ -34,18 +35,18 @@ import {
 export const documentsRouter = Router();
 
 // GET /single-documents
-documentsRouter.get("/", requireAuth, async (req, res) => {
+documentsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listSingleDocuments(userId, db);
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.docs);
-});
+}));
 
 // GET /single-documents/:documentId
 // One document, same shape as a list entry — the client polls this while a
 // deferred conversion runs instead of refetching the whole collection.
-documentsRouter.get("/:documentId", requireAuth, async (req, res) => {
+documentsRouter.get("/:documentId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -55,14 +56,14 @@ documentsRouter.get("/:documentId", requireAuth, async (req, res) => {
     if (!result.ok)
         return void res.status(404).json({ detail: "Document not found" });
     res.json(result.doc);
-});
+}));
 
 // POST /single-documents is intentionally absent: multipart upload was
 // replaced by the direct object-storage upload-session protocol, and app.ts
 // answers 410 on the former path before any body parser reads file bytes.
 
 // DELETE /single-documents/:documentId
-documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
+documentsRouter.delete("/:documentId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const { documentId } = req.params;
     const db = createServerSupabase();
@@ -71,12 +72,12 @@ documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
     if (!result.ok)
         return void res.status(404).json({ detail: "Document not found" });
     res.status(204).send();
-});
+}));
 
 // GET /single-documents/:documentId/display
 // Optional ?version_id= renders a historical version. Defaults to the
 // document's current_version_id.
-documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
+documentsRouter.get("/:documentId/display", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string;
     const { documentId } = req.params;
@@ -97,7 +98,7 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
         return void res.status(404).json({ detail: result.detail });
     }
     sendDocumentDisplay(res, result.display);
-});
+}));
 
 // GET /single-documents/:documentId/file
 // Streams the active version's source bytes, or a specific version selected
@@ -106,7 +107,7 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
 // fetch the file without depending on cross-origin access to signed R2 URLs.
 // The service locates and sizes the object; the stream is opened here so
 // `res` is what applies backpressure to the object-storage read.
-documentsRouter.get("/:documentId/file", requireAuth, async (req, res) => {
+documentsRouter.get("/:documentId/file", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -139,14 +140,14 @@ documentsRouter.get("/:documentId/file", requireAuth, async (req, res) => {
             return void sendInternalError(res, error);
         }
     }
-});
+}));
 
 // POST /single-documents/download-zip
 // Accepts `document_ids` and/or `folder_ids`; folders expand to every
 // document beneath them. Synchronous zip, kept for small selections (instant
 // download, no polling). Large selections go through the durable
 // "documents-zip" export job instead.
-documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
+documentsRouter.post("/download-zip", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { document_ids, folder_ids } = req.body as {
@@ -211,12 +212,12 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
             return void sendInternalError(res, error);
         }
     }
-});
+}));
 
 // GET /single-documents/:documentId/url
 // Optional ?version_id= selects a specific tracked-changes version.
 // Otherwise falls back to documents.current_version_id, else the original upload.
-documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
+documentsRouter.get("/:documentId/url", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -236,12 +237,12 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
         return void res.status(status).json({ detail: result.detail });
     }
     res.json(result.payload);
-});
+}));
 
 // GET /single-documents/:documentId/versions
 // Returns every version row for the document in document order, with
 // the human-friendly version number when present.
-documentsRouter.get("/:documentId/versions", requireAuth, async (req, res) => {
+documentsRouter.get("/:documentId/versions", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
@@ -255,7 +256,7 @@ documentsRouter.get("/:documentId/versions", requireAuth, async (req, res) => {
         current_version_id: result.current_version_id,
         versions: result.versions,
     });
-});
+}));
 
 // POST /single-documents/:documentId/versions/from-document
 // Create a new version of documentId from another existing document's active
@@ -263,7 +264,7 @@ documentsRouter.get("/:documentId/versions", requireAuth, async (req, res) => {
 documentsRouter.post(
     "/:documentId/versions/from-document",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId } = req.params;
@@ -310,7 +311,7 @@ documentsRouter.post(
             return void res.status(status).json({ detail: result.detail });
         }
         res.status(201).json(result.version);
-    },
+    }),
 );
 
 // POST /single-documents/:documentId/versions and
@@ -324,7 +325,7 @@ documentsRouter.post(
 documentsRouter.patch(
     "/:documentId/versions/:versionId",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId, versionId } = req.params;
@@ -343,7 +344,7 @@ documentsRouter.patch(
         if (!result.ok)
             return void res.status(404).json({ detail: result.detail });
         res.json(result.version);
-    },
+    }),
 );
 
 // DELETE /single-documents/:documentId/versions/:versionId
@@ -352,7 +353,7 @@ documentsRouter.patch(
 documentsRouter.delete(
     "/:documentId/versions/:versionId",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId, versionId } = req.params;
@@ -376,7 +377,7 @@ documentsRouter.delete(
             return void res.status(status).json({ detail: result.detail });
         }
         res.json(result.payload);
-    },
+    }),
 );
 
 // GET /single-documents/:documentId/tracked-change-ids
@@ -387,7 +388,7 @@ documentsRouter.delete(
 documentsRouter.get(
     "/:documentId/tracked-change-ids",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { documentId } = req.params;
@@ -405,7 +406,7 @@ documentsRouter.get(
         if (!result.ok)
             return void res.status(404).json({ detail: result.detail });
         res.json({ ids: result.ids });
-    },
+    }),
 );
 
 // POST /single-documents/:documentId/edits/:editId/accept
@@ -436,11 +437,13 @@ async function handleEditResolution(
 documentsRouter.post(
     "/:documentId/edits/:editId/accept",
     requireAuth,
-    (req, res) => void handleEditResolution(req, res, "accept"),
+    asyncRoute(async (req, res) => handleEditResolution(req, res, "accept")),
 );
 
 documentsRouter.post(
     "/:documentId/edits/:editId/reject",
     requireAuth,
-    (req, res) => void handleEditResolution(req, res, "reject"),
+    asyncRoute(async (req, res) => handleEditResolution(req, res, "reject")),
 );
+
+documentsRouter.use(routerErrorHandler("[documents]"));

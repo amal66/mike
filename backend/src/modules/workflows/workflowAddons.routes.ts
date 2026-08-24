@@ -3,14 +3,9 @@
 // workflows.service.ts (implemented in workflows.addons.ts), and map its
 // typed results onto status codes and JSON responses.
 
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import type { ParamsFlatDictionary } from "express-serve-static-core";
+import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendDocumentDisplay } from "../../lib/documentDisplay";
 import { sendInternalError } from "../../lib/httpError";
@@ -20,22 +15,12 @@ import {
   importWorkflowAddon,
   listWorkflowAddons,
   loadWorkflowAddonAssetDisplay,
+  withDatabaseWorkflow,
   type WorkflowAddonImportFailure,
+  type WorkflowRecord,
 } from "./workflows.service";
 
 export const workflowAddonsRouter = Router();
-
-function asyncRoute(
-  handler: (req: Request<ParamsFlatDictionary>, res: Response) => Promise<unknown>,
-) {
-  return (
-    req: Request<ParamsFlatDictionary>,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    void handler(req, res).catch(next);
-  };
-}
 
 // The asset-copy rollback answers 500 with its own detail; every other
 // failure goes through the shared status-code policy in lib/serviceResult.
@@ -105,16 +90,19 @@ workflowAddonsRouter.post(
       userId,
     });
     if (!result.ok) return void sendImportFailure(res, result);
-    res.status(201).json(result.data);
+    // Serialize through the workflows facade so the imported workflow comes
+    // back in exactly the shape GET /workflows/:id returns. Rebuilding that
+    // shape by hand had drifted from the route on four fields: metadata.name,
+    // the default contributor, version, and is_default.
+    res.status(201).json({
+      ...withDatabaseWorkflow(result.data as unknown as WorkflowRecord),
+      is_owner: true,
+      allow_edit: true,
+      access_role: "owner",
+      // An imported add-on is never one of the installed default workflows.
+      is_default: false,
+    });
   }),
 );
 
-workflowAddonsRouter.use(
-  (err: unknown, _req: Request, res: Response, next: NextFunction) => {
-    if (res.headersSent) return next(err);
-    console.error("[workflow-addons] unhandled route error", err);
-    res
-      .status(500)
-      .json({ detail: "Failed to process workflow add-on request" });
-  },
-);
+workflowAddonsRouter.use(routerErrorHandler("[workflow-addons]"));

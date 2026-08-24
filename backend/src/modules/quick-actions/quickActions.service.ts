@@ -6,9 +6,9 @@
 // `ServiceResult`. It never touches req/res.
 //
 // One deliberate exception to the result contract: the workflow-hydration
-// queries THROW on a database error rather than returning a failure. That is
-// the behavior the route's error middleware has always rendered ("Failed to
-// process quick action request"), so the throw is load-bearing and is kept.
+// queries THROW on a database error rather than returning a failure. The
+// route's error middleware turns that into the opaque internal-error body, so
+// the throw is load-bearing and is kept.
 
 import type { Db } from "../../lib/supabase";
 import { ensureDefaultWorkflows } from "../../lib/workflowCatalog";
@@ -74,20 +74,31 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+// Ownership and share rules live in lib/access; quick actions only add the
+// constraint that the target must be an assistant workflow. `ok:false` means
+// the lookup ITSELF failed, which must not be reported as "not found": a
+// database blip told the caller their workflow was gone and to stop retrying.
+type WorkflowLookup =
+  | { ok: true; workflow: WorkflowRow | null }
+  | { ok: false; error: unknown };
+
 async function canAccessWorkflow(
   workflowId: string,
   userId: string,
   userEmail: string | null | undefined,
   db: Db,
-): Promise<WorkflowRow | null> {
-  const { data: workflow } = await db
+): Promise<WorkflowLookup> {
+  const { data: workflow, error } = await db
     .from("workflows")
     .select("id, user_id, title, type")
     .eq("id", workflowId)
     .maybeSingle();
-  if (!workflow || workflow.type !== "assistant") return null;
+  if (error) return { ok: false, error };
+  if (!workflow || workflow.type !== "assistant") {
+    return { ok: true, workflow: null };
+  }
   const access = await checkWorkflowAccess(workflowId, userId, userEmail, db);
-  return access.ok ? workflow : null;
+  return { ok: true, workflow: access.ok ? workflow : null };
 }
 
 async function withWorkflowDetails(
@@ -183,19 +194,21 @@ export async function createQuickAction(
   if (!isQuickActionSurface(surface)) {
     return failure("validation", SURFACE_DETAIL);
   }
-  if (
-    body.sort_order !== undefined &&
-    Number.isInteger(body.sort_order) &&
-    !isValidSortOrder(body.sort_order)
-  ) {
+  // Reject any supplied sort_order that is not a valid integer. Gating this on
+  // Number.isInteger first let "3", 1.5 and NaN through to be silently coerced
+  // to 0 below.
+  const sortOrder = body.sort_order;
+  if (sortOrder !== undefined && !isValidSortOrder(sortOrder)) {
     return failure("validation", SORT_ORDER_DETAIL);
   }
-  const workflow = await canAccessWorkflow(
+  const lookup = await canAccessWorkflow(
     workflowId,
     args.userId,
     args.userEmail,
     db,
   );
+  if (!lookup.ok) return internalFailure(lookup.error);
+  const workflow = lookup.workflow;
   if (!workflow) return failure("not_found", "Workflow not found");
   const { data, error } = await db
     .from("quick_actions")
@@ -210,7 +223,7 @@ export async function createQuickAction(
       document_upload: body.document_upload === true,
       surface,
       enabled: body.enabled !== false,
-      sort_order: isValidSortOrder(body.sort_order) ? body.sort_order : 0,
+      sort_order: sortOrder === undefined ? 0 : sortOrder,
     })
     .select("*")
     .single();
@@ -252,23 +265,27 @@ export async function updateQuickAction(
     updates.surface = body.surface;
   }
   if (typeof body.enabled === "boolean") updates.enabled = body.enabled;
-  if (Number.isInteger(body.sort_order)) {
-    if (!isValidSortOrder(body.sort_order)) {
+  // Same as the create path: validate whatever was supplied rather than only
+  // the values that already look like integers.
+  const sortOrder = body.sort_order;
+  if (sortOrder !== undefined) {
+    if (!isValidSortOrder(sortOrder)) {
       return failure("validation", SORT_ORDER_DETAIL);
     }
-    updates.sort_order = body.sort_order;
+    updates.sort_order = sortOrder;
   }
 
   if (typeof body.workflow_id === "string") {
     const workflowId = body.workflow_id.trim();
     if (!workflowId) return failure("validation", "workflow_id is required");
-    const workflow = await canAccessWorkflow(
+    const lookup = await canAccessWorkflow(
       workflowId,
       args.userId,
       args.userEmail,
       db,
     );
-    if (!workflow) return failure("not_found", "Workflow not found");
+    if (!lookup.ok) return internalFailure(lookup.error);
+    if (!lookup.workflow) return failure("not_found", "Workflow not found");
     updates.workflow_id = workflowId;
   }
   const { data, error } = await db
@@ -299,11 +316,15 @@ export async function deleteQuickAction(
   db: Db,
   args: { userId: string; quickActionId: string },
 ): Promise<ServiceResult<void>> {
-  const { error } = await db
+  // Selecting the deleted rows separates "gone now" from "was never yours":
+  // without it a bad id (or another user's) also answered 204.
+  const { data, error } = await db
     .from("quick_actions")
     .delete()
     .eq("id", args.quickActionId)
-    .eq("user_id", args.userId);
+    .eq("user_id", args.userId)
+    .select("id");
   if (error) return internalFailure(error);
+  if (!data?.length) return failure("not_found", "Quick action not found");
   return ok(undefined);
 }

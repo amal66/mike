@@ -2,18 +2,14 @@
 //
 // Route handlers read the caller off res.locals, hand the raw payload to the
 // quickActions.service functions, and map their `ServiceResult`s onto status
-// codes and JSON. The trailing error middleware is the containment for the
-// hydration queries that throw: it keeps rendering the same generic message
-// this router has always sent instead of leaking a database error.
+// codes and JSON. The trailing routerErrorHandler is the containment for the
+// hydration queries that throw: it attributes the failure to this router in the
+// log and hands the response to app.ts's boundary, which answers the same
+// opaque internal_error body every other router answers with.
 
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import type { ParamsFlatDictionary } from "express-serve-static-core";
+import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import {
@@ -24,18 +20,6 @@ import {
 } from "./quickActions.service";
 
 export const quickActionsRouter = Router();
-
-function asyncRoute(
-  handler: (req: Request<ParamsFlatDictionary>, res: Response) => Promise<unknown>,
-) {
-  return (
-    req: Request<ParamsFlatDictionary>,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    void handler(req, res).catch(next);
-  };
-}
 
 quickActionsRouter.get(
   "/",
@@ -93,10 +77,4 @@ quickActionsRouter.delete(
   }),
 );
 
-quickActionsRouter.use(
-  (err: unknown, _req: Request, res: Response, next: NextFunction) => {
-    if (res.headersSent) return next(err);
-    console.error("[quick-actions] unhandled route error", err);
-    res.status(500).json({ detail: "Failed to process quick action request" });
-  },
-);
+quickActionsRouter.use(routerErrorHandler("[quick-actions]"));

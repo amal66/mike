@@ -6,6 +6,7 @@
 
 import { Router, type Response } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import { parsePaginationQuery } from "../../lib/pagination";
@@ -69,7 +70,7 @@ const PROJECT_PAGINATION_QUERY_KEYS = [
   "owner_user_id",
 ];
 
-projectsRouter.get("/", requireAuth, async (req, res) => {
+projectsRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const includeDocuments = req.query.include === "documents";
@@ -124,10 +125,10 @@ projectsRouter.get("/", requireAuth, async (req, res) => {
   });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.data);
-});
+}));
 
 // POST /projects
-projectsRouter.post("/", requireAuth, async (req, res) => {
+projectsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   if (
     req.body &&
@@ -161,12 +162,12 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
     return void res.status(400).json({ detail: result.detail });
   }
   res.status(201).json(result.project);
-});
+}));
 
 // GET /projects/:projectId/directory
 // Returns one folder level so file pickers can expand projects without
 // downloading every document and subfolder for every project up front.
-projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId/directory", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -185,10 +186,10 @@ projectsRouter.get("/:projectId/directory", requireAuth, async (req, res) => {
     return void sendInternalError(res, result.error);
   }
   res.json(result.body);
-});
+}));
 
 // GET /projects/filter-options (must come before /:projectId routes)
-projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
+projectsRouter.get("/filter-options", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -196,13 +197,13 @@ projectsRouter.get("/filter-options", requireAuth, async (req, res) => {
   const result = await getProjectFilterOptions(db, { userId, userEmail });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.body);
-});
+}));
 
 // GET /projects/ids (must come before /:projectId routes)
 // Lightweight id + owner list for every project matching the current
 // filters — backs "select all matching" bulk actions so the client doesn't
 // have to page through full project payloads just to collect checkboxes.
-projectsRouter.get("/ids", requireAuth, async (req, res) => {
+projectsRouter.get("/ids", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const db = createServerSupabase();
@@ -217,10 +218,10 @@ projectsRouter.get("/ids", requireAuth, async (req, res) => {
   });
   if (!result.ok) return void sendInternalError(res, result.error);
   res.json(result.ids);
-});
+}));
 
 // GET /projects/:projectId
-projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -233,14 +234,14 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
     return void res.status(404).json({ detail: "Project not found" });
   }
   res.json(result.body);
-});
+}));
 
 // GET /projects/:projectId/people
 // Resolve the creator + every direct grantee to {email, display_name, role}.
 // Used by the People modal so the UI can show display names where available,
 // tag the current user as "You", and — new here — say what each person can
 // actually do.
-projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId/people", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -253,7 +254,7 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
     return void res.status(404).json({ detail: "Project not found" });
   }
   res.json(result.body);
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Direct access grants
@@ -281,7 +282,7 @@ function sendProjectAccessFailure(
 // render for Owners. Serving it at mere reachability let any Viewer — the
 // outside-counsel tier — enumerate every recipient, role and grantor on the
 // matter.
-projectsRouter.get("/:projectId/access", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId/access", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -290,10 +291,10 @@ projectsRouter.get("/:projectId/access", requireAuth, async (req, res) => {
   const result = await listProjectAccess(db, { projectId, userId, userEmail });
   if (!result.ok) return void sendProjectAccessFailure(res, result);
   res.json(result.body);
-});
+}));
 
 // POST /projects/:projectId/access — grant or re-role one recipient.
-projectsRouter.post("/:projectId/access", requireAuth, async (req, res) => {
+projectsRouter.post("/:projectId/access", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -307,13 +308,13 @@ projectsRouter.post("/:projectId/access", requireAuth, async (req, res) => {
   });
   if (!result.ok) return void sendProjectAccessFailure(res, result);
   res.status(201).json(result.grant);
-});
+}));
 
 // DELETE /projects/:projectId/access/:email — revoke one recipient.
 projectsRouter.delete(
   "/:projectId/access/:email",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
@@ -327,11 +328,11 @@ projectsRouter.delete(
     });
     if (!result.ok) return void sendProjectAccessFailure(res, result);
     res.status(204).send();
-  },
+  }),
 );
 
 // PATCH /projects/:projectId
-projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
+projectsRouter.patch("/:projectId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -360,10 +361,10 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
     return void res.status(404).json({ detail: "Project not found" });
   }
   res.json(result.body);
-});
+}));
 
 // DELETE /projects/:projectId
-projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
+projectsRouter.delete("/:projectId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -378,10 +379,10 @@ projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
     return void sendInternalError(res, result.error);
   }
   res.status(204).send();
-});
+}));
 
 // GET /projects/:projectId/documents
-projectsRouter.get("/:projectId/documents", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId/documents", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -395,7 +396,7 @@ projectsRouter.get("/:projectId/documents", requireAuth, async (req, res) => {
   if (!result.ok)
     return void res.status(404).json({ detail: "Project not found" });
   res.json(result.docs);
-});
+}));
 
 // GET /projects/:projectId/export — tamper-evident manifest of the project's
 // documents: every version with its content_sha256 plus the accept/reject
@@ -407,7 +408,7 @@ projectsRouter.get(
   "/:projectId/export",
   requireAuth,
   requireMfaIfEnrolled,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
@@ -431,14 +432,14 @@ projectsRouter.get(
       `attachment; filename="${result.filename}"`,
     );
     res.json(result.data);
-  },
+  }),
 );
 
 // POST /projects/:projectId/documents/:documentId — assign or copy existing doc into project
 projectsRouter.post(
   "/:projectId/documents/:documentId",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId, documentId } = req.params;
@@ -477,11 +478,11 @@ projectsRouter.post(
       }
     }
     res.status(result.status).json(result.doc);
-  },
+  }),
 );
 
 // PATCH /projects/:projectId/documents/:documentId — rename a project document
-projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, async (req, res) => {
+projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, documentId } = req.params;
@@ -502,14 +503,14 @@ projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, async (re
     return void res.status(400).json({ detail: result.detail });
   }
   res.json(result.doc);
-});
+}));
 
 // GET /projects/:projectId/chats — every assistant chat under this project
 // (any author with project access). Used by the project page's chat tab so
 // it doesn't have to filter the global GET /chat list. Since 20260902_05 the
 // global list shows these too (its predicate matches ensureChatAccess), so
 // this endpoint is a convenience scoping, not the only way to find them.
-projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
+projectsRouter.get("/:projectId/chats", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -522,7 +523,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
     return void sendInternalError(res, result.error);
   }
   res.json(result.chats);
-});
+}));
 
 // ── Folder routes ─────────────────────────────────────────────────────────────
 
@@ -530,7 +531,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
 projectsRouter.post(
   "/:projectId/folder-paths/resolve",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
@@ -559,11 +560,11 @@ projectsRouter.post(
       });
     }
     res.json(result.data);
-  },
+  }),
 );
 
 // POST /projects/:projectId/folders
-projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
+projectsRouter.post("/:projectId/folders", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
@@ -586,10 +587,10 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
     return void sendInternalError(res, result.error);
   }
   res.status(201).json(result.folder);
-});
+}));
 
 // PATCH /projects/:projectId/folders/:folderId
-projectsRouter.patch("/:projectId/folders/:folderId", requireAuth, async (req, res) => {
+projectsRouter.patch("/:projectId/folders/:folderId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, folderId } = req.params;
@@ -615,10 +616,10 @@ projectsRouter.patch("/:projectId/folders/:folderId", requireAuth, async (req, r
     return void res.status(404).json({ detail: "Folder not found" });
   }
   res.json(result.folder);
-});
+}));
 
 // DELETE /projects/:projectId/folders/:folderId
-projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, res) => {
+projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, folderId } = req.params;
@@ -638,10 +639,10 @@ projectsRouter.delete("/:projectId/folders/:folderId", requireAuth, async (req, 
     return void sendInternalError(res, result.error);
   }
   res.status(204).send();
-});
+}));
 
 // PATCH /projects/:projectId/documents/:documentId/folder — move doc to a folder
-projectsRouter.patch("/:projectId/documents/:documentId/folder", requireAuth, async (req, res) => {
+projectsRouter.patch("/:projectId/documents/:documentId/folder", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { projectId, documentId } = req.params;
@@ -663,4 +664,6 @@ projectsRouter.patch("/:projectId/documents/:documentId/folder", requireAuth, as
     return void res.status(404).json({ detail: "Document not found" });
   }
   res.json(result.doc);
-});
+}));
+
+projectsRouter.use(routerErrorHandler("[projects]"));

@@ -17,6 +17,7 @@
 
 import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import { parsePaginationQuery } from "../../lib/pagination";
@@ -86,7 +87,7 @@ function parseLibraryDocumentSort(query: Record<string, unknown>): {
 // GET /library/:kind
 // Directory mode is the default. Pass parent_folder_id to load one folder
 // level, or view=search for flat search/filter/sort results.
-libraryRouter.get("/:kind", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -117,11 +118,11 @@ libraryRouter.get("/:kind", requireAuth, async (req, res) => {
   if (!result.ok)
     return void sendServiceError(res, result);
   res.json(result.data);
-});
+}));
 
 // POST /library/:kind/levels
 // Refresh several already-open directory levels through one bounded API call.
-libraryRouter.post("/:kind/levels", requireAuth, async (req, res) => {
+libraryRouter.post("/:kind/levels", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -155,10 +156,10 @@ libraryRouter.post("/:kind/levels", requireAuth, async (req, res) => {
   if (!result.ok)
     return void sendServiceError(res, result);
   res.json(result.data);
-});
+}));
 
 // GET /library/:kind/filter-options
-libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind/filter-options", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -168,11 +169,11 @@ libraryRouter.get("/:kind/filter-options", requireAuth, async (req, res) => {
   if (!result.ok)
     return void sendServiceError(res, result);
   res.json(result.data);
-});
+}));
 
 // GET /library/:kind/ids
 // Complete ID-only result set for select-all across unloaded pages/folders.
-libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind/ids", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -185,14 +186,14 @@ libraryRouter.get("/:kind/ids", requireAuth, async (req, res) => {
   if (!result.ok)
     return void sendServiceError(res, result);
   res.json(result.data);
-});
+}));
 
 // POST /library/:kind/documents/bulk-delete
 // One bounded backend operation replaces an unbounded browser request burst.
 libraryRouter.post(
   "/:kind/documents/bulk-delete",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
     if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -210,11 +211,11 @@ libraryRouter.post(
     if (!result.ok)
       return void sendServiceError(res, result);
     res.json(result.data);
-  },
+  }),
 );
 
 // GET /library/:kind/folders/:folderId
-libraryRouter.get("/:kind/folders/:folderId", requireAuth, async (req, res) => {
+libraryRouter.get("/:kind/folders/:folderId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -224,7 +225,7 @@ libraryRouter.get("/:kind/folders/:folderId", requireAuth, async (req, res) => {
   if (!result.ok)
     return void sendServiceError(res, result);
   res.json(result.data);
-});
+}));
 
 // POST /library/:kind/folder-paths/resolve
 // Walks (and creates) a whole relative folder path in one call, so uploading a
@@ -232,7 +233,7 @@ libraryRouter.get("/:kind/folders/:folderId", requireAuth, async (req, res) => {
 libraryRouter.post(
   "/:kind/folder-paths/resolve",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
     if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -246,11 +247,11 @@ libraryRouter.post(
     const result = await resolveLibraryFolderPath(db, userId, kind, body);
     if (!result.ok) return void sendServiceError(res, result);
     res.json(result.data);
-  },
+  }),
 );
 
 // POST /library/:kind/folders
-libraryRouter.post("/:kind/folders", requireAuth, async (req, res) => {
+libraryRouter.post("/:kind/folders", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -261,10 +262,10 @@ libraryRouter.post("/:kind/folders", requireAuth, async (req, res) => {
   if (!result.ok)
     return void sendServiceError(res, result);
   res.status(201).json(result.data);
-});
+}));
 
 // PATCH /library/:kind/folders/:folderId
-libraryRouter.patch("/:kind/folders/:folderId", requireAuth, async (req, res) => {
+libraryRouter.patch("/:kind/folders/:folderId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -276,10 +277,10 @@ libraryRouter.patch("/:kind/folders/:folderId", requireAuth, async (req, res) =>
   if (!result.ok)
     return void sendServiceError(res, result);
   res.json(result.data);
-});
+}));
 
 // DELETE /library/:kind/folders/:folderId
-libraryRouter.delete("/:kind/folders/:folderId", requireAuth, async (req, res) => {
+libraryRouter.delete("/:kind/folders/:folderId", requireAuth, asyncRoute(async (req, res) => {
   const userId = res.locals.userId as string;
   const kind = normalizeLibraryKind(req.params.kind);
   if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -290,13 +291,13 @@ libraryRouter.delete("/:kind/folders/:folderId", requireAuth, async (req, res) =
   if (!result.ok)
     return void sendServiceError(res, result);
   res.status(204).send();
-});
+}));
 
 // PATCH /library/:kind/documents/:documentId/folder
 libraryRouter.patch(
   "/:kind/documents/:documentId/folder",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
     if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -308,14 +309,14 @@ libraryRouter.patch(
     if (!result.ok)
       return void sendServiceError(res, result);
     res.json(result.data);
-  },
+  }),
 );
 
 // PATCH /library/:kind/documents/:documentId
 libraryRouter.patch(
   "/:kind/documents/:documentId",
   requireAuth,
-  async (req, res) => {
+  asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const kind = normalizeLibraryKind(req.params.kind);
     if (!kind) return void res.status(404).json({ detail: "Library not found" });
@@ -332,5 +333,7 @@ libraryRouter.patch(
     if (!result.ok)
       return void sendServiceError(res, result);
     res.json(result.data);
-  },
+  }),
 );
+
+libraryRouter.use(routerErrorHandler("[library]"));

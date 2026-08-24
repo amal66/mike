@@ -179,26 +179,12 @@ export async function getWorkflowAddon(
 }
 
 /** The workflow payload returned to the client after a successful import. */
-export type ImportedWorkflow = {
+// The freshly inserted `workflows` row, handed back RAW. Serializing it is the
+// route's job, through the same withDatabaseWorkflow the workflows facade uses
+// for GET /workflows/:id — rebuilding the shape here is what let it drift.
+export type ImportedWorkflow = Record<string, unknown> & {
   id: string;
-  user_id: string;
-  metadata: {
-    title: string;
-    description: null;
-    type: string;
-    contributors: never[];
-    language: string;
-    version: null;
-    practice: string | null;
-    jurisdictions: string[] | null;
-  };
-  skill_md: string | null;
-  columns_config: unknown;
-  is_system: false;
-  is_owner: true;
-  allow_edit: true;
-  access_role: "owner";
-  created_at: string;
+  user_id: string | null;
 };
 
 // Copying the add-on's assets can fail after the workflow row exists. That
@@ -222,13 +208,16 @@ export async function importWorkflowAddon(
   params: { addonId: string; userId: string },
 ): Promise<ImportWorkflowAddonResult> {
   const { userId } = params;
-  const { data: addon } = await db
+  const { data: addon, error: addonError } = await db
     .from("mike_workflows")
     .select("*")
     .eq("id", params.addonId)
     .eq("distribution", "addon")
     .eq("active", true)
     .maybeSingle();
+  // A failed lookup is not the same as a missing add-on; reporting 404 for both
+  // told the user to stop retrying a request that might well succeed.
+  if (addonError) return internalFailure(addonError);
   if (!addon) return failure("not_found", "Add-on not found");
 
   const { data: workflow, error } = await db
@@ -348,25 +337,5 @@ export async function importWorkflowAddon(
     };
   }
 
-  return ok({
-    id: workflow.id,
-    user_id: workflow.user_id,
-    metadata: {
-      title: workflow.title,
-      description: null,
-      type: workflow.type,
-      contributors: [],
-      language: workflow.language ?? "English",
-      version: null,
-      practice: workflow.practice ?? null,
-      jurisdictions: workflow.jurisdictions ?? null,
-    },
-    skill_md: workflow.prompt_md ?? null,
-    columns_config: workflow.columns_config ?? null,
-    is_system: false,
-    is_owner: true,
-    allow_edit: true,
-    access_role: "owner",
-    created_at: workflow.created_at,
-  });
+  return ok(workflow as ImportedWorkflow);
 }

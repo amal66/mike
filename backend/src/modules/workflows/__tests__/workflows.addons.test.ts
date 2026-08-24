@@ -404,7 +404,7 @@ describe("importWorkflowAddon", () => {
     });
   });
 
-  it("copies each asset into a document + version and returns the workflow payload", async () => {
+  it("copies each asset into a document + version and returns the inserted row", async () => {
     downloadFile.mockResolvedValue(new TextEncoder().encode("reference").buffer);
     uploadFile.mockResolvedValue(undefined);
     prepareDocumentDisplay.mockResolvedValue({
@@ -434,30 +434,10 @@ describe("importWorkflowAddon", () => {
 
     const result = await importWorkflowAddon(db, { addonId: "a1", userId: "u1" });
 
-    expect(result).toEqual({
-      ok: true,
-      data: {
-        id: "w1",
-        user_id: "u1",
-        metadata: {
-          title: "Design Partner Draft",
-          description: null,
-          type: "assistant",
-          contributors: [],
-          language: "English",
-          version: null,
-          practice: "General Transactions",
-          jurisdictions: ["General"],
-        },
-        skill_md: "Draft from the precedent.",
-        columns_config: null,
-        is_system: false,
-        is_owner: true,
-        allow_edit: true,
-        access_role: "owner",
-        created_at: "2026-08-28T00:00:00.000Z",
-      },
-    });
+    // The service hands back the inserted row as-is; serializing it into the
+    // GET /workflows/:id shape is workflowAddons.routes.ts's job, through the
+    // facade's withDatabaseWorkflow.
+    expect(result).toEqual({ ok: true, data: workflowRow });
     expect(downloadFile).toHaveBeenCalledWith("mike-workflows/a1/precedent.docx");
     // Source bytes plus the converted PDF rendition for a Word file.
     expect(uploadFile).toHaveBeenCalledTimes(2);

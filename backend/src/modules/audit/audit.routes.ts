@@ -8,6 +8,7 @@
 
 import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure } from "../../lib/serviceResult";
 import { exportAuditCsv, listAuditEvents } from "./audit.service";
@@ -15,7 +16,7 @@ import { exportAuditCsv, listAuditEvents } from "./audit.service";
 export const auditRouter = Router();
 auditRouter.use(requireAuth);
 
-auditRouter.get("/", async (req, res) => {
+auditRouter.get("/", asyncRoute(async (req, res) => {
   const result = await listAuditEvents(createServerSupabase(), {
     userId: res.locals.userId as string,
     email: res.locals.userEmail as string | undefined,
@@ -23,12 +24,12 @@ auditRouter.get("/", async (req, res) => {
   });
   if (!result.ok) return void sendServiceFailure(res, result);
   res.json(result.data);
-});
+}));
 
 // Synchronous CSV export. Still here for curl users and older clients; the
 // frontend goes through the durable "audit-csv" export job instead. Both
 // emit the same bytes because both render through buildAuditCsv.
-auditRouter.get("/export", requireMfaIfEnrolled, async (req, res) => {
+auditRouter.get("/export", requireMfaIfEnrolled, asyncRoute(async (req, res) => {
   const result = await exportAuditCsv(createServerSupabase(), {
     userId: res.locals.userId as string,
     email: res.locals.userEmail as string | undefined,
@@ -41,4 +42,6 @@ auditRouter.get("/export", requireMfaIfEnrolled, async (req, res) => {
     `attachment; filename="${result.data.filename}"`,
   );
   res.send(result.data.csv);
-});
+}));
+
+auditRouter.use(routerErrorHandler("[audit]"));

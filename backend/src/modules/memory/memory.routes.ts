@@ -15,6 +15,7 @@ import { sendInternalError } from "../../lib/httpError";
 import type { Capability } from "../../lib/permissions";
 import { createServerSupabase } from "../../lib/supabase";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import {
   currentMemory,
   MemoryDisabledError,
@@ -119,7 +120,7 @@ function installMemoryRoutes(
   settingsContext: ContextResolver,
   wipeContext?: ContextResolver,
 ) {
-  router.get("/", async (req, res) => {
+  router.get("/", asyncRoute(async (req, res) => {
     try {
       const ctx = await readContext(req, res);
       if (!ctx) return;
@@ -127,9 +128,9 @@ function installMemoryRoutes(
     } catch (error) {
       await sendMemoryError(res, error);
     }
-  });
+  }));
 
-  router.put("/", async (req, res) => {
+  router.put("/", asyncRoute(async (req, res) => {
     let ctx: MemoryContext | null = null;
     try {
       const parsedVersion = expectedRevision(req.body?.expected_revision);
@@ -151,9 +152,9 @@ function installMemoryRoutes(
     } catch (error) {
       await sendMemoryError(res, error, ctx ?? undefined);
     }
-  });
+  }));
 
-  router.patch("/settings", async (req, res) => {
+  router.patch("/settings", asyncRoute(async (req, res) => {
     try {
       if (typeof req.body?.enabled !== "boolean") {
         return void res
@@ -171,10 +172,10 @@ function installMemoryRoutes(
     } catch (error) {
       await sendMemoryError(res, error);
     }
-  });
+  }));
 
   if (wipeContext) {
-    router.delete("/", async (req, res) => {
+    router.delete("/", asyncRoute(async (req, res) => {
       try {
         const ctx = await wipeContext(req, res);
         if (!ctx) return;
@@ -187,7 +188,7 @@ function installMemoryRoutes(
       } catch (error) {
         await sendMemoryError(res, error);
       }
-    });
+    }));
   }
 }
 
@@ -204,3 +205,6 @@ installMemoryRoutes(
   projectContext("content.edit"),
   projectContext("access.manage"),
 );
+
+userMemoryRouter.use(routerErrorHandler("[user-memory]"));
+projectMemoryRouter.use(routerErrorHandler("[project-memory]"));

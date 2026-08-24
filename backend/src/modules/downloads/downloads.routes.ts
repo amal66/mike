@@ -5,6 +5,7 @@
 
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { buildContentDisposition } from "../../lib/storage";
 import { resolveTokenDownload } from "./downloads.service";
@@ -12,7 +13,7 @@ import { resolveTokenDownload } from "./downloads.service";
 export const downloadsRouter = Router();
 
 // GET /download/:token
-downloadsRouter.get("/:token", requireAuth, async (req, res) => {
+downloadsRouter.get("/:token", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
@@ -33,4 +34,6 @@ downloadsRouter.get("/:token", requireAuth, async (req, res) => {
         buildContentDisposition("attachment", result.filename),
     );
     res.send(result.bytes);
-});
+}));
+
+downloadsRouter.use(routerErrorHandler("[downloads]"));
