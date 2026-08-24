@@ -658,13 +658,30 @@ describe("tabular.routes", () => {
     // ── DELETE /tabular-review/:reviewId ──────────────────────────────────
     describe("DELETE /tabular-review/:reviewId", () => {
         it("returns 204 on success", async () => {
-            supabaseState.tables.tabular_reviews = { data: null, error: null };
+            // The route now selects the deleted ids back, so the fixture has
+            // to report the row it removed.
+            supabaseState.tables.tabular_reviews = {
+                data: [{ id: "r1" }],
+                error: null,
+            };
 
             const res = await request(app)
                 .delete("/tabular-review/r1")
                 .set(...AUTH);
 
             expect(res.status).toBe(204);
+        });
+
+        it("returns 404 when the delete matched no row", async () => {
+            // A collaborator deleting a review they do not own matches nothing;
+            // answering 204 told the UI a no-op had succeeded.
+            supabaseState.tables.tabular_reviews = { data: [], error: null };
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
         });
 
         it("returns 500 when the delete errors", async () => {
