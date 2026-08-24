@@ -457,7 +457,7 @@ describe("POST /word-chat/tool-result", () => {
 
   it("delivers a pending call's result to the awaiting stream", async () => {
     const { waitForClientToolResult } =
-      await import("../../lib/chat/tools/wordClientTools");
+      await import("../../lib/chat/tools/wordClientTools.js");
     const pending = waitForClientToolResult({
       callId: TOOL_CALL_ID,
       userId: "u1",
@@ -479,7 +479,7 @@ describe("POST /word-chat/tool-result", () => {
 
   it("does not deliver results across users", async () => {
     const { waitForClientToolResult, submitClientToolResult } =
-      await import("../../lib/chat/tools/wordClientTools");
+      await import("../../lib/chat/tools/wordClientTools.js");
     const pending = waitForClientToolResult({
       callId: TOOL_CALL_ID,
       userId: "someone-else",
@@ -529,7 +529,7 @@ describe("POST /word-chat — local storage", () => {
   });
 
   it("schedules memory after a durable cloud turn", async () => {
-    const chatLib = await import("../../lib/chat");
+    const chatLib = await import("../../lib/chat/index.js");
     dbState.chatDetail = {
       data: { id: CHAT_ID, title: null, user_id: "u1" },
       error: null,

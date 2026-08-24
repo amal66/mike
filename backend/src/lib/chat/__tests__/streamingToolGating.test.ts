@@ -9,8 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // a writer anyway.
 
 const { streamChatWithTools, runToolCalls } = vi.hoisted(() => ({
-  streamChatWithTools: vi.fn(async () => ({ fullText: "" })),
-  runToolCalls: vi.fn(async () => ({
+  streamChatWithTools: vi.fn(async (_params: StreamChatCall) => ({
+    fullText: "",
+  })),
+  runToolCalls: vi.fn(async (_calls: { function: { name: string } }[]) => ({
     toolResults: [],
     docsRead: [],
     docsFound: [],
@@ -27,7 +29,7 @@ const { streamChatWithTools, runToolCalls } = vi.hoisted(() => ({
 
 vi.mock("../../llm", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("../../llm/models")),
-  streamChatWithTools: (...args: unknown[]) => streamChatWithTools(...args),
+  streamChatWithTools: (params: StreamChatCall) => streamChatWithTools(params),
 }));
 
 vi.mock("../../mcpConnectors", () => ({
@@ -35,7 +37,8 @@ vi.mock("../../mcpConnectors", () => ({
 }));
 
 vi.mock("../tools/toolDispatcher", () => ({
-  runToolCalls: (...args: unknown[]) => runToolCalls(...args),
+  runToolCalls: (calls: { function: { name: string } }[]) =>
+    runToolCalls(calls),
 }));
 
 import { runLLMStream } from "../streaming";
@@ -44,6 +47,20 @@ import { PROJECT_EXTRA_TOOLS } from "../tools/toolSchemas";
 type RunToolsFn = (
   calls: { id: string; name: string; input: Record<string, unknown> }[],
 ) => Promise<{ tool_use_id: string; content: string }[]>;
+
+// The mock stands in for llm.streamChatWithTools; declaring its parameter
+// (rather than leaving the stub zero-arity) is what lets tsc check the
+// `mock.calls[0][0]` lookups and the mockImplementation overrides below —
+// with `vi.fn(async () => …)` the call tuple is empty and every assertion on
+// it type-checks vacuously.
+type StreamChatCall = {
+  systemPrompt: string;
+  messages: { role: string; content: string }[];
+  tools: { function: { name: string } }[];
+  maxIterations: number;
+  runTools?: RunToolsFn;
+  [key: string]: unknown;
+};
 
 function baseParams() {
   return {
@@ -174,9 +191,9 @@ describe("runLLMStream document-mutation gating", () => {
 
     // Hiding the schema is not enough — a model can name a tool from memory,
     // so the call is dropped before it reaches the dispatcher.
-    const dispatched = (
-      runToolCalls.mock.calls[0]?.[0] as { function: { name: string } }[]
-    ).map((call) => call.function.name);
+    const dispatched = runToolCalls.mock.calls[0]![0].map(
+      (call) => call.function.name,
+    );
     expect(dispatched).toEqual(["read_document"]);
     expect(toolResults?.[0]).toEqual({
       tool_use_id: "call-a",
@@ -198,9 +215,9 @@ describe("runLLMStream document-mutation gating", () => {
 
     await runLLMStream(baseParams());
 
-    const dispatched = (
-      runToolCalls.mock.calls[0]?.[0] as { function: { name: string } }[]
-    ).map((call) => call.function.name);
+    const dispatched = runToolCalls.mock.calls[0]![0].map(
+      (call) => call.function.name,
+    );
     expect(dispatched).toEqual(["edit_document"]);
   });
 });

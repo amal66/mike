@@ -1,12 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// Declaring the stub's parameter (rather than a zero-arity `vi.fn`) is what
+// lets tsc check the `mock.calls[0][0]` lookup below; with an empty call tuple
+// every assertion on it type-checks vacuously.
+type StreamChatCall = {
+  systemPrompt: string;
+  messages: { role: string; content: string }[];
+  [key: string]: unknown;
+};
+
 const { streamChatWithTools } = vi.hoisted(() => ({
-  streamChatWithTools: vi.fn(async () => ({ fullText: "" })),
+  streamChatWithTools: vi.fn(async (_params: StreamChatCall) => ({
+    fullText: "",
+  })),
 }));
 
 vi.mock("../../llm", async () => ({
   ...(await vi.importActual<Record<string, unknown>>("../../llm/models")),
-  streamChatWithTools: (...args: unknown[]) => streamChatWithTools(...args),
+  streamChatWithTools: (params: StreamChatCall) => streamChatWithTools(params),
 }));
 vi.mock("../../mcpConnectors", () => ({
   buildUserMcpTools: vi.fn(async () => []),
@@ -43,9 +54,7 @@ describe("runLLMStream history", () => {
       db: {} as never,
       write: vi.fn(),
     });
-    const params = streamChatWithTools.mock.calls[0]?.[0] as {
-      messages: { role: string; content: string }[];
-    };
+    const params = streamChatWithTools.mock.calls[0]![0];
     expect(params.messages.map((m) => [m.role, m.content])).toEqual([
       ["user", "first"],
       ["user", "second"],

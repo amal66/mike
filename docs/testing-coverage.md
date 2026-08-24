@@ -1,9 +1,10 @@
 # Backend unit-test coverage
 
-The backend has a Vitest unit-test harness whose coverage ratchet measures
-`backend/src/lib/**` and `backend/src/modules/**`. This doc
-tracks what is covered, what still needs tests, and how the coverage ratchet
-works — so you can pick up a checkbox below and land it as a small PR.
+The backend has a Vitest unit-test harness whose coverage ratchet measures all
+of `backend/src/**` — modules, workers, middleware and jobs included, not just
+`src/lib/**`, so an untested area cannot silently drop to zero. This doc tracks
+what is covered, what still needs tests, and how the coverage ratchet works —
+so you can pick up a checkbox below and land it as a small PR.
 
 ## Running the tests
 
@@ -51,13 +52,14 @@ Per-area statement coverage from `npm run test:coverage`:
 | `lib/mcp/**` | 6 | minimal |
 | `lib/userSettings.ts`, `lib/officeText.ts`, `lib/spreadsheet.ts` | 0 | ✗ |
 
-Global: **51.26% statements / 44.30% branches / 55.05% functions / 53.03%
-lines**. The global number remains relatively low because the measured set
-includes several large feature libs (toolDispatcher, documentOps,
-CourtListener, MCP, and provider adapters) and — since the module
-reorganization widened the include to `src/modules/**` — every domain's route
-handlers and service layers, which are exercised mostly through the
-integration suites.
+Global, measured over the full `src/**` scope (modules, workers, middleware and
+jobs, not `src/lib/**` alone): **60.59% statements / 51.98% branches / 64.77%
+functions / 63.18% lines**. The floors in `backend/vitest.config.mts` sit just
+below those. The global number is held
+down by a few very large feature libs (toolDispatcher, documentOps,
+courtlistener, MCP, provider adapters) that are still untested and dominate the
+line count, and by the worker/job entry points that only the stack suites
+exercise.
 
 ## TODO — untested libs, in priority order
 
@@ -119,7 +121,7 @@ better exercised by the e2e suite.
 ## Ratchet policy
 
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
-statements 39 / branches 35 / functions 42 / lines 40). They are a
+statements 60 / branches 51 / functions 64 / lines 63). They are a
 no-regression ratchet, not a target:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your
