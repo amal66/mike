@@ -18,6 +18,7 @@ import {
     buildCancelledAssistantMessage,
     extractCitations,
     isAbortError,
+    openAssistantSse,
     runLLMStream,
     stripTransientAssistantEvents,
     PROJECT_EXTRA_TOOLS,
@@ -146,18 +147,11 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     let memoryTurnScheduled = false;
 
     try {
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache");
-        res.setHeader("Connection", "keep-alive");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.flushHeaders();
-
-        const write = (line: string) => res.write(line);
-        const streamAbort = new AbortController();
-        let streamFinished = false;
-        res.on("close", () => {
-            if (!streamFinished) streamAbort.abort();
-        });
+        // The same SSE setup the chat and word-chat routes use: headers,
+        // flush, an abort controller wired to the client hanging up, and a
+        // write that drops a line raised after the response has ended.
+        const stream = openAssistantSse(res);
+        const write = stream.write;
 
         try {
             write(
@@ -196,7 +190,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                           });
                           if (!saved.ok) throw saved.error;
                           chatTitle = title;
-                          if (!streamAbort.signal.aborted) {
+                          if (!stream.signal.aborted) {
                               write(
                                   `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
                               );
@@ -227,7 +221,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 model: selectedModel,
                 reasoning: selectedReasoningLevel,
                 apiKeys,
-                signal: streamAbort.signal,
+                signal: stream.signal,
                 projectId,
                 includeMemory: true,
                 memoryProjectId: projectId,
@@ -279,7 +273,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 const title = lastUser.content.slice(0, 120);
                 await updateChatTitle(db, { chatId, title });
                 chatTitle = title;
-                if (shouldGenerateTitle && !streamAbort.signal.aborted) {
+                if (shouldGenerateTitle && !stream.signal.aborted) {
                     write(
                         `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
                     );
@@ -419,8 +413,7 @@ projectChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
                 /* ignore */
             }
         } finally {
-            streamFinished = true;
-            res.end();
+            stream.finish();
         }
     } finally {
         if (memoryTurn && !memoryTurnScheduled) {

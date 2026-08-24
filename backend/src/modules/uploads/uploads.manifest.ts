@@ -17,6 +17,7 @@ import {
   ALLOWED_DOCUMENT_TYPES,
   ALLOWED_DOCUMENT_TYPES_LABEL,
   contentTypeForDocumentType,
+  documentSuffix,
 } from "../../lib/documentTypes";
 export const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024;
 export const MAX_UPLOAD_SESSION_FILES = 50;
@@ -158,11 +159,6 @@ export class UploadSessionValidationError extends Error {
   }
 }
 
-function fileTypeFromFilename(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  return dot < 0 ? "" : filename.slice(dot + 1).toLowerCase();
-}
-
 export function parseUploadSessionRequest(
   value: unknown,
   userId: string,
@@ -209,7 +205,7 @@ export function parseUploadSessionRequest(
       );
     }
 
-    const fileType = fileTypeFromFilename(file.filename);
+    const fileType = documentSuffix(file.filename);
     if (!ALLOWED_DOCUMENT_TYPES.has(fileType)) {
       throw new UploadSessionValidationError(
         `Unsupported file type: ${fileType || "unknown"}. Allowed: ${ALLOWED_DOCUMENT_TYPES_LABEL}`,

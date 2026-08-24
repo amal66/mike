@@ -18,6 +18,7 @@ import { creatorScopedAllowed } from "../../lib/access";
 import { can } from "../../lib/permissions";
 import {
     contentTypeForDocumentType,
+    documentSuffix,
     shouldConvertToPdf,
 } from "../../lib/documentTypes";
 import { deleteDocumentAndVersionFiles, type Db } from "./documents.shared";
@@ -158,9 +159,7 @@ export async function createVersionFromDocument(
         requestedFilename && requestedFilename.trim()
             ? requestedFilename.trim().slice(0, 200)
             : active.filename?.trim() || "Untitled document";
-    const suffix =
-        sourceType ||
-        (filename.includes(".") ? filename.split(".").pop()!.toLowerCase() : "");
+    const suffix = sourceType || documentSuffix(filename);
     const versionSlug = crypto.randomUUID().replace(/-/g, "");
     const key = versionStorageKey(userId, documentId, versionSlug, filename);
     const contentType = contentTypeForDocumentType(suffix);

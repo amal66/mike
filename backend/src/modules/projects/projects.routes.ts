@@ -500,6 +500,8 @@ projectsRouter.patch("/:projectId/documents/:documentId", requireAuth, asyncRout
       return void res.status(404).json({ detail: "Project not found" });
     if (result.kind === "doc_not_found")
       return void res.status(404).json({ detail: "Document not found" });
+    if (result.kind === "db_error")
+      return void sendInternalError(res, new Error(result.detail));
     return void res.status(400).json({ detail: result.detail });
   }
   res.json(result.doc);

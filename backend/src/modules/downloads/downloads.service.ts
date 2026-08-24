@@ -9,13 +9,13 @@ import type { Db } from "../../lib/supabase";
 import { downloadFile } from "../../lib/storage";
 import { verifyDownload } from "../../lib/downloadTokens";
 import { ensureDocAccess } from "../../lib/access";
-import { contentTypeForDocumentType } from "../../lib/documentTypes";
+import {
+    contentTypeForDocumentType,
+    documentSuffix,
+} from "../../lib/documentTypes";
 
 function contentTypeFor(filename: string): string {
-    const suffix = filename.includes(".")
-        ? filename.split(".").pop()?.toLowerCase()
-        : "";
-    return contentTypeForDocumentType(suffix);
+    return contentTypeForDocumentType(documentSuffix(filename));
 }
 
 /**

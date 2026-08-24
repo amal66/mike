@@ -318,6 +318,7 @@ export type RenameDocumentResult =
   | { ok: true; doc: Record<string, unknown> }
   | { ok: false; kind: "forbidden" }
   | { ok: false; kind: "doc_not_found" }
+  | { ok: false; kind: "db_error"; detail: string }
   | { ok: false; kind: "validation"; detail: string };
 
 export async function renameProjectDocument(
@@ -343,18 +344,18 @@ export async function renameProjectDocument(
     .eq("project_id", projectId)
     .single();
   if (!doc) return { ok: false, kind: "doc_not_found" };
+  // The name being renamed lives on the active version row, so a document
+  // without one has nothing to rename.
+  if (!doc.current_version_id) return { ok: false, kind: "doc_not_found" };
 
-  const active = doc.current_version_id
-    ? await db
-        .from("document_versions")
-        .select("filename")
-        .eq("id", doc.current_version_id)
-        .eq("document_id", documentId)
-        .single()
-    : null;
+  const active = await db
+    .from("document_versions")
+    .select("filename")
+    .eq("id", doc.current_version_id)
+    .eq("document_id", documentId)
+    .single();
   const currentName =
-    typeof active?.data?.filename === "string" &&
-    active.data.filename.trim()
+    typeof active.data?.filename === "string" && active.data.filename.trim()
       ? active.data.filename.trim()
       : "Untitled document";
   const filename = normalizeDocumentFilename(args.filename, currentName);
@@ -370,19 +371,25 @@ export async function renameProjectDocument(
     .single();
   if (error || !updated) return { ok: false, kind: "doc_not_found" };
 
-  if (doc.current_version_id) {
-    await db
-      .from("document_versions")
-      .update({ filename })
-      .eq("id", doc.current_version_id)
-      .eq("document_id", documentId);
-  }
+  // Read the stored name back instead of echoing the requested one — this
+  // update's error was never destructured, so an RLS denial was swallowed and
+  // the response still claimed the rename had happened.
+  const { data: renamed, error: renameError } = await db
+    .from("document_versions")
+    .update({ filename })
+    .eq("id", doc.current_version_id)
+    .eq("document_id", documentId)
+    .select("filename")
+    .single();
+  if (renameError)
+    return { ok: false, kind: "db_error", detail: renameError.message };
+  if (!renamed) return { ok: false, kind: "doc_not_found" };
 
   return {
     ok: true,
     doc: {
       ...updated,
-      filename,
+      filename: renamed.filename,
     },
   };
 }

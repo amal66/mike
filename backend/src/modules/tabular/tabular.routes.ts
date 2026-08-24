@@ -190,7 +190,7 @@ tabularRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
 
 // POST /tabular-review/prompt (must come before /:reviewId routes)
 tabularRouter.post("/prompt", requireAuth, asyncRoute(async (req, res) => {
-    const result = await draftColumnPrompt({
+    const result = await draftColumnPrompt(createServerSupabase(), {
         userId: res.locals.userId as string,
         title: typeof req.body.title === "string" ? req.body.title.trim() : "",
         format: typeof req.body.format === "string" ? req.body.format : "text",

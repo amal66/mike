@@ -20,6 +20,10 @@ vi.mock("../../user/user.settings", () => ({ getUserModelSettings }));
 
 import { draftColumnPrompt } from "../tabular.prompt";
 
+// The service takes the request's Supabase client; these tests stub
+// getUserModelSettings, so the handle is only passed through.
+const DB = {} as never;
+
 const ARGS = {
     userId: "user-1",
     title: "Governing law",
@@ -38,7 +42,7 @@ beforeEach(() => {
 
 describe("draftColumnPrompt", () => {
     it("requires a title before calling the model", async () => {
-        const result = await draftColumnPrompt({ ...ARGS, title: "" });
+        const result = await draftColumnPrompt(DB, { ...ARGS, title: "" });
         expect(result).toMatchObject({
             ok: false,
             kind: "validation",
@@ -52,7 +56,7 @@ describe("draftColumnPrompt", () => {
             tabular_model: null,
             api_keys: {},
         });
-        const result = await draftColumnPrompt(ARGS);
+        const result = await draftColumnPrompt(DB, ARGS);
         expect(result).toMatchObject({ ok: false, kind: "status", status: 409 });
         expect(
             result.ok === false && result.kind === "status" && result.body.code,
@@ -63,7 +67,7 @@ describe("draftColumnPrompt", () => {
         completeText.mockResolvedValue(
             '```json\n{"prompt":"  Extract the governing law clause.  "}\n```',
         );
-        const result = await draftColumnPrompt(ARGS);
+        const result = await draftColumnPrompt(DB, ARGS);
         expect(result).toEqual({
             ok: true,
             data: {
@@ -75,7 +79,7 @@ describe("draftColumnPrompt", () => {
 
     it("describes the tag vocabulary to the model", async () => {
         completeText.mockResolvedValue('{"prompt":"p"}');
-        await draftColumnPrompt({
+        await draftColumnPrompt(DB, {
             ...ARGS,
             format: "tag",
             tags: ["Yes", "No"],
@@ -89,7 +93,7 @@ describe("draftColumnPrompt", () => {
 
     it("502s an empty prompt in an otherwise valid reply", async () => {
         completeText.mockResolvedValue('{"prompt":"   "}');
-        const result = await draftColumnPrompt(ARGS);
+        const result = await draftColumnPrompt(DB, ARGS);
         expect(result).toMatchObject({
             ok: false,
             kind: "status",
@@ -100,7 +104,7 @@ describe("draftColumnPrompt", () => {
 
     it("502s an unparseable reply", async () => {
         completeText.mockResolvedValue("not json at all");
-        const result = await draftColumnPrompt(ARGS);
+        const result = await draftColumnPrompt(DB, ARGS);
         expect(result).toMatchObject({
             ok: false,
             kind: "status",
@@ -111,7 +115,7 @@ describe("draftColumnPrompt", () => {
 
     it("502s a provider failure without leaking its message", async () => {
         completeText.mockRejectedValue(new Error("upstream 401 sk-abc"));
-        const result = await draftColumnPrompt(ARGS);
+        const result = await draftColumnPrompt(DB, ARGS);
         expect(result).toMatchObject({
             ok: false,
             kind: "status",
