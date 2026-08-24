@@ -18,7 +18,12 @@ function makeDb(events: Record<string, unknown>[], error?: { message: string }) 
             ilike: () => b,
             gte: () => b,
             lte: () => b,
+            // listAccessibleProjectIds (lib/access) scopes the shared-project
+            // lookup with .filter("shared_with","cs",...).neq(...); .contains
+            // stays for any caller still using the older encoding.
             contains: () => b,
+            filter: () => b,
+            neq: () => b,
             order: () => b,
             range: (from: number, to: number) => {
                 ranges.push([from, to]);
@@ -106,7 +111,12 @@ function makeProfileDb(
             ilike: () => b,
             gte: () => b,
             lte: () => b,
+            // listAccessibleProjectIds (lib/access) scopes the shared-project
+            // lookup with .filter("shared_with","cs",...).neq(...); .contains
+            // stays for any caller still using the older encoding.
             contains: () => b,
+            filter: () => b,
+            neq: () => b,
             order: () => b,
             in: () => {
                 profilesQueried = true;
