@@ -9,23 +9,32 @@
 import type { Db } from "../../lib/supabase";
 export type { Db };
 
+// Every caller sends this straight to the browser as `{ ok: false, detail }`.
+// PostgREST errors are plain objects rather than Errors, so their
+// message/details/hint/code are still joined — but an unrecognised value now
+// falls back to a generic message instead of JSON.stringify()ing the whole
+// object, which could dump request context (including secrets) to the client.
 export function errorMessage(error: unknown): string {
-    if (error instanceof Error && error.message) return error.message;
-    if (error && typeof error === "object") {
+    if (error && typeof error === "object" && !(error instanceof Error)) {
         const record = error as {
             message?: unknown;
             details?: unknown;
             hint?: unknown;
             code?: unknown;
         };
-        return (
-            [record.message, record.details, record.hint, record.code]
-                .filter(
-                    (value): value is string =>
-                        typeof value === "string" && !!value,
-                )
-                .join(" ") || JSON.stringify(error)
-        );
+        const composed = [
+            record.message,
+            record.details,
+            record.hint,
+            record.code,
+        ]
+            .filter(
+                (value): value is string =>
+                    typeof value === "string" && !!value,
+            )
+            .join(" ");
+        if (composed) return composed;
     }
-    return String(error);
+    if (error instanceof Error && error.message) return error.message;
+    return typeof error === "string" && error ? error : "Unexpected error";
 }

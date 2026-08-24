@@ -4,6 +4,7 @@
 // title.
 
 import { completeText } from "../../lib/llm";
+import type { Db } from "../../lib/supabase";
 import { getUserModelSettings } from "../user/user.service";
 import { failure } from "../../lib/serviceResult";
 import { statusFailure, type TabularResult } from "./tabular.shared";
@@ -53,13 +54,16 @@ export type DraftedColumnPrompt = { prompt: string; source: "llm" };
  * prompt — is a 502: the request was well-formed and the dependency did not
  * deliver.
  */
-export async function draftColumnPrompt(args: {
-    userId: string;
-    title: string;
-    format: string;
-    documentName: string;
-    tags: string[];
-}): Promise<TabularResult<DraftedColumnPrompt>> {
+export async function draftColumnPrompt(
+    db: Db,
+    args: {
+        userId: string;
+        title: string;
+        format: string;
+        documentName: string;
+        tags: string[];
+    },
+): Promise<TabularResult<DraftedColumnPrompt>> {
     const { userId, title, format, documentName, tags } = args;
 
     if (!title) return failure("validation", "title is required");
@@ -93,7 +97,9 @@ export async function draftColumnPrompt(args: {
 
     try {
         const { tabular_model: promptModel, api_keys } =
-            await getUserModelSettings(userId);
+            // Pass the request's client through: omitting it built a second
+            // Supabase client (and a second connection) per draft.
+            await getUserModelSettings(userId, db);
         if (!promptModel) {
             return statusFailure(409, {
                 code: "model_required",
