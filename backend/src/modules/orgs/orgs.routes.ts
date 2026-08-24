@@ -12,6 +12,7 @@
 
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendOrgFailure } from "../../lib/orgFailure";
 import {
@@ -33,34 +34,34 @@ import {
 export const orgsRouter = Router();
 
 // GET /orgs — orgs the caller belongs to (with their role + member count).
-orgsRouter.get("/", requireAuth, async (_req, res) => {
+orgsRouter.get("/", requireAuth, asyncRoute(async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listMyOrgs(db, userId);
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.orgs);
-});
+}));
 
 // POST /orgs — create an org; the caller becomes its first admin.
-orgsRouter.post("/", requireAuth, async (req, res) => {
+orgsRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await createOrg(db, { userId, name: req.body?.name });
     if (!result.ok) return sendOrgFailure(res, result);
     res.status(201).json(result.org);
-});
+}));
 
 // GET /orgs/:orgId — org detail (any member).
-orgsRouter.get("/:orgId", requireAuth, async (req, res) => {
+orgsRouter.get("/:orgId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await getOrg(db, { userId, orgId: req.params.orgId });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.org);
-});
+}));
 
 // PATCH /orgs/:orgId — rename the org (admin only).
-orgsRouter.patch("/:orgId", requireAuth, async (req, res) => {
+orgsRouter.patch("/:orgId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await updateOrg(db, {
@@ -70,11 +71,11 @@ orgsRouter.patch("/:orgId", requireAuth, async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.org);
-});
+}));
 
 // DELETE /orgs/:orgId — delete an empty org (admin only). Organization-owned
 // resources never become personal data as a side effect of deletion.
-orgsRouter.delete("/:orgId", requireAuth, async (req, res) => {
+orgsRouter.delete("/:orgId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await deleteOrg(db, {
@@ -84,12 +85,12 @@ orgsRouter.delete("/:orgId", requireAuth, async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.status(204).send();
-});
+}));
 
 // GET /orgs/:orgId/resources — every organization-scoped project and workflow.
 // Chats and tabular reviews only inherit organization access from projects and
 // are browsed inside those projects rather than as independent org resources.
-orgsRouter.get("/:orgId/resources", requireAuth, async (req, res) => {
+orgsRouter.get("/:orgId/resources", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listOrgResources(db, {
@@ -101,19 +102,19 @@ orgsRouter.get("/:orgId/resources", requireAuth, async (req, res) => {
         projects: result.projects,
         workflows: result.workflows,
     });
-});
+}));
 
 // GET /orgs/:orgId/members — the accepted roster (any member).
-orgsRouter.get("/:orgId/members", requireAuth, async (req, res) => {
+orgsRouter.get("/:orgId/members", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listMembers(db, { userId, orgId: req.params.orgId });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.members);
-});
+}));
 
 // PATCH /orgs/:orgId/members/:userId — change a member's role (admin only).
-orgsRouter.patch("/:orgId/members/:userId", requireAuth, async (req, res) => {
+orgsRouter.patch("/:orgId/members/:userId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await updateMember(db, {
@@ -125,10 +126,10 @@ orgsRouter.patch("/:orgId/members/:userId", requireAuth, async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.member);
-});
+}));
 
 // DELETE /orgs/:orgId/members/:userId — remove a member (admin, or self).
-orgsRouter.delete("/:orgId/members/:userId", requireAuth, async (req, res) => {
+orgsRouter.delete("/:orgId/members/:userId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await removeMember(db, {
@@ -139,14 +140,14 @@ orgsRouter.delete("/:orgId/members/:userId", requireAuth, async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.status(204).send();
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Invitations (admin side)
 // ---------------------------------------------------------------------------
 
 // POST /orgs/:orgId/invitations — invite an email at a role (admin only).
-orgsRouter.post("/:orgId/invitations", requireAuth, async (req, res) => {
+orgsRouter.post("/:orgId/invitations", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
@@ -159,10 +160,10 @@ orgsRouter.post("/:orgId/invitations", requireAuth, async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.status(201).json(result.invitation);
-});
+}));
 
 // GET /orgs/:orgId/invitations — pending/recent invitations (admin only).
-orgsRouter.get("/:orgId/invitations", requireAuth, async (req, res) => {
+orgsRouter.get("/:orgId/invitations", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listInvitations(db, {
@@ -171,13 +172,13 @@ orgsRouter.get("/:orgId/invitations", requireAuth, async (req, res) => {
     });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.invitations);
-});
+}));
 
 // DELETE /orgs/:orgId/invitations/:invitationId — cancel (admin only).
 orgsRouter.delete(
     "/:orgId/invitations/:invitationId",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -189,7 +190,7 @@ orgsRouter.delete(
         });
         if (!result.ok) return sendOrgFailure(res, result);
         res.status(204).send();
-    },
+    }),
 );
 
 // POST /orgs/:orgId/invitations/:invitationId/resend — refresh expiry.
@@ -201,7 +202,7 @@ orgsRouter.delete(
 orgsRouter.post(
     "/:orgId/invitations/:invitationId/resend",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -213,5 +214,7 @@ orgsRouter.post(
         });
         if (!result.ok) return sendOrgFailure(res, result);
         res.json(result.invitation);
-    },
+    }),
 );
+
+orgsRouter.use(routerErrorHandler("[orgs]"));

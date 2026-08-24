@@ -17,6 +17,7 @@ import { ssoConfiguration, ssoDomainSchema } from "../../lib/ssoConfig";
 import { sendInternalError } from "../../lib/httpError";
 import { requestOriginIsWordAddin } from "../../lib/origins";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { requireTrustedOrigin } from "../../middleware/trustedOrigin";
 import {
   applyHandoffSession,
@@ -127,7 +128,7 @@ function cookieClient(req: Request, res: Response): SupabaseClient | null {
   return client;
 }
 
-authRouter.post("/login", async (req, res) => {
+authRouter.post("/login", asyncRoute(async (req, res) => {
   const parsed = credentialsSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
 
@@ -139,9 +140,9 @@ authRouter.post("/login", async (req, res) => {
   } catch (error) {
     authError(res, error);
   }
-});
+}));
 
-authRouter.post("/signup", async (req, res) => {
+authRouter.post("/signup", asyncRoute(async (req, res) => {
   const parsed = credentialsSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
 
@@ -160,7 +161,7 @@ authRouter.post("/signup", async (req, res) => {
   } catch (error) {
     authError(res, error);
   }
-});
+}));
 
 async function startSso(req: Request, res: Response) {
   try {
@@ -216,7 +217,7 @@ async function startSso(req: Request, res: Response) {
   }
 }
 
-authRouter.post("/oauth", async (req, res) => {
+authRouter.post("/oauth", asyncRoute(async (req, res) => {
   if (req.body?.provider === "sso") return startSso(req, res);
   if (req.body?.provider !== "google") return invalidBody(res);
   try {
@@ -237,9 +238,9 @@ authRouter.post("/oauth", async (req, res) => {
   } catch (error) {
     authError(res, error);
   }
-});
+}));
 
-authRouter.post("/exchange", async (req, res) => {
+authRouter.post("/exchange", asyncRoute(async (req, res) => {
   const parsed = exchangeSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
   try {
@@ -270,9 +271,9 @@ authRouter.post("/exchange", async (req, res) => {
   } catch (error) {
     authError(res, error);
   }
-});
+}));
 
-authRouter.post("/handoff", async (req, res) => {
+authRouter.post("/handoff", asyncRoute(async (req, res) => {
   const parsed = handoffSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
   if (!requestOriginIsWordAddin(req.get("origin"))) {
@@ -319,9 +320,9 @@ authRouter.post("/handoff", async (req, res) => {
   } catch (error) {
     authError(res, error, "Authentication handoff could not be completed.");
   }
-});
+}));
 
-authRouter.post("/password-reset", async (req, res) => {
+authRouter.post("/password-reset", asyncRoute(async (req, res) => {
   const email = emailSchema.safeParse(req.body?.email);
   if (email.success) {
     try {
@@ -336,17 +337,17 @@ authRouter.post("/password-reset", async (req, res) => {
     }
   }
   res.status(204).end();
-});
+}));
 
-authRouter.get("/session", requireAuth, async (_req, res) => {
+authRouter.get("/session", requireAuth, asyncRoute(async (_req, res) => {
   const client = cookieClient(_req, res);
   if (!client) return;
   const { user, error } = await currentUser(client);
   if (error || !user) return authError(res, error);
   res.json({ user: publicAuthUser(user) });
-});
+}));
 
-authRouter.post("/logout", async (req, res) => {
+authRouter.post("/logout", asyncRoute(async (req, res) => {
   try {
     const client = createRequestSupabase(req, res);
     await signOut(client, req.body?.scope === "global" ? "global" : "local");
@@ -357,9 +358,9 @@ authRouter.post("/logout", async (req, res) => {
     clearRequestAuthCookies(req, res);
   }
   res.status(204).end();
-});
+}));
 
-authRouter.patch("/email", requireAuth, async (req, res) => {
+authRouter.patch("/email", requireAuth, asyncRoute(async (req, res) => {
   const email = emailSchema.safeParse(req.body?.email);
   if (!email.success) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -371,9 +372,9 @@ authRouter.patch("/email", requireAuth, async (req, res) => {
   );
   if (error || !data.user) return authError(res, error);
   res.json({ user: publicAuthUser(data.user) });
-});
+}));
 
-authRouter.patch("/password", requireAuth, async (req, res) => {
+authRouter.patch("/password", requireAuth, asyncRoute(async (req, res) => {
   const parsed = passwordSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -385,25 +386,25 @@ authRouter.patch("/password", requireAuth, async (req, res) => {
     clearRequestAuthCookies(req, res);
   }
   res.json({ user: publicAuthUser(data.user) });
-});
+}));
 
-authRouter.get("/mfa/factors", requireAuth, async (req, res) => {
+authRouter.get("/mfa/factors", requireAuth, asyncRoute(async (req, res) => {
   const client = cookieClient(req, res);
   if (!client) return;
   const { data, error } = await listMfaFactors(client);
   if (error) return authError(res, error);
   res.json(data);
-});
+}));
 
-authRouter.get("/mfa/assurance", requireAuth, async (req, res) => {
+authRouter.get("/mfa/assurance", requireAuth, asyncRoute(async (req, res) => {
   const client = cookieClient(req, res);
   if (!client) return;
   const { data, error } = await mfaAssuranceLevel(client);
   if (error) return authError(res, error);
   res.json(data);
-});
+}));
 
-authRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
+authRouter.post("/mfa/enroll", requireAuth, asyncRoute(async (req, res) => {
   const friendlyName = friendlyNameSchema.safeParse(req.body?.friendlyName);
   if (!friendlyName.success) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -411,9 +412,9 @@ authRouter.post("/mfa/enroll", requireAuth, async (req, res) => {
   const { data, error } = await enrollMfaFactor(client, friendlyName.data);
   if (error) return authError(res, error);
   res.status(201).json(data);
-});
+}));
 
-authRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
+authRouter.post("/mfa/challenge", requireAuth, asyncRoute(async (req, res) => {
   const parsed = factorSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -421,9 +422,9 @@ authRouter.post("/mfa/challenge", requireAuth, async (req, res) => {
   const { data, error } = await challengeMfaFactor(client, parsed.data);
   if (error) return authError(res, error);
   res.json(data);
-});
+}));
 
-authRouter.post("/mfa/verify", requireAuth, async (req, res) => {
+authRouter.post("/mfa/verify", requireAuth, asyncRoute(async (req, res) => {
   const parsed = verificationSchema.safeParse(req.body);
   if (!parsed.success || !parsed.data.challengeId) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -435,9 +436,9 @@ authRouter.post("/mfa/verify", requireAuth, async (req, res) => {
   });
   if (error) return authError(res, error);
   res.json({ user: publicAuthUser(data.user) });
-});
+}));
 
-authRouter.post("/mfa/challenge-and-verify", requireAuth, async (req, res) => {
+authRouter.post("/mfa/challenge-and-verify", requireAuth, asyncRoute(async (req, res) => {
   const parsed = verificationSchema.safeParse(req.body);
   if (!parsed.success) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -448,9 +449,9 @@ authRouter.post("/mfa/challenge-and-verify", requireAuth, async (req, res) => {
   });
   if (error) return authError(res, error);
   res.json({ user: publicAuthUser(data.user) });
-});
+}));
 
-authRouter.delete("/mfa/factors/:factorId", requireAuth, async (req, res) => {
+authRouter.delete("/mfa/factors/:factorId", requireAuth, asyncRoute(async (req, res) => {
   const parsed = factorSchema.safeParse({ factorId: req.params.factorId });
   if (!parsed.success) return invalidBody(res);
   const client = cookieClient(req, res);
@@ -458,4 +459,6 @@ authRouter.delete("/mfa/factors/:factorId", requireAuth, async (req, res) => {
   const { data, error } = await unenrollMfaFactor(client, parsed.data);
   if (error) return authError(res, error);
   res.json(data);
-});
+}));
+
+authRouter.use(routerErrorHandler("[auth]"));

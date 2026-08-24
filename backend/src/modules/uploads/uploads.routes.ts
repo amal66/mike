@@ -12,19 +12,14 @@
 import { randomUUID } from "node:crypto";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import {
-  Router,
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import type { ParamsFlatDictionary } from "express-serve-static-core";
+import { Router, type Response } from "express";
 
 import { sendInternalError } from "../../lib/httpError";
 import { uploadSessionRateLimitConfiguration } from "../../lib/runtimeConfig";
 import { storageEnabled } from "../../lib/storage";
 import { createServerSupabase } from "../../lib/supabase";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 // Sibling topic files are imported directly, as in every module; outside the
 // module, uploads.service.ts is the only door.
 import { validateDestinationAccess } from "./uploads.access";
@@ -92,20 +87,6 @@ uploadSessionsRouter.param("fileId", (_req, res, next, value) => {
   next();
 });
 
-type AsyncRoute = (
-  req: Request<ParamsFlatDictionary>,
-  res: Response,
-) => Promise<unknown>;
-
-function asyncRoute(handler: AsyncRoute) {
-  return (
-    req: Request<ParamsFlatDictionary>,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    void handler(req, res).catch(next);
-  };
-}
 
 /** The one place a service failure becomes a response. */
 function sendUploadFailure(res: Response, failure: UploadFailure): void {
@@ -233,3 +214,5 @@ uploadSessionsRouter.delete(
     res.status(204).end();
   }),
 );
+
+uploadSessionsRouter.use(routerErrorHandler("[upload-sessions]"));

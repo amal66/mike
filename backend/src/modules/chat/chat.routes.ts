@@ -9,6 +9,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { enqueueChatTurnAudit } from "../../lib/audit";
 import {
@@ -64,7 +65,7 @@ export const chatRouter = Router();
 // project), so the list and GET /chat/:chatId can never disagree
 // about what exists. Each row carries is_owner so the sidebar can tell the
 // caller's own chats from colleagues' ones — provenance, not a role.
-chatRouter.get("/", requireAuth, async (req, res) => {
+chatRouter.get("/", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
@@ -81,10 +82,10 @@ chatRouter.get("/", requireAuth, async (req, res) => {
     const result = await listChats(db, { userId, userEmail, limit, offset });
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.data);
-});
+}));
 
 // POST /chat/create
-chatRouter.post("/create", requireAuth, async (req, res) => {
+chatRouter.post("/create", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const parsedProjectId = parseOptionalProjectId(req.body?.project_id);
@@ -101,10 +102,10 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
         return void res.status(result.status).json({ detail: result.detail });
     }
     res.json({ id: result.id });
-});
+}));
 
 // GET /chat/:chatId
-chatRouter.get("/:chatId", requireAuth, async (req, res) => {
+chatRouter.get("/:chatId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -125,7 +126,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
         access_role: access.projectRole,
         messages,
     });
-});
+}));
 
 // GET /chat/:chatId/people
 // The chat's creator + every direct grantee, resolved to
@@ -133,7 +134,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 // GET /projects/:projectId/people, including its nullable `owner` (a chat in
 // an organization project outlives its author's account). Visible to anyone
 // who can see the chat.
-chatRouter.get("/:chatId/people", requireAuth, async (req, res) => {
+chatRouter.get("/:chatId/people", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -146,10 +147,10 @@ chatRouter.get("/:chatId/people", requireAuth, async (req, res) => {
     const people = await listChatPeople(db, access.chat);
     if (!people.ok) return void sendInternalError(res, people.detail);
     res.json(people);
-});
+}));
 
 // GET /chat/:chatId/access — role-aware direct grants, admin-only.
-chatRouter.get("/:chatId/access", requireAuth, async (req, res) => {
+chatRouter.get("/:chatId/access", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -177,10 +178,10 @@ chatRouter.get("/:chatId/access", requireAuth, async (req, res) => {
         access_role: access.projectRole,
         grants: listed.grants,
     });
-});
+}));
 
 // POST /chat/:chatId/access — grant or re-role one recipient.
-chatRouter.post("/:chatId/access", requireAuth, async (req, res) => {
+chatRouter.post("/:chatId/access", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -221,10 +222,10 @@ chatRouter.post("/:chatId/access", requireAuth, async (req, res) => {
         return void sendInternalError(res, result.detail);
     }
     res.status(201).json(result.grant);
-});
+}));
 
 // DELETE /chat/:chatId/access/:email — revoke one recipient.
-chatRouter.delete("/:chatId/access/:email", requireAuth, async (req, res) => {
+chatRouter.delete("/:chatId/access/:email", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -249,10 +250,10 @@ chatRouter.delete("/:chatId/access/:email", requireAuth, async (req, res) => {
     if (!result.removed)
         return void res.status(404).json({ detail: "Access grant not found" });
     res.status(204).send();
-});
+}));
 
 // PATCH /chat/:chatId — rename and/or edit sharing.
-chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
+chatRouter.patch("/:chatId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -339,10 +340,10 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
         return void res.status(404).json({ detail: "Chat not found" });
     }
     res.json(result.data);
-});
+}));
 
 // DELETE /chat/:chatId
-chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
+chatRouter.delete("/:chatId", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -361,10 +362,10 @@ chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const result = await deleteChat(db, { chatId });
     if (!result.ok) return void sendInternalError(res, result.error);
     res.status(204).send();
-});
+}));
 
 // POST /chat/:chatId/generate-title
-chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
+chatRouter.post("/:chatId/generate-title", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -402,10 +403,10 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             .json({ detail: "Failed to generate title" });
     }
     res.json({ title: result.title });
-});
+}));
 
 // POST /chat — streaming
-chatRouter.post("/", requireAuth, async (req, res) => {
+chatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const body =
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -850,4 +851,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             }
         }
     }
-});
+}));
+
+chatRouter.use(routerErrorHandler("[chat]"));

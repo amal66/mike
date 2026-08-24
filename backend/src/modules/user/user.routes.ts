@@ -7,6 +7,7 @@
 import crypto from "crypto";
 import { Router } from "express";
 import { requireAuth, requireMfaIfEnrolled } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { recordAudit } from "../../lib/audit";
 import { sendInternalError } from "../../lib/httpError";
@@ -146,16 +147,16 @@ function mcpOAuthPopupCsp(nonce: string) {
 }
 
 // POST /user/profile
-userRouter.post("/profile", requireAuth, async (_req, res) => {
+userRouter.post("/profile", requireAuth, asyncRoute(async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await bootstrapUserProfile(db, userId);
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json({ ok: true });
-});
+}));
 
 // GET /user/lookup?email=person@example.com
-userRouter.get("/lookup", requireAuth, async (req, res) => {
+userRouter.get("/lookup", requireAuth, asyncRoute(async (req, res) => {
     const email = typeof req.query.email === "string" ? req.query.email : "";
     if (!email.trim()) {
         return void res.status(400).json({ detail: "email is required" });
@@ -163,7 +164,7 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 
     const db = createServerSupabase();
     res.json(await lookupUserByEmail(db, email));
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Organization invitations — the recipient's side
@@ -176,19 +177,19 @@ userRouter.get("/lookup", requireAuth, async (req, res) => {
 // before signup be claimed the moment the account exists.
 
 // GET /user/invitations — live invitations addressed to the caller's email.
-userRouter.get("/invitations", requireAuth, async (_req, res) => {
+userRouter.get("/invitations", requireAuth, asyncRoute(async (_req, res) => {
     const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
     const result = await listMyInvitations(db, { userEmail });
     if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.invitations);
-});
+}));
 
 // POST /user/invitations/:invitationId/accept — join the organization.
 userRouter.post(
     "/invitations/:invitationId/accept",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -199,14 +200,14 @@ userRouter.post(
         });
         if (!result.ok) return sendOrgFailure(res, result);
         res.json({ org_id: result.org_id, role: result.role });
-    },
+    }),
 );
 
 // POST /user/invitations/:invitationId/decline
 userRouter.post(
     "/invitations/:invitationId/decline",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -217,20 +218,20 @@ userRouter.post(
         });
         if (!result.ok) return sendOrgFailure(res, result);
         res.status(204).send();
-    },
+    }),
 );
 
 // GET /user/profile
-userRouter.get("/profile", requireAuth, async (_req, res) => {
+userRouter.get("/profile", requireAuth, asyncRoute(async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await getUserProfile(db, userId);
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.body);
-});
+}));
 
 // PATCH /user/profile
-userRouter.patch("/profile", requireAuth, async (req, res) => {
+userRouter.patch("/profile", requireAuth, asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
     const parsed = validateProfilePayload(req.body);
     if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
@@ -244,10 +245,10 @@ userRouter.patch("/profile", requireAuth, async (req, res) => {
     );
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.body);
-});
+}));
 
 // POST /user/onboarding
-userRouter.post("/onboarding", requireAuth, async (req, res) => {
+userRouter.post("/onboarding", requireAuth, asyncRoute(async (req, res) => {
     const parsed = validateOnboardingPayload(req.body);
     if (!parsed.ok) return void res.status(400).json({ detail: parsed.detail });
 
@@ -256,11 +257,11 @@ userRouter.post("/onboarding", requireAuth, async (req, res) => {
     const result = await completeUserOnboarding(db, userId, parsed.update);
     if (!result.ok) return void res.status(500).json({ detail: result.detail });
     res.json(result.body);
-});
+}));
 
 // POST /user/security/password-set
 // Record password capability only after verifying Supabase's auth.users row.
-userRouter.post("/security/password-set", requireAuth, async (_req, res) => {
+userRouter.post("/security/password-set", requireAuth, asyncRoute(async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await recordPasswordSet(db, userId);
@@ -270,14 +271,14 @@ userRouter.post("/security/password-set", requireAuth, async (_req, res) => {
         return void res.status(500).json({ detail: result.detail });
     }
     res.json(result.body);
-});
+}));
 
 // PATCH /user/security/mfa-login
 userRouter.patch(
     "/security/mfa-login",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const parsed = readBooleanBodyField(req.body, "enabled");
         if (!parsed.ok)
@@ -291,23 +292,23 @@ userRouter.patch(
             return void sendInternalError(res, result.error);
         }
         res.json(result.body);
-    },
+    }),
 );
 
 // GET /user/api-keys
-userRouter.get("/api-keys", requireAuth, async (_req, res) => {
+userRouter.get("/api-keys", requireAuth, asyncRoute(async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const status = await getApiKeyStatus(db, userId);
     res.json(status);
-});
+}));
 
 // PUT /user/api-keys/:provider
 userRouter.put(
     "/api-keys/:provider",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const provider = normalizeApiKeyProvider(req.params.provider);
         if (!provider)
@@ -327,23 +328,23 @@ userRouter.put(
             return void sendInternalError(res, result.error);
         }
         res.json(result.status);
-    },
+    }),
 );
 
 // GET /user/mcp-connectors
-userRouter.get("/mcp-connectors", requireAuth, async (_req, res) => {
+userRouter.get("/mcp-connectors", requireAuth, asyncRoute(async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listMcpConnectors(db, userId);
     if (!result.ok) return void sendInternalError(res, result.error);
     res.json(result.connectors);
-});
+}));
 
 // GET /user/mcp-connectors/:connectorId
 userRouter.get(
     "/mcp-connectors/:connectorId",
     requireAuth,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await getMcpConnector(
@@ -356,7 +357,7 @@ userRouter.get(
                 .status(404)
                 .json({ detail: "Connector not found" });
         res.json(result.connector);
-    },
+    }),
 );
 
 // POST /user/mcp-connectors
@@ -364,7 +365,7 @@ userRouter.post(
     "/mcp-connectors",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const name = typeof req.body?.name === "string" ? req.body.name : "";
         const serverUrl =
@@ -391,7 +392,7 @@ userRouter.post(
                 detail: "Connector settings are invalid or the server could not be reached.",
             });
         res.status(201).json(result.connector);
-    },
+    }),
 );
 
 // PATCH /user/mcp-connectors/:connectorId
@@ -399,7 +400,7 @@ userRouter.patch(
     "/mcp-connectors/:connectorId",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const body = req.body ?? {};
@@ -440,7 +441,7 @@ userRouter.patch(
                 detail: "Connector settings are invalid or the server could not be reached.",
             });
         res.json(result.connector);
-    },
+    }),
 );
 
 // DELETE /user/mcp-connectors/:connectorId
@@ -448,7 +449,7 @@ userRouter.delete(
     "/mcp-connectors/:connectorId",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await deleteMcpConnector(
@@ -458,7 +459,7 @@ userRouter.delete(
         );
         if (!result.ok) return void sendInternalError(res, result.error);
         res.status(204).send();
-    },
+    }),
 );
 
 // POST /user/mcp-connectors/:connectorId/oauth/start
@@ -466,7 +467,7 @@ userRouter.post(
     "/mcp-connectors/:connectorId/oauth/start",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const redirectUri = `${backendPublicUrl(req)}/user/mcp-connectors/oauth/callback`;
@@ -489,11 +490,11 @@ userRouter.post(
             ...result.result,
             callbackOrigin: new URL(redirectUri).origin,
         });
-    },
+    }),
 );
 
 // GET /user/mcp-connectors/oauth/callback
-userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
+userRouter.get("/mcp-connectors/oauth/callback", asyncRoute(async (req, res) => {
     const nonce = crypto.randomBytes(16).toString("base64");
     const state = typeof req.query.state === "string" ? req.query.state : "";
     const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -547,14 +548,14 @@ userRouter.get("/mcp-connectors/oauth/callback", async (req, res) => {
                 ),
             );
     }
-});
+}));
 
 // POST /user/mcp-connectors/:connectorId/refresh-tools
 userRouter.post(
     "/mcp-connectors/:connectorId/refresh-tools",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await refreshMcpConnectorTools(
@@ -579,7 +580,7 @@ userRouter.post(
             });
         }
         res.json(result.connector);
-    },
+    }),
 );
 
 // PATCH /user/mcp-connectors/:connectorId/tools/:toolId
@@ -587,7 +588,7 @@ userRouter.patch(
     "/mcp-connectors/:connectorId/tools/:toolId",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const parsed = readBooleanBodyField(req.body, "enabled");
         if (!parsed.ok)
@@ -606,7 +607,7 @@ userRouter.patch(
                 detail: "Connector tool settings could not be updated.",
             });
         res.json(result.connector);
-    },
+    }),
 );
 
 // DELETE /user/account
@@ -614,7 +615,7 @@ userRouter.delete(
     "/account",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const token = res.locals.token as string | undefined;
@@ -622,7 +623,7 @@ userRouter.delete(
         const result = await deleteUserAccount(db, userId, userEmail, token);
         if (!result.ok) return void sendInternalError(res, result.error);
         res.status(204).send();
-    },
+    }),
 );
 
 // DELETE /user/chats
@@ -630,13 +631,13 @@ userRouter.delete(
     "/chats",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await deleteUserChats(db, userId);
         if (!result.ok) return void sendInternalError(res, result.error);
         res.status(204).send();
-    },
+    }),
 );
 
 // DELETE /user/projects
@@ -644,13 +645,13 @@ userRouter.delete(
     "/projects",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await deleteUserProjectsData(db, userId);
         if (!result.ok) return void sendInternalError(res, result.error);
         res.status(204).send();
-    },
+    }),
 );
 
 // DELETE /user/tabular-reviews
@@ -658,13 +659,13 @@ userRouter.delete(
     "/tabular-reviews",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await deleteUserTabularReviews(db, userId);
         if (!result.ok) return void sendInternalError(res, result.error);
         res.status(204).send();
-    },
+    }),
 );
 
 // DELETE /user/memories
@@ -675,12 +676,12 @@ userRouter.delete(
     "/memories",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const result = await deletePrivateMemories(createServerSupabase(), userId);
         if (!result.ok) return void sendInternalError(res, result.error);
         res.status(204).send();
-    },
+    }),
 );
 
 // GET /user/export
@@ -688,7 +689,7 @@ userRouter.get(
     "/export",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -706,7 +707,7 @@ userRouter.get(
             surface: "account",
         });
         res.json(result.data);
-    },
+    }),
 );
 
 // GET /user/chats/export
@@ -714,7 +715,7 @@ userRouter.get(
     "/chats/export",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -732,7 +733,7 @@ userRouter.get(
             surface: "account",
         });
         res.json(result.data);
-    },
+    }),
 );
 
 // GET /user/tabular-reviews/export
@@ -740,7 +741,7 @@ userRouter.get(
     "/tabular-reviews/export",
     requireAuth,
     requireMfaIfEnrolled,
-    async (_req, res) => {
+    asyncRoute(async (_req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
@@ -758,7 +759,7 @@ userRouter.get(
             surface: "account",
         });
         res.json(result.data);
-    },
+    }),
 );
 
 // ---------------------------------------------------------------------------
@@ -775,7 +776,7 @@ userRouter.post(
     "/exports",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const body = (req.body ?? {}) as {
@@ -808,7 +809,7 @@ userRouter.post(
         if (!result.ok)
             return void res.status(500).json({ detail: result.detail });
         res.status(202).json({ export_id: result.exportId });
-    },
+    }),
 );
 
 // GET /user/exports/:exportId — poll until status is "done", then fetch
@@ -817,7 +818,7 @@ userRouter.get(
     "/exports/:exportId",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await getUserExportStatus(
@@ -828,7 +829,7 @@ userRouter.get(
         if (!result.ok)
             return void res.status(404).json({ detail: "Export not found" });
         res.json(result.body);
-    },
+    }),
 );
 
 // GET /user/exports/:exportId/download — stream the finished artifact.
@@ -839,7 +840,7 @@ userRouter.get(
     "/exports/:exportId/download",
     requireAuth,
     requireMfaIfEnrolled,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
         const userId = res.locals.userId as string;
         const db = createServerSupabase();
         const result = await loadUserExportArtifact(
@@ -860,5 +861,7 @@ userRouter.get(
             buildContentDisposition("attachment", result.filename),
         );
         res.send(result.body);
-    },
+    }),
 );
+
+userRouter.use(routerErrorHandler("[user]"));

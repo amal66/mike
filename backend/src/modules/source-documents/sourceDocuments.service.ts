@@ -21,7 +21,26 @@ import {
 export type SourceDocumentResult =
   | { ok: true; document: SourceDocument }
   | { ok: false; kind: "not_found"; detail: string }
+  | { ok: false; kind: "credentials"; detail: string }
   | { ok: false; kind: "error"; error: unknown };
+
+// A missing or rejected CourtListener token is the caller's to fix in Settings,
+// not an upstream outage, so it answers 400 rather than 502 — a 502 sent the
+// user off to check a service that was working fine. courtlistener.ts throws a
+// fixed message when no token is configured and prefixes the upstream status
+// when CourtListener refuses the one it was given; only those markers are read,
+// never the upstream body, which echoes the rejected token back.
+export const COURTLISTENER_CREDENTIAL_DETAIL =
+  "CourtListener rejected the configured API token. Check it in Settings.";
+
+function isCourtlistenerCredentialError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : "";
+  return (
+    message.includes("COURTLISTENER_API_TOKEN must be set") ||
+    message.startsWith("CourtListener error (401") ||
+    message.startsWith("CourtListener error (403")
+  );
+}
 
 // Concurrent requests for the same document by the same user share one
 // upstream fetch; the entry is dropped as soon as that fetch settles.
@@ -42,7 +61,9 @@ export async function getSourceDocument(
   }
 
   try {
-    const settings = await getUserModelSettings(args.userId);
+    // One Supabase client for the whole request: the settings lookup used to
+    // build a second one by omitting `db`.
+    const settings = await getUserModelSettings(args.userId, db);
     const fetchKey = `${args.userId}:${args.documentId}`;
     let request = documentFetches.get(fetchKey);
     if (!request) {
@@ -80,6 +101,13 @@ export async function getSourceDocument(
       }),
     };
   } catch (error) {
+    if (isCourtlistenerCredentialError(error)) {
+      return {
+        ok: false,
+        kind: "credentials",
+        detail: COURTLISTENER_CREDENTIAL_DETAIL,
+      };
+    }
     return { ok: false, kind: "error", error };
   }
 }

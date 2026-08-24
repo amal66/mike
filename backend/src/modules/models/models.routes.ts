@@ -8,6 +8,7 @@
 
 import { Router, type Response } from "express";
 import { requireAuth } from "../../middleware/auth";
+import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase, type Db } from "../../lib/supabase";
 import { sendInternalError } from "../../lib/httpError";
 import {
@@ -53,9 +54,9 @@ async function sendCatalog(
 }
 
 // GET /models/ollama
-modelsRouter.get("/ollama", requireAuth, async (_req, res) => {
+modelsRouter.get("/ollama", requireAuth, asyncRoute(async (_req, res) => {
     res.json({ models: await listOllamaModels() });
-});
+}));
 
 // GET /models/openrouter
 modelsRouter.get("/openrouter", requireAuth, (_req, res) =>
@@ -71,3 +72,5 @@ modelsRouter.get("/vercel", requireAuth, (_req, res) =>
 modelsRouter.get("/opencode-go", requireAuth, (_req, res) =>
     sendCatalog(res, listOpenCodeGoModels),
 );
+
+modelsRouter.use(routerErrorHandler("[models]"));

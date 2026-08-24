@@ -4,8 +4,8 @@ import {
     escapeLikePattern,
     parseQuery,
     queryEvents,
-    accessibleProjectIds,
 } from "../audit.service";
+import { listAccessibleProjectIds } from "../../../lib/access";
 
 // ---------------------------------------------------------------------------
 // csvCell — spreadsheet formula-injection escaping (F3)
@@ -116,14 +116,18 @@ describe("parseQuery", () => {
 });
 
 // ---------------------------------------------------------------------------
-// queryEvents / accessibleProjectIds — visibility scoping
+// queryEvents / listAccessibleProjectIds — visibility scoping
 // ---------------------------------------------------------------------------
 
 /**
  * Chainable Supabase mock.
  *
- * `owned` answers the `projects` lookup (.eq on user_id) and `shared` answers
- * the `project_access_grants` lookup, which is where direct sharing lives.
+ * `owned` answers the personal-projects lookup (.eq on user_id, .is org_id
+ * null) and `shared` answers the `project_access_grants` lookup, which is
+ * where direct sharing lives; lib/access re-reads the granted ids back out of
+ * `projects` to confirm they are personal, which the `.in("id", …)` branch
+ * below answers. The caller belongs to no organization, so `org_members` is
+ * empty and the organization branch never runs.
  */
 function makeDb(
     owned: string[],
@@ -141,12 +145,20 @@ function makeDb(
     } = { eq: [] };
 
     function projectsBuilder() {
+        let rows = () => owned;
         const b: any = {
             select: () => b,
             eq: () => b,
+            is: () => b,
+            in: (column: string, ids: string[]) => {
+                // `.in("id", …)` is the grant re-read; `.in("org_id", …)` is the
+                // organization branch, which this caller never reaches.
+                rows = column === "id" ? () => ids : () => [];
+                return b;
+            },
             then: (resolve: (v: { data: { id: string }[] }) => unknown) =>
                 Promise.resolve({
-                    data: owned.map((id) => ({ id })),
+                    data: rows().map((id) => ({ id })),
                 }).then(resolve),
         };
         return b;
@@ -165,6 +177,16 @@ function makeDb(
                 Promise.resolve({
                     data: shared.map((id) => ({ project_id: id })),
                 }).then(resolve),
+        };
+        return b;
+    }
+
+    function orgMembersBuilder() {
+        const b: any = {
+            select: () => b,
+            eq: () => b,
+            then: (resolve: (v: { data: { org_id: string }[] }) => unknown) =>
+                Promise.resolve({ data: [] }).then(resolve),
         };
         return b;
     }
@@ -217,6 +239,7 @@ function makeDb(
     const db = {
         from(table: string) {
             if (table === "projects") return projectsBuilder();
+            if (table === "org_members") return orgMembersBuilder();
             if (table === "project_access_grants") return grantsBuilder();
             if (table === "user_profiles") return profilesBuilder();
             return auditBuilder();
@@ -248,23 +271,27 @@ describe("queryEvents visibility scoping", () => {
     });
 
     it("de-duplicates owned and shared project ids", async () => {
-        const both = await accessibleProjectIds(
-            makeDb(["p1", "p2"], ["p2", "p3"]).db,
+        const both = await listAccessibleProjectIds(
             "u1",
             "u1@example.com",
+            makeDb(["p1", "p2"], ["p2", "p3"]).db,
         );
         expect([...both].sort()).toEqual(["p1", "p2", "p3"]);
     });
 
     it("looks direct sharing up by normalized email in the grant table", async () => {
         const { db, calls } = makeDb([], ["p-shared"]);
-        await accessibleProjectIds(db, "u1", " U1@Example.com ");
+        await listAccessibleProjectIds("u1", " U1@Example.com ", db);
         expect(calls.grantEmail).toBe("u1@example.com");
     });
 
     it("admits a direct grant holder", async () => {
         const { db } = makeDb([], ["p-granted"]);
-        const visible = await accessibleProjectIds(db, "u1", "u1@example.com");
+        const visible = await listAccessibleProjectIds(
+            "u1",
+            "u1@example.com",
+            db,
+        );
         expect(visible).toContain("p-granted");
     });
 

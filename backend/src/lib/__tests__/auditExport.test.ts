@@ -18,7 +18,10 @@ function makeDb(events: Record<string, unknown>[], error?: { message: string }) 
             ilike: () => b,
             gte: () => b,
             lte: () => b,
-            contains: () => b,
+            // lib/access scopes the personal-project lookup with
+            // .is("org_id", null); the generic builder answers every table.
+            is: () => b,
+            in: () => b,
             order: () => b,
             range: (from: number, to: number) => {
                 ranges.push([from, to]);
@@ -106,7 +109,10 @@ function makeProfileDb(
             ilike: () => b,
             gte: () => b,
             lte: () => b,
-            contains: () => b,
+            // lib/access scopes the personal-project lookup with
+            // .is("org_id", null); the generic builder answers every table.
+            is: () => b,
+            in: () => b,
             order: () => b,
             in: () => {
                 profilesQueried = true;

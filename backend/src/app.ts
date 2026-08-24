@@ -324,4 +324,10 @@ app.get("/manifest-signing-key", (_req, res) => {
   }
 });
 
+// Terminal error handler. Routers mount routerErrorHandler("[tag]") so a
+// failure is attributed to its router in the log; the response is delegated
+// back here, so every router answers with the same body. Anything that escapes
+// a router lands here too, instead of Express's default handler, which would
+// leak the stack trace in a non-production environment. Must stay last: Express
+// only reaches an error handler registered after the middleware that failed.
 app.use(handleUnhandledError);
