@@ -363,7 +363,8 @@ export async function addUploadedVersion(
             pdfStoragePath = pdfKey;
         } catch (err) {
             console.error(
-                `[versions/upload] Office→PDF conversion failed for ${file.originalname}:`,
+                "[versions/upload] Office→PDF conversion failed",
+                { filename: file.originalname },
                 err,
             );
         }
@@ -609,7 +610,8 @@ export async function writeReplacementVersion(
             pdfStoragePath = pdfKey;
         } catch (err) {
             console.error(
-                `[versions/replace] Office→PDF conversion failed for ${file.originalname}:`,
+                "[versions/replace] Office→PDF conversion failed",
+                { filename: file.originalname },
                 err,
             );
         }

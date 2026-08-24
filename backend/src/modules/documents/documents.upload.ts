@@ -103,7 +103,8 @@ export async function createDocumentFromUpload(
                 pdfStoragePath = pdfKey;
             } catch (err) {
                 console.error(
-                    `[upload] Office→PDF conversion failed for ${filename}:`,
+                    "[upload] Office→PDF conversion failed",
+                    { filename },
                     err,
                 );
             }
