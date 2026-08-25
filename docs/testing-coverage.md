@@ -118,7 +118,7 @@ better exercised by the e2e suite.
 ## Ratchet policy
 
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
-statements 35 / branches 29 / functions 37 / lines 36). They are a
+statements 45 / branches 38 / functions 47 / lines 47). They are a
 no-regression ratchet, not a target:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your
