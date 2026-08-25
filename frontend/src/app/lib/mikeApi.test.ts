@@ -106,6 +106,7 @@ import {
     renameTabularChat,
     replaceDocumentVersionFile,
     resolveLibraryFolderPath,
+    respondMcpPendingCall,
     resolveProjectFolderPath,
     resolveDocumentEdit,
     saveApiKey,
@@ -2014,6 +2015,24 @@ describe("thin endpoint wrappers", () => {
             url: "/user/mcp-connectors/m1/tools/t1",
             method: "PATCH",
             body: { enabled: true },
+        },
+        {
+            // The approve/deny decision is the whole payload of the
+            // human-in-the-loop confirmation, so both arms are pinned: a
+            // wrapper that hard-coded one verb would still satisfy a
+            // single-case test.
+            name: "respondMcpPendingCall (approve)",
+            call: () => respondMcpPendingCall("pending-1", "approve"),
+            url: "/user/mcp-pending-calls/pending-1",
+            method: "POST",
+            body: { decision: "approve" },
+        },
+        {
+            name: "respondMcpPendingCall (deny)",
+            call: () => respondMcpPendingCall("pending-1", "deny"),
+            url: "/user/mcp-pending-calls/pending-1",
+            method: "POST",
+            body: { decision: "deny" },
         },
         // Projects
         {
