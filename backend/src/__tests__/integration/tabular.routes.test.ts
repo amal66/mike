@@ -28,11 +28,16 @@ const {
 // ---------------------------------------------------------------------------
 type QueryResult = { data: unknown; error: unknown };
 
+// A table entry may be a queue of results: each query consumes the next one,
+// and the last repeats (same idiom as user.routes.test). Lets a test drive a
+// route that hits the SAME table twice with different outcomes — e.g. DELETE
+// /tabular-review/:reviewId, which now reads the row to derive the caller's
+// role before deleting it.
 let supabaseState: {
     rpc: QueryResult;
     rpcCalls: { fn: string; args: unknown }[];
     operations: string[];
-    tables: Record<string, QueryResult>;
+    tables: Record<string, QueryResult | QueryResult[]>;
     inserts: { table: string; payload: unknown }[];
     updates: { table: string; payload: unknown }[];
 };
@@ -50,20 +55,25 @@ function resetSupabaseState() {
 resetSupabaseState();
 
 function resultForTable(table: string): QueryResult {
-    const result = supabaseState.tables[table] ?? { data: null, error: null };
+    const entry = supabaseState.tables[table];
+    const resolved = Array.isArray(entry)
+        ? entry.length > 1
+            ? (entry.shift() as QueryResult)
+            : (entry[0] ?? { data: null, error: null })
+        : (entry ?? { data: null, error: null });
     if (
         table === "tabular_reviews" &&
-        result.data &&
-        typeof result.data === "object" &&
-        !Array.isArray(result.data) &&
-        !("model" in result.data)
+        resolved.data &&
+        typeof resolved.data === "object" &&
+        !Array.isArray(resolved.data) &&
+        !("model" in resolved.data)
     ) {
         return {
-            ...result,
-            data: { ...result.data, model: "claude-sonnet-5" },
+            ...resolved,
+            data: { ...resolved.data, model: "claude-sonnet-5" },
         };
     }
-    return result;
+    return resolved;
 }
 
 function makeQuery(table: string) {
@@ -714,9 +724,25 @@ describe("tabular.routes", () => {
     });
 
     // ── DELETE /tabular-review/:reviewId ──────────────────────────────────
+    // Pins the `container.delete` row of the matrix on the review container:
+    // owner tier deletes, everything below it is refused. The allow case is
+    // the one the old `.eq("user_id", userId)` filter got wrong.
     describe("DELETE /tabular-review/:reviewId", () => {
-        it("returns 204 on success", async () => {
-            supabaseState.tables.tabular_reviews = { data: null, error: null };
+        const seedReview = (rows: QueryResult[]) => {
+            supabaseState.tables.tabular_reviews = rows;
+        };
+        const ownedRow = {
+            data: { id: "r1", user_id: "u1", project_id: "p1" },
+            error: null,
+        };
+
+        it("returns 204 when the review's own owner deletes it", async () => {
+            seedReview([ownedRow, { data: null, error: null }]);
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isOwner: true,
+                projectRole: "owner",
+            });
 
             const res = await request(app)
                 .delete("/tabular-review/r1")
@@ -725,11 +751,93 @@ describe("tabular.routes", () => {
             expect(res.status).toBe(204);
         });
 
+        it("returns 204 when the project owner deletes a member's review", async () => {
+            // Review row belongs to someone else, but the caller owns the
+            // project it lives in — ensureReviewAccess hands back "owner", so
+            // container.delete passes and the delete is NOT scoped to the
+            // caller's user_id (the old filter made this a silent no-op).
+            seedReview([
+                {
+                    data: { id: "r1", user_id: "member", project_id: "p1" },
+                    error: null,
+                },
+                { data: null, error: null },
+            ]);
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isOwner: false,
+                projectRole: "owner",
+            });
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(204);
+        });
+
+        it.each(["manager", "editor", "viewer"] as const)(
+            "returns 403 when a %s tries to delete the review",
+            async (projectRole) => {
+                seedReview([
+                    {
+                        data: { id: "r1", user_id: "other", project_id: "p1" },
+                        error: null,
+                    },
+                    { data: null, error: null },
+                ]);
+                ensureReviewAccess.mockResolvedValue({
+                    ok: true,
+                    isOwner: false,
+                    projectRole,
+                });
+
+                const res = await request(app)
+                    .delete("/tabular-review/r1")
+                    .set(...AUTH);
+
+                expect(res.status).toBe(403);
+                expect(res.body.detail).toBe(
+                    "You do not have permission to delete this review",
+                );
+                // Refused before any destructive statement ran.
+                expect(supabaseState.operations).toEqual(["from:tabular_reviews"]);
+            },
+        );
+
+        it("returns 404 when the review is missing", async () => {
+            seedReview([{ data: null, error: null }]);
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Review not found");
+        });
+
+        it("returns 404 when the caller has no access at all", async () => {
+            seedReview([ownedRow, { data: null, error: null }]);
+            ensureReviewAccess.mockResolvedValue({ ok: false });
+
+            const res = await request(app)
+                .delete("/tabular-review/r1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Review not found");
+        });
+
         it("returns 500 when the delete errors", async () => {
-            supabaseState.tables.tabular_reviews = {
-                data: null,
-                error: { message: "delete failed" },
-            };
+            seedReview([
+                ownedRow,
+                { data: null, error: { message: "delete failed" } },
+            ]);
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isOwner: true,
+                projectRole: "owner",
+            });
 
             const res = await request(app)
                 .delete("/tabular-review/r1")

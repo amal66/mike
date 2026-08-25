@@ -823,10 +823,31 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
 // DELETE /projects/:projectId
 projectsRouter.delete("/:projectId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
   const { projectId } = req.params;
   const db = createServerSupabase();
+  // Deleting a project is the destructive end of the ladder, so it declares
+  // `container.delete` like every other gate on this branch instead of
+  // leaning on the cascade helper's `.eq("user_id", …)` filter to imply the
+  // rule. Same verdict, stated where a reader looks for it — and the two
+  // failure modes stop being one indistinguishable 404: a stranger still
+  // gets "not found", while a manager/editor/viewer who CAN see the project
+  // is told they were refused.
+  const access = await checkProjectAccess(projectId, userId, userEmail, db);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+  if (!can(access.projectRole, "container.delete"))
+    return void res
+      .status(403)
+      .json({ detail: "You do not have permission to delete this project" });
   try {
-    const deletedCount = await deleteUserProjects(db, userId, [projectId]);
+    // Drive the cascade from the row's owner rather than the caller: the
+    // capability check above is now what authorises the delete, so the
+    // helper's owner scoping is bookkeeping (which user's content tree to
+    // walk), not the access rule.
+    const deletedCount = await deleteUserProjects(db, access.project.user_id, [
+      projectId,
+    ]);
     if (deletedCount === 0)
       return void res.status(404).json({ detail: "Project not found" });
     res.status(204).send();

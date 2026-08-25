@@ -947,13 +947,35 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
 // DELETE /tabular-review/:reviewId
 tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
     const db = createServerSupabase();
+    // container.delete keeps review deletion at the top of the ladder: the
+    // review's own owner, or the owner of the project it lives in (who could
+    // already delete the whole project, review included). The old
+    // `.eq("user_id", userId)` filter made that project owner's DELETE a
+    // silent 204 no-op — the row survived and the UI showed it again on the
+    // next load. Resolving the role first also lets managers/editors/viewers
+    // learn they were refused (403) instead of guessing at a 404.
+    const { data: review, error: reviewError } = await db
+        .from("tabular_reviews")
+        .select("id, user_id, project_id, shared_with, org_id")
+        .eq("id", reviewId)
+        .single();
+    if (reviewError || !review)
+        return void res.status(404).json({ detail: "Review not found" });
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Review not found" });
+    if (!can(access.projectRole, "container.delete"))
+        return void res.status(403).json({
+            detail: "You do not have permission to delete this review",
+        });
+
     const { error } = await db
         .from("tabular_reviews")
         .delete()
-        .eq("id", reviewId)
-        .eq("user_id", userId);
+        .eq("id", reviewId);
     if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });

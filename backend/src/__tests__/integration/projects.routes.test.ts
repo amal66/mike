@@ -946,6 +946,9 @@ describe("projects.routes", () => {
     });
 
     // ── DELETE /projects/:projectId ───────────────────────────────────────
+    // Pins the `container.delete` row of the matrix on the project container:
+    // owner tier deletes, everything below it is refused with a 403 (a
+    // stranger, who fails the access check outright, still gets 404).
     describe("DELETE /projects/:projectId", () => {
         it("returns 404 when nothing was deleted", async () => {
             deleteUserProjects.mockResolvedValue(0);
@@ -958,7 +961,7 @@ describe("projects.routes", () => {
             expect(res.body.detail).toBe("Project not found");
         });
 
-        it("returns 204 when the project is deleted", async () => {
+        it("returns 204 when the owner deletes the project", async () => {
             deleteUserProjects.mockResolvedValue(1);
 
       const res = await request(app)
@@ -966,10 +969,47 @@ describe("projects.routes", () => {
         .set(...AUTH);
 
             expect(res.status).toBe(204);
-            // Signature is deleteUserProjects(db, userId, [projectId]).
+            // Signature is deleteUserProjects(db, ownerUserId, [projectId]) —
+            // the cascade walks the ROW OWNER's content tree; the capability
+            // check, not this argument, is what authorised the call.
       expect(deleteUserProjects).toHaveBeenCalledWith(expect.anything(), "u1", [
         "p1",
       ]);
+        });
+
+        it.each(["manager", "editor", "viewer"] as const)(
+            "returns 403 when a %s tries to delete the project",
+            async (projectRole) => {
+                checkProjectAccess.mockResolvedValue({
+                    ok: true,
+                    isOwner: false,
+                    projectRole,
+                    project: { id: "p1", user_id: "owner", shared_with: null },
+                });
+
+                const res = await request(app)
+                    .delete("/projects/p1")
+                    .set(...AUTH);
+
+                expect(res.status).toBe(403);
+                expect(res.body.detail).toBe(
+                    "You do not have permission to delete this project",
+                );
+                // Refused before the cascade could run.
+                expect(deleteUserProjects).not.toHaveBeenCalled();
+            },
+        );
+
+        it("returns 404 when the caller has no access at all", async () => {
+            checkProjectAccess.mockResolvedValue({ ok: false });
+
+            const res = await request(app)
+                .delete("/projects/p1")
+                .set(...AUTH);
+
+            expect(res.status).toBe(404);
+            expect(res.body.detail).toBe("Project not found");
+            expect(deleteUserProjects).not.toHaveBeenCalled();
         });
 
         it("returns 500 when deletion throws", async () => {
