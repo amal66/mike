@@ -23,6 +23,7 @@ import {
     createPendingMcpToolCall,
     markMcpToolCallExecuted,
     markMcpToolCallFailed,
+    MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS,
     waitForMcpApprovalDecision,
 } from "./approvals";
 import {
@@ -586,6 +587,15 @@ export async function executeMcpToolCall(
             pendingId: string,
             decision: "approved" | "denied" | "expired",
         ) => void | Promise<void>;
+        /**
+         * Called on a fixed cadence for the whole duration of the approval
+         * wait. The chat stream uses it to put an SSE comment frame on the
+         * wire so the paused turn does not read as an idle (and therefore
+         * collapsible) connection. Kept as a callback rather than a writer so
+         * this module stays transport-agnostic; a caller that is not
+         * streaming simply omits it.
+         */
+        onApprovalWaitKeepAlive?: () => void;
         approvalWaitMs?: number;
     } = {},
 ): Promise<{
@@ -636,11 +646,28 @@ export async function executeMcpToolCall(
             arguments_json: JSON.stringify(args, null, 2),
             expires_at: pending.expires_at,
         });
-        const decision = await waitForMcpApprovalDecision(
-            pending.id,
-            db,
-            options.approvalWaitMs,
-        );
+        // Nothing is written to the stream between the prompt above and the
+        // human's click, so the keep-alive ticker covers exactly that window
+        // and is cleared in `finally` — including on a throwing poll — so a
+        // failed wait can never leave a timer writing to a dead stream.
+        let keepAlive: ReturnType<typeof setInterval> | null = null;
+        let decision: "approved" | "denied" | "expired";
+        try {
+            if (options.onApprovalWaitKeepAlive) {
+                const tick = options.onApprovalWaitKeepAlive;
+                keepAlive = setInterval(
+                    () => tick(),
+                    MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS,
+                );
+            }
+            decision = await waitForMcpApprovalDecision(
+                pending.id,
+                db,
+                options.approvalWaitMs,
+            );
+        } finally {
+            if (keepAlive) clearInterval(keepAlive);
+        }
         await options.onApprovalResolved?.(pending.id, decision);
 
         if (decision !== "approved") {

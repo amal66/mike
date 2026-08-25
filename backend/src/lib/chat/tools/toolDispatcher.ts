@@ -9,7 +9,11 @@ import {
   type CaseCitationEvent,
   type CourtlistenerToolEvent,
 } from "./courtlistenerTools";
-import { executeMcpToolCall, type McpToolEvent } from "../../mcpConnectors";
+import {
+  executeMcpToolCall,
+  MCP_APPROVAL_KEEP_ALIVE_FRAME,
+  type McpToolEvent,
+} from "../../mcpConnectors";
 import { createServerSupabase } from "../../supabase";
 import {
   type DocStore,
@@ -455,6 +459,15 @@ export async function runToolCalls(
                 expires_at: pending.expires_at,
               })}\n\n`,
             );
+          },
+          // The turn is now parked on a human for up to 90s with no data
+          // frames at all. These SSE comment lines are the only bytes that
+          // flow in that window: they keep proxies from idling the response
+          // out (the client's reader skips any line not starting with
+          // "data:"), and on a half-open peer they are what turns the silence
+          // into a real write error instead of a hang.
+          onApprovalWaitKeepAlive: () => {
+            write(MCP_APPROVAL_KEEP_ALIVE_FRAME);
           },
           onApprovalResolved: (pendingId, decision) => {
             write(

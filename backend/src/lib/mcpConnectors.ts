@@ -9,6 +9,7 @@ export type {
 export { McpOAuthRequiredError } from "./mcp/oauth";
 export {
     decideMcpPendingToolCall,
+    MCP_APPROVAL_KEEP_ALIVE_FRAME,
     type McpApprovalDecision,
     type McpDecisionOutcome,
 } from "./mcp/approvals";

@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { decideMcpPendingToolCall } from "../approvals";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+    decideMcpPendingToolCall,
+    MCP_APPROVAL_KEEP_ALIVE_FRAME,
+    MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS,
+} from "../approvals";
 import { buildUserMcpTools, executeMcpToolCall } from "../servers";
 import type { Db } from "../types";
 
@@ -270,5 +274,124 @@ describe("stale requires_confirmation cache cannot bypass the approval gate", ()
         expect(tools[0].function.description).toContain(
             "pauses for the user's explicit approval",
         );
+    });
+});
+
+// A confirmation pause is the one moment in a chat turn when the server has
+// nothing to say: the model is blocked on a human for up to 90 seconds and no
+// data frames flow. An idle response is exactly what a proxy, load balancer,
+// or CDN reaps, and reaping it kills the confirmation the user is still
+// looking at. So the pause is covered by SSE comment frames.
+describe("the approval pause keeps the SSE stream alive", () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it("emits keep-alives on a cadence while the call is pending and stops once it resolves", async () => {
+        vi.useFakeTimers();
+        const tables = makeTables();
+        const db = createFakeDb(tables);
+        let keepAlives = 0;
+        let pendingId = "";
+
+        const call = executeMcpToolCall(
+            "user-1",
+            "mcp_test_delete_case_abc",
+            { case_id: 42 },
+            db,
+            {
+                // The user is thinking; nothing decides the row yet.
+                onApprovalRequired: (pending) => {
+                    pendingId = pending.id;
+                },
+                onApprovalWaitKeepAlive: () => {
+                    keepAlives += 1;
+                },
+                approvalWaitMs: 90_000,
+            },
+        );
+
+        // Just before the first tick: still silent, by design — the frames
+        // are a cadence, not a burst.
+        await vi.advanceTimersByTimeAsync(
+            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS - 1_000,
+        );
+        expect(keepAlives).toBe(0);
+
+        // Three intervals of human deliberation, three frames on the wire.
+        await vi.advanceTimersByTimeAsync(
+            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS * 3,
+        );
+        expect(keepAlives).toBe(3);
+        expect(tables.user_mcp_pending_tool_calls[0].status).toBe("pending");
+
+        // The click lands. The ticker is tied to the wait, so it must stop
+        // with it...
+        await decideMcpPendingToolCall("user-1", pendingId, "deny", db);
+        await vi.advanceTimersByTimeAsync(2_000);
+        const { content } = await call;
+        expect(content).toContain("declined");
+        const atResolution = keepAlives;
+
+        // ...and never write again to a stream the turn has moved past.
+        await vi.advanceTimersByTimeAsync(
+            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS * 4,
+        );
+        expect(keepAlives).toBe(atResolution);
+    });
+
+    it("clears the ticker even when the wait itself throws", async () => {
+        vi.useFakeTimers();
+        const tables = makeTables();
+        const db = createFakeDb(tables);
+        // Arm a db failure only once the prompt is out — i.e. exactly at the
+        // first status poll, with the ticker already running. A leaked
+        // interval here would keep writing to a stream whose turn has already
+        // blown up.
+        const realFrom = db.from.bind(db);
+        let waiting = false;
+        (db as unknown as { from: Db["from"] }).from = ((table: string) => {
+            if (waiting && table === "user_mcp_pending_tool_calls") {
+                throw new Error("poll exploded");
+            }
+            return realFrom(table);
+        }) as Db["from"];
+        let keepAlives = 0;
+
+        await expect(
+            executeMcpToolCall(
+                "user-1",
+                "mcp_test_delete_case_abc",
+                { case_id: 42 },
+                db,
+                {
+                    onApprovalRequired: () => {
+                        waiting = true;
+                    },
+                    onApprovalWaitKeepAlive: () => {
+                        keepAlives += 1;
+                    },
+                    approvalWaitMs: 90_000,
+                },
+            ),
+        ).rejects.toThrow("poll exploded");
+
+        await vi.advanceTimersByTimeAsync(
+            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS * 3,
+        );
+        expect(keepAlives).toBe(0);
+    });
+
+    it("writes an SSE comment, which every reader in this repo drops", () => {
+        // The frame's whole job is to be invisible: readers skip any line not
+        // starting with "data:". If this ever became a data frame it would
+        // land in the transcript as an unknown event.
+        expect(MCP_APPROVAL_KEEP_ALIVE_FRAME.startsWith(":")).toBe(true);
+        expect(MCP_APPROVAL_KEEP_ALIVE_FRAME.endsWith("\n\n")).toBe(true);
+        expect(MCP_APPROVAL_KEEP_ALIVE_FRAME).not.toContain("data:");
+        // Must comfortably beat the shortest idle timeout we can sit behind
+        // (nginx's proxy_read_timeout and ELB's idle timeout both default to
+        // 60s; 30s is a common hardened setting).
+        expect(MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS).toBeLessThan(30_000);
     });
 });
