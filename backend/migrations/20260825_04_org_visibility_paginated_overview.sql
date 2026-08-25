@@ -1,4 +1,4 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- Org-membership visibility in the PAGINATED tabular-reviews overview —
 -- the overload the API actually calls.
@@ -12,7 +12,7 @@
 -- parameters match the RPC call. The backend route always passes all
 -- nine named arguments (see lib/tabularReviewsOverview.ts), so only the
 -- 9-argument overload is ever executed by the API. That is why
--- 20260821_03 left the tabular overviews out: patching only a legacy
+-- 20260825_03 left the tabular overviews out: patching only a legacy
 -- overload would be a no-op for the API, and org-shared reviews would
 -- stay invisible in list views even though the detail endpoints (which
 -- go through access.ts) allow them.
@@ -27,7 +27,7 @@
 --     wrapper it already is on main (20260726_01), so there is a single
 --     source of truth for the predicate.
 --
--- As in 20260821_03: org membership grants visibility, not ownership
+-- As in 20260825_03: org membership grants visibility, not ownership
 -- (is_owner still means user_id = p_user_id), and — per 20260813_01's
 -- convention — RPC parameters stay text while the bodies cast uuid
 -- columns at the database boundary.

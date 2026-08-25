@@ -1,9 +1,9 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- Port org-membership visibility onto the two filter-options RPCs from the
 -- 20260812_01 read-model batch.
 --
--- 20260821_06 made the paginated list/ids/summary RPCs org-aware, but the
+-- 20260825_06 made the paginated list/ids/summary RPCs org-aware, but the
 -- dropdown-option companions that ship alongside them were missed:
 --   * get_project_filter_options — feeds the Practice and Owner dropdowns
 --     above the projects table
@@ -15,7 +15,7 @@
 -- Owner filter and its practice never appears in the Practice filter — rows
 -- you can see but cannot filter to.
 --
--- The arms below are copied verbatim from the 20260821_06 predicates so the
+-- The arms below are copied verbatim from the 20260825_06 predicates so the
 -- option set and the list are computed from the same visible set. In the
 -- workflows RPC the org rows are tagged source='shared', matching the
 -- overview's bucketing decision (shared-with-me and shared-via-my-org are one

@@ -1,4 +1,4 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- DB-level guard for the "an organization must keep at least one owner"
 -- invariant.

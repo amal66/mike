@@ -1,10 +1,10 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- Port org-membership visibility onto the paginated / bulk-ids / summary
 -- read-models that postdate the organizations branch.
 --
--- 20260821_03 added the org visibility arm to the overview RPCs as they
--- existed when the org feature was written; 20260821_04/05 covered the
+-- 20260825_03 added the org visibility arm to the overview RPCs as they
+-- existed when the org feature was written; 20260825_04/05 covered the
 -- paginated tabular overview and its ids companion. Since then, main grew a
 -- second generation of list read-models (20260807_01 pagination overloads,
 -- 20260812_01 summaries/ids) — and, like every Postgres overload, they are

@@ -1,4 +1,4 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- Multi-tenant organizations + RBAC (data backfill).
 --

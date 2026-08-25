@@ -38,7 +38,7 @@ function isUniqueViolation(error: DbError): boolean {
 }
 
 /**
- * The org_members_protect_last_owner trigger (20260821_08) closes the
+ * The org_members_protect_last_owner trigger (20260825_08) closes the
  * read-then-act race on last-owner protection at the DB level; when it
  * fires, translate its 23514 into the same `last_owner` result the
  * sequential in-process check produces.

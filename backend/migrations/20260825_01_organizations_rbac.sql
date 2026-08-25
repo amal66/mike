@@ -1,4 +1,4 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- Multi-tenant organizations + RBAC (schema).
 --
@@ -23,7 +23,7 @@
 --   * `user_id` remains the hard ON DELETE CASCADE anchor, so account deletion
 --     still works exactly as before — dropping an org must never orphan-delete
 --     a user's rows, hence SET NULL rather than CASCADE here.
--- The backfill migration (20260821_02) populates org_id for existing rows.
+-- The backfill migration (20260825_02) populates org_id for existing rows.
 --
 -- RLS: every new table gets `enable row level security` + an explicit revoke of
 -- anon/authenticated, so direct client roles get nothing. The API runs with the

@@ -1,4 +1,4 @@
--- Migration date: 2026-08-21
+-- Migration date: 2026-08-25
 
 -- Mirror the org-membership visibility branch into
 -- get_tabular_review_ids_overview.
@@ -12,8 +12,8 @@
 -- warning: if the access rules in get_tabular_reviews_overview's
 -- visible_reviews CTE ever change, mirror the change here too.
 --
--- The organizations work (20260821_03 and, for the paginated overload,
--- 20260821_04) changed exactly those rules — a third visibility branch,
+-- The organizations work (20260825_03 and, for the paginated overload,
+-- 20260825_04) changed exactly those rules — a third visibility branch,
 -- "rows tagged with an org the caller belongs to", alongside "row
 -- owner" and "shared_with email" — but this RPC was never updated, in
 -- the migration or in schema.sql. The symptom is subtle: an org member

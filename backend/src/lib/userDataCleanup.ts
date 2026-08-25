@@ -257,7 +257,7 @@ export async function deleteUserOrganizations(db: Db, userId: string) {
         // nobody else is left (the cascade then removes the membership).
         // Ordering matters twice over — it never leaves a window where the
         // org exists ownerless, and the org_members_protect_last_owner
-        // trigger (20260821_08) would reject deleting a sole owner of a
+        // trigger (20260825_08) would reject deleting a sole owner of a
         // still-existing org.
         if (m.role === "owner") {
             const { data: otherOwners } = await db
