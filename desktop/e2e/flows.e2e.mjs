@@ -42,18 +42,15 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  completeOnboardingIfRequired,
+  dismissFirstRunOverlay,
+  packagedAppBinary,
+  signUpThroughUi,
+} from "./helpers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const APP_BINARY = path.join(
-  here,
-  "..",
-  "dist",
-  "mac-arm64",
-  "Mike.app",
-  "Contents",
-  "MacOS",
-  "Mike",
-);
+const APP_BINARY = packagedAppBinary(path.join(here, ".."));
 const ARTIFACTS = path.join(here, "artifacts");
 const SERVER_URL = (process.env.MIKE_E2E_URL ?? "http://localhost:3000").replace(
   /\/$/,
@@ -219,18 +216,15 @@ try {
       await page.goto(`${SERVER_URL}/`);
     }
     await page.waitForURL(/\/login/, { timeout: 15_000 });
-    await page.getByRole("link", { name: "Sign up" }).click();
-    await page.waitForURL(/\/signup/, { timeout: 15_000 });
-    await page.getByPlaceholder("Your name").fill("Desktop Flows E2E");
-    await page.getByPlaceholder("Your organisation").fill("Mike Desktop CI");
-    await page.getByPlaceholder("Enter your email").fill(EMAIL);
-    await page
-      .getByPlaceholder("Create a password (min. 6 characters)")
-      .fill(PASSWORD);
-    await page.getByPlaceholder("Confirm your password").fill(PASSWORD);
-    await page.locator('button[type="submit"]').click();
+    await signUpThroughUi(page, { email: EMAIL, password: PASSWORD });
     await page.waitForURL((url) => !/\/(login|signup)/.test(url.href), {
       timeout: 30_000,
+    });
+    // Signup hands off to the two-step onboarding wizard; the sidebar only
+    // exists on the other side of it.
+    await completeOnboardingIfRequired(page, {
+      name: "Desktop Flows E2E",
+      organisation: "Mike Desktop CI",
     });
     await page
       .getByRole("button", { name: "Assistant", exact: true })
@@ -238,27 +232,7 @@ try {
       .waitFor({ timeout: 20_000 });
 
     // Dismiss any first-run overlay (welcome / API-key modal).
-    for (let i = 0; i < 5; i++) {
-      const overlay = page.locator("div.fixed.inset-0").last();
-      if (!(await overlay.isVisible().catch(() => false))) break;
-      let clicked = false;
-      for (const name of [
-        /skip/i,
-        /later/i,
-        /got it/i,
-        /continue/i,
-        /close/i,
-      ]) {
-        const btn = overlay.getByRole("button", { name }).first();
-        if (await btn.isVisible().catch(() => false)) {
-          await btn.click();
-          clicked = true;
-          break;
-        }
-      }
-      if (!clicked) await page.keyboard.press("Escape");
-      await page.waitForTimeout(700);
-    }
+    await dismissFirstRunOverlay(page);
     await shot(page, "flows-01-signed-in");
   });
 

@@ -1,7 +1,8 @@
 // End-to-end proof that the packaged Mike.app hosts the real product against
-// a real local stack: launches dist/mac-arm64/Mike.app with a debugging port,
-// drives it with Playwright over CDP (the shell's window IS a Chromium page),
-// signs up a fresh user, creates a project, and screenshots each stage.
+// a real local stack: launches the packaged Mike.app (dist/mac-arm64 on Apple
+// silicon, dist/mac on Intel) with a debugging port, drives it with Playwright
+// over CDP (the shell's window IS a Chromium page), signs up and onboards a
+// fresh user, creates a project, and screenshots each stage.
 //
 // Prereqs: the docker-compose stack is up and the app has been packaged
 // (npm run dist). Run from desktop/:
@@ -23,18 +24,15 @@ import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  completeOnboardingIfRequired,
+  dismissFirstRunOverlay,
+  packagedAppBinary,
+  signUpThroughUi,
+} from "./helpers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const APP_BINARY = path.join(
-  here,
-  "..",
-  "dist",
-  "mac-arm64",
-  "Mike.app",
-  "Contents",
-  "MacOS",
-  "Mike",
-);
+const APP_BINARY = packagedAppBinary(path.join(here, ".."));
 const ARTIFACTS = path.join(here, "artifacts");
 // Where the app under test points. Trailing slash stripped so `${SERVER_URL}/x`
 // composes cleanly.
@@ -125,46 +123,30 @@ try {
   console.log("✓ shell connected; anonymous user routed to /login");
   await shot(page, "01-login");
 
-  // 2. Sign up a fresh user through the product UI (local stack autoconfirms).
-  await page.getByRole("link", { name: "Sign up" }).click();
-  await page.waitForURL(/\/signup/, { timeout: 15_000 });
-  await page.getByPlaceholder("Your name").fill("Desktop E2E");
-  await page.getByPlaceholder("Your organisation").fill("Mike Desktop CI");
-  await page.getByPlaceholder("Enter your email").fill(EMAIL);
-  await page
-    .getByPlaceholder("Create a password (min. 6 characters)")
-    .fill(PASSWORD);
-  await page.getByPlaceholder("Confirm your password").fill(PASSWORD);
-  await page.locator('button[type="submit"]').click();
+  // 2. Sign up a fresh user through the product UI (local stack autoconfirms),
+  //    then walk the two-step onboarding wizard signup now hands off to.
+  await signUpThroughUi(page, { email: EMAIL, password: PASSWORD });
   // URL change alone can lie (a failed signup can still bounce through "/") —
-  // authenticated is when the app sidebar renders.
+  // signup succeeded is when we're off the auth pages entirely...
   await page.waitForURL((url) => !/\/(login|signup)/.test(url.href), {
     timeout: 30_000,
   });
+  await completeOnboardingIfRequired(page, {
+    name: "Desktop E2E",
+    organisation: "Mike Desktop CI",
+  });
+  // ...and authenticated is when the app sidebar renders. Onboarding's own
+  // shell has no sidebar, so this assertion only passes once the wizard has
+  // actually released us into the product.
   await page
     .getByRole("button", { name: "Assistant", exact: true })
     .first()
     .waitFor({ timeout: 20_000 });
-  console.log(`✓ signed up + auto-signed-in as ${EMAIL}`);
+  console.log(`✓ signed up + onboarded + auto-signed-in as ${EMAIL}`);
   await shot(page, "02-signed-in");
 
-  // 2b. Dismiss any first-run overlay (welcome / API-key modal). Try its own
-  //     dismiss affordances first, then Escape; give up after a few rounds.
-  for (let i = 0; i < 5; i++) {
-    const overlay = page.locator("div.fixed.inset-0").last();
-    if (!(await overlay.isVisible().catch(() => false))) break;
-    let clicked = false;
-    for (const name of [/skip/i, /later/i, /got it/i, /continue/i, /close/i]) {
-      const btn = overlay.getByRole("button", { name }).first();
-      if (await btn.isVisible().catch(() => false)) {
-        await btn.click();
-        clicked = true;
-        break;
-      }
-    }
-    if (!clicked) await page.keyboard.press("Escape");
-    await page.waitForTimeout(700);
-  }
+  // 2b. Dismiss any first-run overlay (welcome / API-key modal).
+  await dismissFirstRunOverlay(page);
 
   // 3. Create a project through the real UI (current design: the header's
   //    "New project" icon button opens a wizard — name → Next → optional
