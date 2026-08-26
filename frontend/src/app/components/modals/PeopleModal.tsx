@@ -92,11 +92,11 @@ const ROLE_SELECT_CLASS = `h-6 rounded-full px-2 text-xs text-gray-700 ${LIQUID_
  * add, re-role and remove recipients.
  *
  * On projects each recipient carries an explicit role, and the roster reads
- * the grant list rather than deriving every direct share as a full editor
- * from a roleless `shared_with` array. Grants are addressed by email and are
- * independent of organization membership, which is what lets a firm hand one
- * matter to outside counsel as a viewer without letting them into the
- * organization.
+ * the grant list rather than deriving every direct share as a full
+ * collaborator from a roleless `shared_with` array. Grants are addressed by
+ * email and are independent of organization membership, which is what lets a
+ * firm hand one matter to outside counsel as a viewer without letting them
+ * into the organization.
  */
 export function PeopleModal({
     open,

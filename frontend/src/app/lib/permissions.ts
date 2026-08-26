@@ -4,12 +4,13 @@
 // instead of offering actions that fail.
 //
 // There are exactly three project roles and exactly two organization roles,
-// and they are the same words the user sees. An earlier draft of this file
-// carried a four-tier project ladder (owner/manager/editor/viewer) that had to
-// be translated into different words again for organizations (owner/admin/
-// member); nothing in the product needed the extra tiers, and the translation
-// was the reason a viewer could be told "manager-only action" about a project
-// whose managers were called something else on the settings page.
+// and they are the same words the user sees. [retired-vocabulary] An earlier
+// draft of this file carried a four-tier project ladder (owner/manager/
+// editor/viewer) that had to be translated into different words again for
+// organizations (owner/admin/member); nothing in the product needed the extra
+// tiers, and the translation was the reason a viewer could be told
+// "manager-only action" about a project whose managers were called something
+// else on the settings page. [/retired-vocabulary]
 
 export type ProjectRole = "admin" | "member" | "viewer";
 

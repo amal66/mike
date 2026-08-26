@@ -350,7 +350,7 @@ export function TRView({ reviewId, projectId }: Props) {
 
     async function handleAddDocuments(newDocs: Document[]) {
         // Changing the review's document set is a structure edit server-side
-        // (PATCH document_ids 403s below manager) — same gate as columns.
+        // (PATCH document_ids 403s below member) — same gate as columns.
         if (!requireStructure("edit the document set")) return;
         const toAdd = newDocs.filter(
             (d) => !documents.some((existing) => existing.id === d.id),
@@ -379,7 +379,7 @@ export function TRView({ reviewId, projectId }: Props) {
     async function handleDropReviewFiles(files: File[]) {
         if (files.length === 0) return;
         // The drop path uploads first and attaches after; without this gate
-        // an editor's upload succeeds and the attach PATCH 403s, leaving an
+        // a viewer's upload succeeds and the attach PATCH 403s, leaving an
         // orphaned document. Mirror the DocTable drop gate, at the tier the
         // attach actually requires.
         if (!requireStructure("add documents to this review")) return;
@@ -893,7 +893,8 @@ export function TRView({ reviewId, projectId }: Props) {
     }
 
     async function handleDeleteDocuments() {
-        // Removing documents deletes their cells — structural, manager+.
+        // Removing documents deletes their cells — member tier, like every
+        // other reshaping of the review.
         if (!requireStructure("remove documents from this review")) return;
         const rowIdsToDelete = [...selectedRowIds];
         if (rowIdsToDelete.length === 0) return;
@@ -1302,10 +1303,9 @@ export function TRView({ reviewId, projectId }: Props) {
                                         <DocumentUploadMenu
                                             onSavedFiles={() => {
                                                 // Same pre-modal gate as
-                                                // openNewReview: stop
-                                                // non-editors before the
-                                                // modal, not after a doomed
-                                                // submit.
+                                                // openNewReview: stop viewers
+                                                // before the modal, not after
+                                                // a doomed submit.
                                                 if (
                                                     !requireStructure(
                                                         "edit the document set",
@@ -1771,7 +1771,8 @@ export function TRView({ reviewId, projectId }: Props) {
                     review?.title || "Untitled Review",
                     "People",
                 ]}
-                // Managers and the owner may modify the member list.
+                // Changing who has access is admin-only, matching the
+                // server's shared_with arm on PATCH /tabular-review/:id.
                 // PeopleModal hides the add/remove controls when this prop
                 // is undefined.
                 onSharedWithChange={

@@ -123,7 +123,7 @@ interface Props {
     onClose: () => void;
     initialChatId?: string | null;
     onChatIdChange?: (chatId: string | null) => void;
-    /** Sending is editor-tier server-side; false renders a read-only composer. */
+    /** Sending is member-tier server-side; false renders a read-only composer. */
     canSend?: boolean;
 }
 
@@ -425,7 +425,7 @@ function MessageBubble({
 }
 
 // ---------------------------------------------------------------------------
-// History dropdown// History dropdown
+// History dropdown
 // ---------------------------------------------------------------------------
 
 function HistoryDropdown({
