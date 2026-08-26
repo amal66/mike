@@ -377,14 +377,94 @@ async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
     await Promise.all(paths.map((path) => deleteFile(path)));
 }
 
-async function deleteUserStoragePrefix(userId: string) {
-    try {
-        const paths = new Set([
-            ...(await listFiles(`documents/${userId}/`)),
-            ...(await listFiles(`workflow-references/${userId}/`)),
+/**
+ * Which of these storage keys is still spoken for by a surviving database row.
+ *
+ * Storage keys are namespaced by the *uploader*, not by the owner:
+ * `documents/{uploaderId}/{documentId}/…`. Once an organization keeps a
+ * departing user's uploads, "everything under this user's prefix" and
+ * "everything this account is losing" stop being the same set of bytes, and
+ * the only authority on which is which is the rows themselves.
+ */
+async function claimedStoragePaths(
+    db: Db,
+    paths: string[],
+): Promise<Set<string>> {
+    const claimed = new Set<string>();
+    const claim = (value: unknown) => {
+        if (typeof value === "string" && paths.includes(value))
+            claimed.add(value);
+    };
+
+    for (const batch of chunks(paths)) {
+        const [versions, pdfVersions, references] = await Promise.all([
+            db
+                .from("document_versions")
+                .select("storage_path, pdf_storage_path")
+                .in("storage_path", batch),
+            db
+                .from("document_versions")
+                .select("storage_path, pdf_storage_path")
+                .in("pdf_storage_path", batch),
+            (db as any)
+                .from("workflow_reference_documents")
+                .select("storage_path")
+                .in("storage_path", batch),
         ]);
+        await throwIfError(versions.error, "Failed to classify stored versions");
+        await throwIfError(
+            pdfVersions.error,
+            "Failed to classify stored version PDFs",
+        );
+        await throwIfError(
+            references.error,
+            "Failed to classify stored workflow references",
+        );
+
+        for (const row of [
+            ...((versions.data ?? []) as Record<string, unknown>[]),
+            ...((pdfVersions.data ?? []) as Record<string, unknown>[]),
+        ]) {
+            claim(row.storage_path);
+            claim(row.pdf_storage_path);
+        }
+        for (const row of (references.data ?? []) as Record<string, unknown>[]) {
+            claim(row.storage_path);
+        }
+    }
+
+    return claimed;
+}
+
+/**
+ * Sweep whatever is left under the departing user's storage prefixes — but
+ * only the objects that nothing in the database still points at.
+ *
+ * This used to delete the prefixes wholesale, which was correct only while
+ * "the uploader's account is gone" implied "the uploaded rows are gone". It
+ * no longer does: an organization keeps the documents and workflow references
+ * its departing member created, and those rows still address bytes filed
+ * under that member's id. Deleting the prefix left the firm holding a
+ * document row whose every version pointed at a 404.
+ *
+ * MUST run after the row deletions, so "a row still claims this key" is
+ * simply a question the database can answer.
+ */
+async function deleteOrphanedUserStorage(db: Db, userId: string) {
+    try {
+        const paths = [
+            ...new Set([
+                ...(await listFiles(`documents/${userId}/`)),
+                ...(await listFiles(`workflow-references/${userId}/`)),
+            ]),
+        ];
+        if (paths.length === 0) return;
+
+        const claimed = await claimedStoragePaths(db, paths);
         await Promise.all(
-            [...paths].map((path) => deleteFile(path).catch(() => {})),
+            paths
+                .filter((path) => !claimed.has(path))
+                .map((path) => deleteFile(path).catch(() => {})),
         );
     } catch {
         // Version-linked objects are deleted above. Prefix cleanup is best-effort
@@ -783,7 +863,6 @@ export async function deleteUserAccountData(
         removeGrantsForEmail(db, userEmail),
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
         deleteDocumentVersionFiles(db, documentIds),
-        deleteUserStoragePrefix(userId),
         deleteUserExportArtifacts(userId),
     ]);
 
@@ -833,6 +912,10 @@ export async function deleteUserAccountData(
         .delete()
         .eq("user_id", userId);
     await throwIfError(workflowsError, "Failed to delete workflows");
+
+    // Only now — with every doomed row actually gone — is it safe to ask the
+    // database which objects under this user's storage prefixes are orphans.
+    await deleteOrphanedUserStorage(db, userId);
 
     // Organizations use ON DELETE SET NULL on content (not CASCADE), so the
     // content deletions above never touch the user's org memberships — settle

@@ -600,8 +600,19 @@ describe("deleteUserAccountData organization retention", () => {
                 { id: "w-personal", user_id: "u1", org_id: null },
             ],
             workflow_reference_documents: [
-                { id: "wr-org", user_id: "u1", workflow_id: "w-org" },
-                { id: "wr-personal", user_id: "u1", workflow_id: "w-personal" },
+                {
+                    id: "wr-org",
+                    user_id: "u1",
+                    workflow_id: "w-org",
+                    storage_path: "workflow-references/u1/w-org/wr-org/abc.pdf",
+                },
+                {
+                    id: "wr-personal",
+                    user_id: "u1",
+                    workflow_id: "w-personal",
+                    storage_path:
+                        "workflow-references/u1/w-personal/wr-personal/def.pdf",
+                },
             ],
         });
 
@@ -684,5 +695,41 @@ describe("deleteUserAccountData organization retention", () => {
         const deleted = deleteFileMock.mock.calls.map(([path]) => path);
         expect(deleted).toContain("documents/u1/d-personal/source.pdf");
         expect(deleted).not.toContain("documents/u1/d-colleague/source.pdf");
+    });
+
+    it("leaves the bytes of every row the organization keeps", async () => {
+        // Storage keys are namespaced by the UPLOADER, not the owner:
+        // documents/{uploaderId}/{documentId}/…. So the leaver's prefix holds
+        // the bytes of documents the firm is deliberately KEEPING, and a
+        // blanket "delete documents/u1/" destroyed them while their rows
+        // survived — a matter full of documents whose every version 404s.
+        const { db } = fixture();
+        listFilesMock.mockImplementation(async (prefix: string) =>
+            prefix === "documents/u1/"
+                ? [
+                      "documents/u1/d-colleague/source.pdf",
+                      "documents/u1/d-personal/source.pdf",
+                      "documents/u1/interrupted-upload.bin",
+                  ]
+                : [
+                      "workflow-references/u1/w-org/wr-org/abc.pdf",
+                      "workflow-references/u1/w-personal/wr-personal/def.pdf",
+                  ],
+        );
+
+        await deleteUserAccountData(db, "u1", null);
+        const deleted = deleteFileMock.mock.calls.map(([path]) => path);
+
+        // Kept by the organization — a surviving row still points at these.
+        expect(deleted).not.toContain("documents/u1/d-colleague/source.pdf");
+        expect(deleted).not.toContain(
+            "workflow-references/u1/w-org/wr-org/abc.pdf",
+        );
+        // Destroyed with the account, or claimed by nothing at all.
+        expect(deleted).toContain("documents/u1/d-personal/source.pdf");
+        expect(deleted).toContain(
+            "workflow-references/u1/w-personal/wr-personal/def.pdf",
+        );
+        expect(deleted).toContain("documents/u1/interrupted-upload.bin");
     });
 });
