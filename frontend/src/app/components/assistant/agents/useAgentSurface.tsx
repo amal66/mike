@@ -14,6 +14,7 @@ import {
     pendingProposalExcerpts,
 } from "@/app/lib/chatAgents";
 import type { Message } from "@/app/components/shared/types";
+import { useSelectedModel } from "@/app/hooks/useSelectedModel";
 
 interface Args {
     chatId: string | null | undefined;
@@ -34,6 +35,21 @@ interface Args {
  * thirty.
  */
 export function useAgentSurface({ chatId, messages, onMessageRevised }: Args) {
+    // Agents run on whatever model the parent conversation last used. The
+    // choice rides on submitted user messages (there is no chat-level model
+    // state), so the newest message carrying one is the conversation's model.
+    // Reloaded transcripts drop the field, so the composer's persisted
+    // selection — the same localStorage value ChatInput reads — is the
+    // fallback that keeps agents on the model the user sees in the picker.
+    const [composerModel] = useSelectedModel();
+    const inheritedModel = useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const model = messages[i]?.model;
+            if (model) return model;
+        }
+        return composerModel;
+    }, [messages, composerModel]);
+
     const {
         agents,
         threads,
@@ -46,7 +62,7 @@ export function useAgentSurface({ chatId, messages, onMessageRevised }: Args) {
         dismissAgent,
         resolveProposal,
         atCapacity,
-    } = useChatAgents(chatId);
+    } = useChatAgents(chatId, inheritedModel);
 
     const [mode, setMode] = useState<AgentPanelMode | null>(null);
     const [isAssigning, setIsAssigning] = useState(false);

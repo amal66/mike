@@ -184,6 +184,58 @@ describe("useChatAgents — concurrency", () => {
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
     });
+
+    it("runs agent turns on the parent conversation's model", async () => {
+        // Without inheritance an agent silently falls back to the server's
+        // default model — which fails outright when that provider has no key.
+        const stream = controllableStream();
+        createChatAgent.mockResolvedValue(createdAgent("a", "check this"));
+        streamChat.mockResolvedValue(stream.response);
+
+        const { result } = renderHook(() =>
+            useChatAgents("parent-1", "claude-sonnet-5"),
+        );
+        await act(async () => {
+            await result.current.assignAgent({
+                instruction: "check this",
+                excerpt: "the indemnity clause",
+            });
+        });
+
+        await waitFor(() => expect(streamChat).toHaveBeenCalled());
+        expect(
+            (streamChat.mock.calls[0][0] as { model?: string }).model,
+        ).toBe("claude-sonnet-5");
+
+        await act(async () => {
+            stream.close();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    });
+
+    it("omits the model when the parent conversation never chose one", async () => {
+        const stream = controllableStream();
+        createChatAgent.mockResolvedValue(createdAgent("a", "check this"));
+        streamChat.mockResolvedValue(stream.response);
+
+        const { result } = renderHook(() => useChatAgents("parent-1"));
+        await act(async () => {
+            await result.current.assignAgent({
+                instruction: "check this",
+                excerpt: "the indemnity clause",
+            });
+        });
+
+        await waitFor(() => expect(streamChat).toHaveBeenCalled());
+        expect(
+            (streamChat.mock.calls[0][0] as { model?: string }).model,
+        ).toBeUndefined();
+
+        await act(async () => {
+            stream.close();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    });
 });
 
 describe("useChatAgents — capacity", () => {

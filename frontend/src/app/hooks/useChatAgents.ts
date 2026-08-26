@@ -67,10 +67,19 @@ const EMPTY_THREAD: AgentThread = {
  * module-scoped: two chats rendered in one session get two independent
  * runtimes.
  */
-export function useChatAgents(parentChatId: string | null | undefined) {
+export function useChatAgents(
+    parentChatId: string | null | undefined,
+    model?: string | null,
+) {
     const [agents, setAgents] = useState<ChatAgent[]>([]);
     const [threads, setThreads] = useState<Record<string, AgentThread>>({});
     const [assignError, setAssignError] = useState<string | null>(null);
+
+    // The parent conversation's model choice lives on its submitted messages,
+    // not in any global state; a ref keeps the latest value visible to turns
+    // already in flight without re-creating their callbacks.
+    const modelRef = useRef<string | null | undefined>(model);
+    modelRef.current = model;
 
     // Per-agent stream state. Refs rather than state because a mid-stream
     // buffer mutation must not wait for a render to be visible to the next
@@ -196,6 +205,11 @@ export function useChatAgents(parentChatId: string | null | undefined) {
                         content: message.content,
                     })),
                     chat_id: agentId,
+                    // Without this an agent falls back to the server's default
+                    // model even when the conversation it was spawned from is
+                    // running on a different one — and fails outright if the
+                    // default provider has no key configured.
+                    model: modelRef.current ?? undefined,
                     signal: controller.signal,
                 });
                 if (!response.ok) {
