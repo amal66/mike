@@ -351,16 +351,22 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
             throw member.error ?? new Error("no member user");
         memberId = member.data.user.id;
 
+        // `organizations` carries no `personal` flag: personal content is
+        // simply `org_id is null`, so there is no hidden per-account org to
+        // distinguish a real firm from.
         const org = await admin
             .from("organizations")
-            .insert({ name: `org-vis-${suffix}`, personal: false })
+            .insert({ name: `org-vis-${suffix}` })
             .select("id")
             .single();
         if (org.error || !org.data) throw org.error ?? new Error("no org");
         orgId = org.data.id;
 
+        // Exactly two org roles survive: admin and member. Seeding the
+        // retired 'owner' here would be refused by the org_members role
+        // check constraint before a single assertion ran.
         const members = await admin.from("org_members").insert([
-            { org_id: orgId, user_id: colleagueId, role: "owner" },
+            { org_id: orgId, user_id: colleagueId, role: "admin" },
             { org_id: orgId, user_id: memberId, role: "member" },
         ]);
         if (members.error) throw members.error;
@@ -403,14 +409,9 @@ maybeDescribe("Supabase tabular-review org visibility", () => {
             .in("id", [inProjectReviewId, standaloneReviewId]);
         await admin.from("projects").delete().eq("id", projectId);
         if (orgId) await admin.from("organizations").delete().eq("id", orgId);
-        // The auth trigger auto-created a personal org per user; remove those
-        // before the users so nothing orphaned lingers between runs.
-        if (colleagueId || memberId) {
-            await admin
-                .from("organizations")
-                .delete()
-                .in("created_by", [colleagueId, memberId].filter(Boolean));
-        }
+        // Signup no longer provisions an organization, so the only org to
+        // clean up is the one this suite created above. Deleting the users
+        // is enough for everything else.
         if (colleagueId) await admin.auth.admin.deleteUser(colleagueId);
         if (memberId) await admin.auth.admin.deleteUser(memberId);
     });
