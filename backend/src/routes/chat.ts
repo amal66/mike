@@ -549,10 +549,10 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
         );
         if (profileError) return void sendInternalError(res, profileError);
     }
-    if (typeof updates.reasoning_level === "string") {
+    if (hasReasoning && parsedReasoning.ok && parsedReasoning.value) {
         const profileError = await persistLastSelectedReasoningLevel(
             userId,
-            updates.reasoning_level,
+            parsedReasoning.value,
             db,
         );
         if (profileError) return void sendInternalError(res, profileError);

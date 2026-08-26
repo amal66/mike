@@ -1588,6 +1588,16 @@ describe("tabular.routes", () => {
 
     describe("PATCH /tabular-review/:reviewId/chats/:chatId", () => {
         it("persists the chat model and reasoning independently", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "u1", project_id: null },
+                error: null,
+            };
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "admin",
+            });
             supabaseState.tables.tabular_review_chats = {
                 data: {
                     id: "chat-1",
@@ -1815,7 +1825,7 @@ describe("tabular.routes", () => {
                 .patch("/tabular-review/r1/chats/chat-1")
                 .set(...AUTH)
                 .send({ title: "Renamed" });
-            expect(rename.status).toBe(204);
+            expect(rename.status).toBe(200);
 
             const del = await request(app)
                 .delete("/tabular-review/r1/chats/chat-1")
@@ -1892,7 +1902,7 @@ describe("tabular.routes", () => {
                 .patch("/tabular-review/r1/chats/chat-1")
                 .set(...AUTH)
                 .send({ title: "Renamed" });
-            expect(rename.status).toBe(204);
+            expect(rename.status).toBe(200);
 
             const del = await request(app)
                 .delete("/tabular-review/r1/chats/chat-1")

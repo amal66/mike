@@ -1380,23 +1380,24 @@ function makeRbacDb(
     };
 }
 
+// // #383 resolves an effective model before any chat write; the default
+// settings stub (no last-selected model, gemini-only key) cannot resolve
+// one, which would fail these permission tests with a 429 that has
+// nothing to do with permissions. Seed a resolvable selection per test.
+async function seedResolvableModel() {
+    const userSettings = await import("../../lib/userSettings");
+    vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+        legal_research_us: false,
+        title_model: null,
+        tabular_model: null,
+        last_selected_chat_model: "gpt-5.6-luna",
+        api_keys: { openai: "test-key" },
+    });
+}
+
 describe("chat writes are gated on content.edit (org RBAC)", () => {
     const mockedCreate = vi.mocked(createServerSupabase);
 
-    // #383 resolves an effective model before any chat write; the default
-    // settings stub (no last-selected model, gemini-only key) cannot resolve
-    // one, which would fail these permission tests with a 429 that has
-    // nothing to do with permissions. Seed a resolvable selection per test.
-    async function seedResolvableModel() {
-        const userSettings = await import("../../lib/userSettings");
-        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
-            legal_research_us: false,
-            title_model: null,
-            tabular_model: null,
-            last_selected_chat_model: "gpt-5.6-luna",
-            api_keys: { openai: "test-key" },
-        });
-    }
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -1903,6 +1904,7 @@ describe("chat sharing, deletion and roster (chat permission schema)", () => {
         });
 
         it("may generate a title (content.edit)", async () => {
+            await seedResolvableModel();
             mockedCreate.mockImplementation(directShare);
 
             const res = await request(app)

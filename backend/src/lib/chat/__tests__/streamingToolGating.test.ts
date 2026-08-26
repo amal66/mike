@@ -47,6 +47,8 @@ type RunToolsFn = (
 
 function baseParams() {
   return {
+    // #383 validates the requested model inside runLLMStream itself.
+    model: "gemini-3-flash-preview",
     apiMessages: [{ role: "user", content: "hi" }],
     docStore: new Map(),
     docIndex: {},
