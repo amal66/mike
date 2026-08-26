@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { PermissionDeniedPopup } from "./PermissionDeniedPopup";
+import {
+    mergeAccessContacts,
+    PermissionDeniedPopup,
+} from "./PermissionDeniedPopup";
 
 describe("PermissionDeniedPopup", () => {
     it("speaks in the roles the product exposes", () => {
@@ -92,10 +95,60 @@ describe("PermissionDeniedPopup", () => {
         expect(screen.queryByText(/if you need/)).not.toBeInTheDocument();
     });
 
+    it("states a rule no role can lift, without an ask-somebody line", () => {
+        // Chat rename/delete are creator-only server-side, so the default
+        // "Only an admin can …" copy would have named a tier that cannot
+        // help — and there is nobody to ask, because nobody can grant it.
+        render(
+            <PermissionDeniedPopup
+                open
+                title="Chat creator only"
+                message="Only the person who started this chat can rename it."
+                onClose={vi.fn()}
+            />,
+        );
+        expect(screen.getByText("Chat creator only")).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                "Only the person who started this chat can rename it.",
+            ),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/Only an admin/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/if you need/)).not.toBeInTheDocument();
+    });
+
     it("renders nothing when closed", () => {
         const { container } = render(
             <PermissionDeniedPopup open={false} onClose={vi.fn()} />,
         );
         expect(container).toBeEmptyDOMElement();
+    });
+});
+
+describe("mergeAccessContacts", () => {
+    it("keeps server order, drops repeats and entries with no address", () => {
+        // A bulk refusal spans several rows and the same admin usually
+        // appears on all of them; the popup still has to name exactly one.
+        expect(
+            mergeAccessContacts([
+                [
+                    { email: null, display_name: "Deleted Account" },
+                    { email: "Dana@firm.test", display_name: "Dana" },
+                ],
+                null,
+                [
+                    { email: "dana@firm.test", display_name: "Dana" },
+                    { email: "sam@firm.test", display_name: "Sam" },
+                ],
+                undefined,
+            ]),
+        ).toEqual([
+            { email: "Dana@firm.test", display_name: "Dana" },
+            { email: "sam@firm.test", display_name: "Sam" },
+        ]);
+    });
+
+    it("returns nothing when no row could name anyone", () => {
+        expect(mergeAccessContacts([null, undefined, []])).toEqual([]);
     });
 });

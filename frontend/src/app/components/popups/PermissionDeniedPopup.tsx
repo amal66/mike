@@ -43,6 +43,28 @@ const ROLE_SUBJECT: Record<
     member: { title: "Members only", subject: "a member" },
 };
 
+/**
+ * Fold several rows' contact lists into one, keeping the server's ranking
+ * (creator, then direct admins, then organization admins) and dropping
+ * repeats. A bulk action refused across several rows still has to name one
+ * person, and the same admin usually appears on all of them.
+ */
+export function mergeAccessContacts(
+    lists: (AccessContact[] | null | undefined)[],
+): AccessContact[] {
+    const seen = new Set<string>();
+    const merged: AccessContact[] = [];
+    for (const list of lists) {
+        for (const contact of list ?? []) {
+            const key = contact.email?.trim().toLowerCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            merged.push(contact);
+        }
+    }
+    return merged;
+}
+
 /** The first contact with an address, rendered as a name plus its email. */
 function pickContact(contacts: AccessContact[] | null | undefined) {
     for (const contact of contacts ?? []) {

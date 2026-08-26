@@ -16,7 +16,11 @@ import {
     usePaginatedProjects,
     type ProjectScope,
 } from "@/app/hooks/usePaginatedProjects";
-import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import {
+    mergeAccessContacts,
+    PermissionDeniedPopup,
+    type AccessContact,
+} from "@/app/components/popups/PermissionDeniedPopup";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { userFacingApiError } from "@/app/lib/userFacingError";
@@ -128,7 +132,16 @@ export function ProjectsOverview() {
     } | null>(null);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
-    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    /**
+     * A refusal, together with the people who could lift it. Naming somebody
+     * is the whole point of the popup, and it can only do that if the surface
+     * raising the refusal hands over the row's `admin_contacts` — which the
+     * projects overview RPC returns on every row.
+     */
+    const [ownerOnlyAction, setOwnerOnlyAction] = useState<{
+        action: string;
+        contacts?: AccessContact[] | null;
+    } | null>(null);
     const [actionError, setActionError] = useState<string | null>(null);
     const [selectionCameFromSelectAll, setSelectionCameFromSelectAll] =
         useState(false);
@@ -355,7 +368,10 @@ export function ProjectsOverview() {
         // organization admin editing a colleague's matter is no longer
         // mistaken for an outsider just because they did not create it.
         if (!can(roleFrom(detailsProject), "access.manage")) {
-            setOwnerOnlyAction("edit project details");
+            setOwnerOnlyAction({
+                action: "edit project details",
+                contacts: detailsProject.admin_contacts,
+            });
             return;
         }
         const name = values.name.trim();
@@ -447,9 +463,18 @@ export function ProjectsOverview() {
             setSelectedIds(failedIds);
         }
         if (blocked > 0) {
-            setOwnerOnlyAction(
-                `delete ${blocked} of the selected projects — only a project admin can delete a project`,
+            // Several rows were refused, so offer the union of their admins
+            // rather than a refusal that names nobody.
+            const blockedContacts = mergeAccessContacts(
+                ids
+                    .filter((id) => !deletable.includes(id))
+                    .map((id) => projects.find((p) => p.id === id))
+                    .map((project) => project?.admin_contacts),
             );
+            setOwnerOnlyAction({
+                action: `delete ${blocked} of the selected projects — only a project admin can delete a project`,
+                contacts: blockedContacts,
+            });
         }
     }
 
@@ -873,7 +898,8 @@ export function ProjectsOverview() {
 
             <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
-                action={ownerOnlyAction ?? undefined}
+                action={ownerOnlyAction?.action}
+                contacts={ownerOnlyAction?.contacts}
                 onClose={() => setOwnerOnlyAction(null)}
             />
             <WarningPopup
