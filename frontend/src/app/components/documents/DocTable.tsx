@@ -1333,10 +1333,13 @@ export function DocTable({
 
     async function handleRemoveDoc(docId: string) {
         const doc = docs.find((d) => d.id === docId);
-        // Backend only lets the doc creator delete. Warn the requester
-        // instead of letting the request 404 silently.
-        if (doc && user?.id && doc.user_id && doc.user_id !== user.id) {
-            setOwnerOnlyAction("delete this document");
+        // Backend only lets the document's uploader delete. Warn the
+        // requester instead of letting the request 404 silently — and refuse
+        // when we cannot establish ownership, which the old condition read as
+        // permission (it required `doc`, `user.id` AND `doc.user_id` to be
+        // present before it would refuse anything).
+        if (!canDeleteDocument(doc)) {
+            refuseDocumentDelete("delete it");
             return;
         }
         setDeletingDocIds((prev) => new Set([...prev, docId]));
@@ -1434,8 +1437,38 @@ export function DocTable({
         return documentVersionNumber(doc);
     }
 
-    function isSharedDocument(doc: Document | null | undefined): boolean {
-        return !!(doc?.user_id && user?.id && doc.user_id !== user.id);
+    /**
+     * Whether the caller may delete this document.
+     *
+     * `DELETE /single-documents/:documentId` (backend/src/routes/documents.ts)
+     * selects the row with `.eq("id", documentId).eq("user_id", userId)` and
+     * 404s if that finds nothing. There is no `ensureDocAccess`, no `can()`,
+     * no departed-uploader arm — deletion is pure row ownership, and a
+     * project admin genuinely cannot delete a colleague's document. So this
+     * stays keyed on the uploader rather than moving to `canDo`; a role-based
+     * check here would be the client promising something the server refuses.
+     *
+     * What changes is that both halves must now be KNOWN. The old
+     * `isSharedDocument(doc)` test answered false — "not somebody else's" —
+     * for a document with no uploader at all and for a caller whose id had
+     * not resolved, and both were being read as "yours, go ahead", enabling
+     * a delete the server was always going to 404.
+     */
+    const canDeleteDocument = useCallback(
+        (doc: Document | null | undefined): boolean =>
+            // Creator-scoped with NO departed-uploader arm: this route has no
+            // `ensureDocAccess` at all, so when `user_id` is null the row is
+            // deletable by nobody.
+            creatorScopedAllowed(doc?.user_id, user?.id, false),
+        [user?.id],
+    );
+
+    /** The refusal for a delete: the uploader rule, and nobody to ask. */
+    function refuseDocumentDelete(action: string) {
+        setOwnerOnlyAction({
+            title: "Uploader only",
+            message: `Only the person who uploaded this document can ${action}.`,
+        });
     }
 
     function requestFolderUploadConflictChoice(conflict: {
@@ -2678,7 +2711,7 @@ export function DocTable({
                                                                 : undefined
                                                         }
                                                         onDelete={() => requestRemoveDoc(doc)}
-                                                        deleteDisabled={isSharedDocument(doc)}
+                                                        deleteDisabled={!canDeleteDocument(doc)}
                                                     />
                                                 )}
                                             </div>
@@ -3091,7 +3124,16 @@ export function DocTable({
     const deleteDocumentIds = useCallback(async (ids: string[]) => {
         const owned = ids.filter((id) => {
             const doc = documents.find((candidate) => candidate.id === id);
-            return !doc || !doc.user_id || !user?.id || doc.user_id === user.id;
+            // A row we can see is judged on its uploader, both halves known.
+            // A row we cannot see is left to the server, and deliberately so:
+            // unlike project delete — where an admin's sweep really could
+            // destroy rows they never looked at — this endpoint filters on
+            // `user_id = me`, so an id we cannot resolve is at worst a 404
+            // counted in the failure notice. Excluding those would break
+            // select-all-matching in the library, where every row is the
+            // caller's own but few are paged in.
+            if (!doc) return true;
+            return canDeleteDocument(doc);
         });
         const blocked = ids.length - owned.length;
         const snapshot = docs;
@@ -3164,7 +3206,15 @@ export function DocTable({
         if (deletedIds.length > 0 && operations.bulkDeleteDocuments) {
             await operations.refreshCollection();
         }
-    }, [docs, documents, operations, setDocuments, setOwnerOnlyAction, user?.id]);
+    }, [
+        canDeleteDocument,
+        docs,
+        documents,
+        operations,
+        selectedDocIds,
+        setDocuments,
+        setOwnerOnlyAction,
+    ]);
 
     const handleDeleteSelectedItems = useCallback(async () => {
         setConfirmDeleteAllOpen(false);
@@ -4258,7 +4308,7 @@ export function DocTable({
                                                                             void handleUploadNewVersion(doc)
                                                                         }
                                                                         onDelete={() => requestRemoveDoc(doc)}
-                                                                        deleteDisabled={isSharedDocument(doc)}
+                                                                        deleteDisabled={!canDeleteDocument(doc)}
                                                                     />
                                                                 )}
                                                             </div>
@@ -4416,7 +4466,8 @@ export function DocTable({
                                                         : undefined
                                                 }
                                                 deleteDisabled={
-                                                    !menuAppliesToSelection && isSharedDocument(menuDoc)
+                                                    !menuAppliesToSelection &&
+                                                    !canDeleteDocument(menuDoc)
                                                 }
                                             />
                                         ) : (
@@ -4520,7 +4571,7 @@ export function DocTable({
                 onDeleteVersion={handleDeleteVersion}
                 onUploadNewVersion={submitNewVersion}
                 onReplaceVersion={replaceVersionFile}
-                canDelete={!isSharedDocument(sidePanelDoc)}
+                canDelete={canDeleteDocument(sidePanelDoc)}
                 onOwnerOnlyAction={setOwnerOnlyAction}
                 onDelete={async (doc) => {
                     await handleRemoveDoc(doc.id);

@@ -124,6 +124,17 @@ describe("creatorScopedAllowed", () => {
         expect(creatorScopedAllowed("u1", null, true)).toBe(false);
         expect(creatorScopedAllowed("u1", undefined, false)).toBe(false);
     });
+
+    it("models document delete, which has no admin arm at all", () => {
+        // DELETE /single-documents/:id selects `.eq("user_id", userId)` with
+        // no access check of any kind, so it is creator-scoped with the third
+        // argument pinned false: an uploaderless row is deletable by nobody,
+        // and a project admin cannot reach a colleague's document.
+        expect(creatorScopedAllowed("u1", "u1", false)).toBe(true);
+        expect(creatorScopedAllowed("u1", "u2", false)).toBe(false);
+        expect(creatorScopedAllowed(null, "u2", false)).toBe(false);
+        expect(creatorScopedAllowed(undefined, undefined, false)).toBe(false);
+    });
 });
 
 describe("roleFrom", () => {
