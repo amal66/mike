@@ -18,9 +18,13 @@ type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let idCounter: number;
 let currentUser: { id: string; email: string };
+// Force one table's writes to fail, so the router's db_error arm can be
+// exercised over real HTTP rather than reasoned about.
+let writeErrors: Record<string, { message: string; code?: string }>;
 
 function resetState() {
     idCounter = 1;
+    writeErrors = {};
     currentUser = { id: "admin-1", email: "admin@firm.example" };
     tables = {
         organizations: [{ id: "org-1", name: "Acme LLP", created_by: "admin-1" }],
@@ -89,8 +93,14 @@ function query(table: string) {
             }),
         );
 
-    function resolveMany(): Promise<{ data: Row[]; error: null }> {
+    function resolveMany(): Promise<{
+        data: Row[] | null;
+        error: { message: string; code?: string } | null;
+    }> {
         const arr = ensure();
+        if (op !== "select" && writeErrors[table]) {
+            return Promise.resolve({ data: null, error: writeErrors[table] });
+        }
         if (op === "insert" || op === "upsert") {
             const rows = Array.isArray(payload) ? payload : [payload as Row];
             const out: Row[] = [];
@@ -168,15 +178,18 @@ function query(table: string) {
             return builder;
         },
         single: async () => {
-            const { data } = await resolveMany();
-            return { data: data[0] ?? null, error: null };
+            const { data, error } = await resolveMany();
+            return { data: data?.[0] ?? null, error };
         },
         maybeSingle: async () => {
-            const { data } = await resolveMany();
-            return { data: data[0] ?? null, error: null };
+            const { data, error } = await resolveMany();
+            return { data: data?.[0] ?? null, error };
         },
         then: (
-            resolve: (v: { data: Row[]; error: null }) => unknown,
+            resolve: (v: {
+                data: Row[] | null;
+                error: { message: string; code?: string } | null;
+            }) => unknown,
             reject?: (e: unknown) => unknown,
         ) => resolveMany().then(resolve, reject),
     };
@@ -666,5 +679,66 @@ describe("GET /projects/:projectId admin contacts", () => {
             }),
         ]);
         expect(res.body.access_role).toBe("member");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Internal failures do not narrate the database to the caller
+// ---------------------------------------------------------------------------
+
+describe("sendOrgFailure db_error", () => {
+    it("answers a generic 500 instead of forwarding the Postgres message", async () => {
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+        as("admin-1", "admin@firm.example");
+        // A realistic Postgres error: it names the schema, the table, the
+        // constraint, and quotes the offending row — which in the org tables
+        // is somebody's email address.
+        writeErrors.organizations = {
+            code: "23505",
+            message:
+                'duplicate key value violates unique constraint "org_invitations_active_unique" ' +
+                "DETAIL: Key (org_id, email)=(org-1, partner@firm.example) already exists.",
+        };
+
+        const res = await request(app)
+            .patch("/orgs/org-1")
+            .set(...AUTH)
+            .send({ name: "Acme Renamed" });
+
+        expect(res.status).toBe(500);
+        expect(res.body).toMatchObject({
+            code: "internal_error",
+            detail: "Something went wrong. Please try again.",
+        });
+        const body = JSON.stringify(res.body);
+        expect(body).not.toContain("org_invitations_active_unique");
+        expect(body).not.toContain("partner@firm.example");
+        expect(body).not.toContain("duplicate key");
+
+        // The body above is generic either way, because
+        // middleware/internalErrorResponse.ts rewrites EVERY >=500 JSON body
+        // as a last line of defence. What this pins is that the router no
+        // longer needs saving: the handler itself reports the failure through
+        // sendInternalError, so the log is a plain internal error rather than
+        // the sanitizer's "I just caught a route leaking" record.
+        const tags = consoleError.mock.calls.map(([tag]) => tag);
+        expect(tags).toContain("[http/internal-error]");
+        expect(tags).not.toContain("[http/sanitized-internal-error]");
+        consoleError.mockRestore();
+    });
+
+    it("still answers intentional 4xx verdicts with their own copy", async () => {
+        as("admin-1", "admin@firm.example");
+        // The last-admin invariant is a decision, not an incident: the caller
+        // caused it and needs to be told what it was.
+        const res = await request(app)
+            .delete("/orgs/org-1/members/admin-1")
+            .set(...AUTH);
+        expect(res.status).toBe(409);
+        expect(res.body.detail).toBe(
+            "An organization must keep at least one admin.",
+        );
     });
 });

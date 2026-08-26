@@ -10,9 +10,10 @@
 // pull somebody into a workspace full of confidential material without them
 // agreeing to it.
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { requireAuth } from "../middleware/auth";
 import { createServerSupabase } from "../lib/supabase";
+import { sendInternalError } from "../lib/httpError";
 import {
     listMyOrgs,
     createOrg,
@@ -32,8 +33,15 @@ export const orgsRouter = Router();
 
 // Map the service's discriminated failure kinds onto HTTP responses. Kept in
 // one place so every handler reports errors consistently.
+//
+// The split that matters here is between failures the caller CAUSED and
+// failures the caller merely OBSERVED. The first six kinds are the service
+// deliberately saying no, and their text is written for the person reading
+// it. `db_error` is not a verdict at all — it is whatever Postgres said —
+// and it goes out through sendInternalError so the client gets the generic
+// message and the details stay in the server log.
 export function sendOrgFailure(
-    res: { status: (n: number) => { json: (b: unknown) => void } },
+    res: Response,
     result: Extract<OrgResult<unknown>, { ok: false }>,
 ) {
     switch (result.kind) {
@@ -60,7 +68,12 @@ export function sendOrgFailure(
                 .status(410)
                 .json({ detail: "That invitation has expired." });
         case "db_error":
-            return void res.status(500).json({ detail: result.detail });
+            // `result.detail` is a raw Postgres message: it can name tables,
+            // columns, constraints and index definitions, and quote the
+            // offending row — which in the org tables means somebody's email
+            // address. sendInternalError logs it (with the request id, so
+            // support can correlate) and answers with the generic body.
+            return void sendInternalError(res, new Error(result.detail));
     }
 }
 
