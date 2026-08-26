@@ -1786,6 +1786,101 @@ describe("tabular.routes", () => {
             );
         });
 
+        // A departed creator leaves `user_id` NULL (the FK is ON DELETE SET
+        // NULL since 20260825_02). "Only the creator may act" would then mean
+        // NOBODY may act, and the thread would sit in the organization's
+        // review forever with no way to rename or remove it. #267's
+        // `creatorScopedAllowed` exists for exactly this: an authorship-scoped
+        // operation falls through to the container's admins once the author
+        // is gone.
+        const ORPHANED_CHAT = {
+            data: { id: "chat-1", review_id: "r1", user_id: null },
+            error: null,
+        };
+
+        it("lets an admin modify a chat whose creator's account was deleted", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: null, project_id: "p1" },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = ORPHANED_CHAT;
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "admin",
+                projectRole: "admin",
+            });
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(204);
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(204);
+        });
+
+        it("still refuses a plain member the same orphaned chat", async () => {
+            // Inheriting an authorship-scoped operation is an ADMIN power —
+            // the tier that could already delete the whole container. A
+            // member gains nothing from the creator's departure.
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: null, project_id: "p1" },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = ORPHANED_CHAT;
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "member",
+                projectRole: "member",
+            });
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(403);
+            expect(rename.body.detail).toBe(
+                "Only the chat's creator can modify it",
+            );
+
+            const del = await request(app)
+                .delete("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH);
+            expect(del.status).toBe(403);
+        });
+
+        it("does not let an admin touch a LIVE colleague's chat", async () => {
+            // The relaxation is scoped to the creator being GONE. While one
+            // exists, an admin still may not rename their thread — which is
+            // what stops `creatorScopedAllowed` from quietly becoming
+            // "admins can do anything".
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r1", user_id: "other", project_id: "p1" },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_chats = {
+                data: { id: "chat-1", review_id: "r1", user_id: "other" },
+                error: null,
+            };
+            ensureReviewAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "admin",
+                projectRole: "admin",
+            });
+
+            const rename = await request(app)
+                .patch("/tabular-review/r1/chats/chat-1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+            expect(rename.status).toBe(403);
+        });
+
         it("returns 204 for the owner once the review and chat line up", async () => {
             supabaseState.tables.tabular_reviews = {
                 data: { id: "r1", user_id: "u1", project_id: null },

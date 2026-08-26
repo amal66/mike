@@ -1871,7 +1871,29 @@ async function ensureReviewChatWriteAccess(
     // threads but cannot rename or delete them. Refusing here, not via the
     // write's user_id filter alone, keeps a non-creator from getting a
     // success-shaped 204 for an update that silently matched zero rows.
-    if (chat.user_id !== userId)
+    //
+    // `creatorScopedAllowed` rather than a bare `chat.user_id !== userId`,
+    // because `tabular_review_chats.user_id` is ON DELETE SET NULL since
+    // 20260825_02: once the author's account is deleted the column is NULL
+    // and "only the creator may act" means NOBODY may act — the thread is
+    // stranded inside a review the organization still owns, which is the
+    // opposite of what detaching the row was for. When the creator is gone
+    // the container's admins inherit the operation; while a creator exists
+    // nothing changes, and an admin still may not touch a colleague's live
+    // thread.
+    if (
+        !creatorScopedAllowed(
+            {
+                // "isCreator" is about THIS chat. `access` was derived for
+                // the REVIEW, and the review's creator is not thereby the
+                // creator of every chat inside it — passing `access` whole
+                // would hand them everyone's threads.
+                isCreator: !!chat.user_id && chat.user_id === userId,
+                projectRole: access.projectRole,
+            },
+            chat.user_id,
+        )
+    )
         return {
             ok: false,
             status: 403,
@@ -1898,14 +1920,17 @@ tabularRouter.delete(
         );
         if (!gate.ok)
             return void res.status(gate.status).json({ detail: gate.detail });
-        // Creator-only delete — sibling collaborators shouldn't be able to
-        // wipe each other's threads.
+        // Scoped by the binding the gate just proved (this chat, in this
+        // review) and nothing more. A `user_id` filter here would be a
+        // second, weaker copy of the authorization rule: it would silently
+        // match zero rows for the case the gate now allows — an admin
+        // clearing up after a departed colleague — and answer 204 while
+        // deleting nothing.
         const { error } = await db
             .from("tabular_review_chats")
             .delete()
             .eq("id", chatId)
-            .eq("review_id", reviewId)
-            .eq("user_id", userId);
+            .eq("review_id", reviewId);
         if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
@@ -1968,12 +1993,12 @@ tabularRouter.patch(
         );
         if (!gate.ok)
             return void res.status(gate.status).json({ detail: gate.detail });
+        // Scoped by chat + review only — mirrors the delete above.
         const { data: chat, error: chatError } = await db
             .from("tabular_review_chats")
             .select("id, model")
             .eq("id", chatId)
             .eq("review_id", reviewId)
-            .eq("user_id", userId)
             .single();
         if (chatError || !chat) {
             return void res.status(404).json({ detail: "Chat not found" });
@@ -2015,7 +2040,6 @@ tabularRouter.patch(
             .update(update)
             .eq("id", chatId)
             .eq("review_id", reviewId)
-            .eq("user_id", userId)
             .select("id, title, model, reasoning_level")
             .single();
         if (error || !data) {
