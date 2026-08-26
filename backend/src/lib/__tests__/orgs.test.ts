@@ -572,6 +572,87 @@ describe("org invitations", () => {
         expect(db._tables.org_members).toHaveLength(2);
     });
 
+    // An invitation can outlive the state it was written for: it is created
+    // against a roster, sits pending for up to 14 days, and is answered
+    // against whatever the roster looks like then. The recipient may have
+    // joined in the meantime — an org's creator is a member the moment the
+    // org exists, and a second invitation can be sent by a second admin.
+    const seedPendingInvite = (
+        db: ReturnType<typeof seedOrg>,
+        role: "admin" | "member",
+    ) => {
+        (db._tables.org_invitations as Row[]).push({
+            id: "inv-standing",
+            org_id: "o1",
+            email: "member@acme.example",
+            role,
+            status: "pending",
+            invited_by: "admin1",
+            expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+            created_at: "t1",
+        });
+        return "inv-standing";
+    };
+
+    it("upgrades an existing member accepting an admin invitation", async () => {
+        const db = seedOrg();
+        const inviteId = seedPendingInvite(db, "admin");
+
+        const result = await acceptInvitation(db, {
+            userId: "member1",
+            userEmail: "member@acme.example",
+            invitationId: inviteId,
+        });
+
+        expect(result).toMatchObject({ ok: true, role: "admin" });
+        // The membership itself moved — not just the response.
+        expect(
+            (db._tables.org_members as Row[]).find(
+                (m) => m.user_id === "member1",
+            )?.role,
+        ).toBe("admin");
+        expect(
+            (db._tables.org_invitations as Row[])[0].status,
+        ).toBe("accepted");
+    });
+
+    it("never demotes an admin who accepts a member invitation", async () => {
+        // Roles are floors, not ceilings — the same rule strongerRole applies
+        // to project grants. An invitation is an offer of access, not an
+        // instruction to reduce it, and quietly demoting the org's only admin
+        // by way of a stale invitation would trip the last-admin guard on the
+        // way past.
+        const db = seedOrg();
+        (db._tables.org_invitations as Row[]).push({
+            id: "inv-weak",
+            org_id: "o1",
+            email: "admin@acme.example",
+            role: "member",
+            status: "pending",
+            invited_by: "admin1",
+            expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+            created_at: "t1",
+        });
+
+        const result = await acceptInvitation(db, {
+            userId: "admin1",
+            userEmail: "admin@acme.example",
+            invitationId: "inv-weak",
+        });
+
+        expect(result).toMatchObject({ ok: true, role: "admin" });
+        expect(
+            (db._tables.org_members as Row[]).find(
+                (m) => m.user_id === "admin1",
+            )?.role,
+        ).toBe("admin");
+        // Answered either way: a live invitation nobody can act on is worse
+        // than one that is closed.
+        expect((db._tables.org_invitations as Row[])[0].status).toBe(
+            "accepted",
+        );
+    });
+
     it("cannot answer an invitation twice", async () => {
         const db = seedOrg();
         const created = await createInvitation(db, {

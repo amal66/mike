@@ -782,14 +782,31 @@ export async function acceptInvitation(
     // (apart from an org's creator). Idempotent for the already-a-member
     // case: mark the invitation answered rather than 500ing on the unique.
     const existing = await getOrgRole(params.userId, invite.org_id, db);
+    // Grants are FLOORS, not ceilings — the same rule `strongerRole` applies
+    // to project access. Accepting an admin invitation while already a member
+    // raises you to admin; accepting a member invitation while already an
+    // admin leaves you an admin, because an invitation is an offer of
+    // access, not an instruction to reduce it. Demotion is what
+    // PATCH /orgs/:orgId/members exists for, where an admin does it on
+    // purpose and the last-admin guard gets a say.
+    const effectiveRole: OrgRole =
+        existing === "admin" ? "admin" : (invite.role as OrgRole);
+
     if (!existing) {
         const { error } = await db.from("org_members").insert({
             org_id: invite.org_id,
             user_id: params.userId,
-            role: invite.role,
+            role: effectiveRole,
         });
         if (error && !isUniqueViolation(error))
             return { ok: false, kind: "db_error", detail: error.message };
+    } else if (effectiveRole !== existing) {
+        const { error } = await db
+            .from("org_members")
+            .update({ role: effectiveRole, updated_at: new Date().toISOString() })
+            .eq("org_id", invite.org_id)
+            .eq("user_id", params.userId);
+        if (error) return { ok: false, kind: "db_error", detail: error.message };
     }
 
     const { error: updateError } = await db
@@ -806,11 +823,14 @@ export async function acceptInvitation(
         title: invite.email,
         detail: {
             org_id: invite.org_id,
-            role: invite.role,
+            // The role now in force, not the one that was offered: an audit
+            // trail that records the offer cannot answer "what changed?".
+            role: effectiveRole,
+            invited_role: invite.role,
             invitation_id: invite.id,
         },
     });
-    return { ok: true, org_id: invite.org_id, role: invite.role };
+    return { ok: true, org_id: invite.org_id, role: effectiveRole };
 }
 
 export async function declineInvitation(
