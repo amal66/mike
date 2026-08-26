@@ -327,12 +327,31 @@ export function useAssistantChat({
     abortControllerRef.current = controller;
 
     try {
-      const apiMessages = apiMessagesForTurn.map((currentMessage) => ({
-        role: currentMessage.role,
-        content: currentMessage.content,
-        files: currentMessage.files,
-        workflow: currentMessage.workflow,
-      }));
+      // An assistant turn that produced no plain text (e.g. a denied or
+      // errored MCP tool call) keeps its narration only in `events`; sending
+      // its empty `content` string upstream makes providers reject the whole
+      // request, so recover the text from the events and drop turns that are
+      // still empty.
+      const apiMessages = apiMessagesForTurn
+        .map((currentMessage) => ({
+          role: currentMessage.role,
+          content:
+            currentMessage.role === "assistant" &&
+            currentMessage.content.trim() === ""
+              ? (currentMessage.events ?? [])
+                  .filter(
+                    (e): e is Extract<AssistantEvent, { type: "content" }> =>
+                      e.type === "content",
+                  )
+                  .map((e) => e.text)
+                  .join("")
+              : currentMessage.content,
+          files: currentMessage.files,
+          workflow: currentMessage.workflow,
+        }))
+        .filter(
+          (m) => !(m.role === "assistant" && m.content.trim() === ""),
+        );
 
       const model = message.model;
 

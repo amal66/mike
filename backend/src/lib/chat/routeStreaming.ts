@@ -46,8 +46,18 @@ export function createReservedAssistantMessageUpdater(args: {
 export function withoutEmptyAssistantReservations<
   T extends { role?: unknown; content?: unknown },
 >(messages: T[]): T[] {
+  // Besides null reservations, clients can replay an assistant turn whose
+  // only output was a tool interaction (e.g. a denied MCP confirmation) as
+  // content: "" — providers reject requests containing empty assistant
+  // messages, so those turns must be dropped here too.
   return messages.filter(
-    (message) => !(message.role === "assistant" && message.content == null),
+    (message) =>
+      !(
+        message.role === "assistant" &&
+        (message.content == null ||
+          (typeof message.content === "string" &&
+            message.content.trim() === ""))
+      ),
   );
 }
 

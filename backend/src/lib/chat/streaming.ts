@@ -296,6 +296,13 @@ export async function runLLMStream(params: {
     rawMsgs[0]?.role === "system" ? (rawMsgs[0].content ?? "") : "";
   const chatMessages: LlmMessage[] = rawMsgs
     .filter((m) => m.role !== "system")
+    // Clients replay an assistant turn whose only output was a tool
+    // interaction (e.g. a denied MCP confirmation) as content: "" / null;
+    // providers reject requests containing empty assistant messages, so
+    // drop those turns instead of forwarding them.
+    .filter(
+      (m) => !(m.role === "assistant" && (m.content ?? "").trim() === ""),
+    )
     .map((m) => ({
       role: m.role === "assistant" ? "assistant" : "user",
       content: m.content ?? "",
