@@ -73,8 +73,6 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  v_org_id uuid;
 begin
   insert into public.user_profiles (
     user_id,
@@ -104,26 +102,9 @@ begin
           excluded.organisation
         ),
         updated_at = now();
-
-  -- Multi-tenant RBAC: provision a personal organization + owner membership so
-  -- new content has a tenant to land in (one personal org per user, enforced by
-  -- idx_organizations_personal_owner).
-  if not exists (
-    select 1 from public.organizations
-    where created_by = new.id and personal
-  ) then
-    insert into public.organizations (name, personal, created_by)
-    values (coalesce(new.email, 'Personal'), true, new.id)
-    returning id into v_org_id;
-
-    insert into public.org_members (org_id, user_id, role)
-    values (v_org_id, new.id, 'owner')
-    on conflict (org_id, user_id) do nothing;
-  end if;
-
   return new;
 exception when others then
-  -- Never block signup if the profile / org insert fails.
+  -- Never block signup if the profile insert fails.
   return new;
 end;
 $$;
@@ -212,31 +193,35 @@ alter table public.auth_handoff_tickets enable row level security;
 -- Organizations / RBAC (multi-tenant)
 -- Defined before projects/documents/workflows/tabular_reviews because those
 -- carry an org_id FK to organizations(id). See lib/access.ts for the
--- owner/admin/member enforcement. SSO/SAML/SCIM are intentional extension
--- points (future organizations.sso_config / scim_token / org_invitations).
+-- admin/member enforcement. SSO/SAML/SCIM are intentional extension points
+-- (future organizations.sso_config / scim_token).
+--
+-- Personal content is simply `org_id is null`. There is no hidden personal
+-- organization: an extra org row and owner-membership per account bought
+-- nothing that `user_id` did not already anchor, while making every query
+-- carry a tenant that existed only to be ignored.
 -- ---------------------------------------------------------------------------
 
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
-  personal boolean not null default false,
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create unique index if not exists idx_organizations_personal_owner
-  on public.organizations(created_by)
-  where personal;
-
 alter table public.organizations enable row level security;
 
+-- Exactly two roles. `admin` administers the org and inherits project admin on
+-- its projects; `member` collaborates and inherits project member. Membership
+-- rows are written only by org creation (the creator) and by invitation
+-- acceptance.
 create table if not exists public.org_members (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'member'
-    check (role in ('owner', 'admin', 'member')),
+    check (role in ('admin', 'member')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique(org_id, user_id)
@@ -247,30 +232,30 @@ create index if not exists idx_org_members_org on public.org_members(org_id);
 
 alter table public.org_members enable row level security;
 
--- DB-level guard for "an organization must keep at least one owner". The
+-- DB-level guard for "an organization must keep at least one admin". The
 -- service layer checks this too, but its read-then-act check races: two
--- concurrent departures of two different owners can both pass and strand the
--- org ownerless with no repair path (granting owner requires an owner). The
--- trigger serializes owner departures per org by locking the organizations
--- row, and steps aside for the two legitimate cascades: org deletion (the
--- org row is already gone in this transaction) and auth-user deletion (the
--- member's auth row is already gone). security definer so the auth.users
--- probe works regardless of the calling role, mirroring handle_new_user.
-create or replace function public.org_members_protect_last_owner()
+-- concurrent departures of two different admins can both pass and strand the
+-- org with nobody able to invite, re-role or remove anyone. The trigger
+-- serializes admin departures per org by locking the organizations row, and
+-- steps aside for the two legitimate cascades: org deletion (the org row is
+-- already gone in this transaction) and auth-user deletion (the member's auth
+-- row is already gone). security definer so the auth.users probe works
+-- regardless of the calling role, mirroring handle_new_user.
+create or replace function public.org_members_protect_last_admin()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
 begin
-  if old.role <> 'owner' then
+  if old.role <> 'admin' then
     return coalesce(new, old);
   end if;
-  if tg_op = 'UPDATE' and new.role = 'owner' then
+  if tg_op = 'UPDATE' and new.role = 'admin' then
     return new;
   end if;
 
-  -- Serialize concurrent owner departures on this org. If the org row is
+  -- Serialize concurrent admin departures on this org. If the org row is
   -- already deleted in this transaction (delete cascade), stand aside.
   perform 1 from public.organizations where id = old.org_id for update;
   if not found then
@@ -286,9 +271,9 @@ begin
 
   if not exists (
     select 1 from public.org_members
-    where org_id = old.org_id and role = 'owner' and user_id <> old.user_id
+    where org_id = old.org_id and role = 'admin' and user_id <> old.user_id
   ) then
-    raise exception 'An organization must keep at least one owner'
+    raise exception 'An organization must keep at least one admin'
       using errcode = '23514';
   end if;
 
@@ -296,37 +281,48 @@ begin
 end;
 $$;
 
-drop trigger if exists org_members_last_owner_guard on public.org_members;
-create trigger org_members_last_owner_guard
+drop trigger if exists org_members_last_admin_guard on public.org_members;
+create trigger org_members_last_admin_guard
   before delete or update of role on public.org_members
-  for each row execute procedure public.org_members_protect_last_owner();
+  for each row execute procedure public.org_members_protect_last_admin();
 
-create table if not exists public.teams (
+-- Invitations. Joining a firm's workspace exposes confidential material, so
+-- membership requires the recipient's consent: an admin creates a pending
+-- invitation, and org_members only appears when the invited account accepts.
+-- A pending invitation grants NOTHING on its own.
+--
+-- Addressed by normalized email rather than user id so an invitation can be
+-- created before the recipient has an account and claimed after they sign up.
+-- Expiry is evaluated lazily on read (a pending row past expires_at reports as
+-- expired and cannot be accepted), so no sweeper job races the accept path.
+create table if not exists public.org_invitations (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
-  name text not null,
-  created_by uuid references auth.users(id) on delete set null,
+  email text not null,
+  role text not null default 'member'
+    check (role in ('admin', 'member')),
+  invited_by uuid references auth.users(id) on delete set null,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'declined', 'cancelled', 'expired')),
+  expires_at timestamptz not null default (now() + interval '14 days'),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique(org_id, name)
+  accepted_at timestamptz,
+  declined_at timestamptz,
+  cancelled_at timestamptz,
+  constraint org_invitations_email_lowercase check (email = lower(email))
 );
 
-create index if not exists idx_teams_org on public.teams(org_id);
+-- One live invitation per (org, email); answered ones may accumulate.
+create unique index if not exists org_invitations_active_unique
+  on public.org_invitations(org_id, email)
+  where status = 'pending';
 
-alter table public.teams enable row level security;
+create index if not exists idx_org_invitations_email
+  on public.org_invitations(email) where status = 'pending';
+create index if not exists idx_org_invitations_org
+  on public.org_invitations(org_id);
 
-create table if not exists public.team_members (
-  id uuid primary key default gen_random_uuid(),
-  team_id uuid not null references public.teams(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  unique(team_id, user_id)
-);
-
-create index if not exists idx_team_members_user on public.team_members(user_id);
-create index if not exists idx_team_members_team on public.team_members(team_id);
-
-alter table public.team_members enable row level security;
+alter table public.org_invitations enable row level security;
 
 create table if not exists public.user_api_keys (
   id uuid primary key default gen_random_uuid(),
@@ -536,7 +532,10 @@ alter table public.user_mcp_tool_audit_logs enable row level security;
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable: an organization project outlives the account that created it.
+  -- user_id is provenance ("who made this"), not the access rule — that flows
+  -- from project_access_grants and org membership (lib/access.ts).
+  user_id uuid references auth.users(id) on delete set null,
   -- Multi-tenant: nullable so system/global rows stay valid; user_id remains
   -- the hard cascade anchor (org_id uses SET NULL, not CASCADE).
   org_id uuid references public.organizations(id) on delete set null,
@@ -561,10 +560,140 @@ create index if not exists idx_projects_org
 create index if not exists projects_shared_with_idx
   on public.projects using gin (shared_with);
 
+-- ---------------------------------------------------------------------------
+-- project_access_grants — direct, role-aware sharing
+-- ---------------------------------------------------------------------------
+-- Supersedes the roleless projects.shared_with email array, which could say
+-- WHO had access but never WHAT they could do: read-only outside counsel and
+-- a colleague restructuring the matter were the same grant.
+--
+-- Keyed by normalized email, not user id, so a project can be shared with
+-- someone who has no account yet AND with someone who is not a member of the
+-- project's organization — the "outside counsel on one matter" case that org
+-- membership cannot express. lib/access.ts merges a grant with any org
+-- inheritance strongest-wins, so a grant can only ever add standing.
+create table if not exists public.project_access_grants (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects(id) on delete cascade,
+  email text not null,
+  role text not null default 'member'
+    check (role in ('admin', 'member', 'viewer')),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(project_id, email),
+  constraint project_access_grants_email_lowercase check (email = lower(email))
+);
+
+create index if not exists idx_project_access_grants_email
+  on public.project_access_grants(email);
+create index if not exists idx_project_access_grants_project
+  on public.project_access_grants(project_id);
+
+alter table public.project_access_grants enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Role resolution, shared by every list RPC
+-- ---------------------------------------------------------------------------
+-- The same strongest-wins merge lib/access.ts performs in TypeScript, in one
+-- place instead of once per RPC. A caller can reach a project as its creator,
+-- through a direct access grant, or through membership of its organization;
+-- when several apply the strongest role wins, so an extra grant can never
+-- demote anybody.
+--
+-- Returns null when the caller has no access at all, which is how the list
+-- RPCs' visibility predicates and this column stay consistent with each other.
+create or replace function public.project_access_role(
+  p_project_id uuid,
+  p_project_user_id uuid,
+  p_org_id uuid,
+  p_user_id text,
+  p_user_email text
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select r.role
+  from (
+    -- The creator holds an admin grant implicitly; no permanently elevated
+    -- tier sits above it.
+    select 'admin'::text as role, 3 as rank
+    where p_project_user_id::text = p_user_id
+    union all
+    select g.role,
+           case g.role when 'admin' then 3 when 'member' then 2 else 1 end
+    from public.project_access_grants g
+    where g.project_id = p_project_id
+      and coalesce(p_user_email, '') <> ''
+      and g.email = lower(p_user_email)
+    union all
+    -- Organization inheritance: admin -> project admin, member -> member.
+    select case m.role when 'admin' then 'admin' else 'member' end,
+           case m.role when 'admin' then 3 else 2 end
+    from public.org_members m
+    where p_org_id is not null
+      and m.org_id = p_org_id
+      and m.user_id::text = p_user_id
+  ) r
+  order by r.rank desc
+  limit 1;
+$$;
+
+-- Same merge for a tabular review: its creator, its own share list (content
+-- collaboration, so 'member'), whatever the containing project grants, and
+-- the review's own organization.
+create or replace function public.review_access_role(
+  p_review_user_id uuid,
+  p_project_id uuid,
+  p_shared_with jsonb,
+  p_org_id uuid,
+  p_user_id text,
+  p_user_email text
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select r.role
+  from (
+    select 'admin'::text as role, 3 as rank
+    where p_review_user_id::text = p_user_id
+    union all
+    select 'member', 2
+    where coalesce(p_user_email, '') <> ''
+      and coalesce(p_shared_with, '[]'::jsonb) @> jsonb_build_array(lower(p_user_email))
+    union all
+    select pr.role,
+           case pr.role when 'admin' then 3 when 'member' then 2 else 1 end
+    from (
+      select public.project_access_role(
+               pj.id, pj.user_id, pj.org_id, p_user_id, p_user_email
+             ) as role
+      from public.projects pj
+      where pj.id = p_project_id
+    ) pr
+    where pr.role is not null
+    union all
+    select case m.role when 'admin' then 'admin' else 'member' end,
+           case m.role when 'admin' then 3 else 2 end
+    from public.org_members m
+    where p_org_id is not null
+      and m.org_id = p_org_id
+      and m.user_id::text = p_user_id
+  ) r
+  order by r.rank desc
+  limit 1;
+$$;
+
 create table if not exists public.project_subfolders (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   name text not null,
   parent_folder_id uuid references public.project_subfolders(id) on delete cascade,
   created_at timestamptz not null default now(),
@@ -596,7 +725,9 @@ create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
   org_id uuid references public.organizations(id) on delete set null,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
   library_kind text not null default 'file',
@@ -1589,7 +1720,9 @@ $$;
 create table if not exists public.chats (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   title text,
   model text,
   reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
@@ -1782,7 +1915,9 @@ $$;
 create table if not exists public.tabular_reviews (
   id uuid primary key default gen_random_uuid(),
   project_id uuid references public.projects(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  -- Nullable + SET NULL: content inside an organization project survives its
+  -- author's account deletion (userDataCleanup detaches rather than deletes).
+  user_id uuid references auth.users(id) on delete set null,
   title text,
   model text,
   columns_config jsonb,
@@ -1829,6 +1964,7 @@ returns table (
   is_owner boolean,
   owner_display_name text,
   owner_email text,
+  access_role text,
   document_count integer,
   chat_count integer,
   review_count integer
@@ -1843,7 +1979,10 @@ as $$
        or (
         coalesce(p_user_email, '') <> ''
         and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
+        and exists (
+          select 1 from public.project_access_grants g
+          where g.project_id = p.id and g.email = lower(p_user_email)
+        )
       )
        or (
         p.org_id is not null
@@ -1881,9 +2020,15 @@ as $$
     vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id::text = p_user_id as is_owner,
+    coalesce(vp.user_id::text = p_user_id, false) as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
-    null::text as owner_email,
+    -- Populated at last. The column has always been declared and always
+    -- returned NULL, so the UI's "ask the project admin" line had no address
+    -- to render and silently collapsed to nothing.
+    up.email as owner_email,
+    public.project_access_role(
+      vp.id, vp.user_id, vp.org_id, p_user_id, p_user_email
+    ) as access_role,
     coalesce(dc.document_count, 0) as document_count,
     coalesce(cc.chat_count, 0) as chat_count,
     coalesce(rc.review_count, 0) as review_count
@@ -2049,6 +2194,7 @@ returns table (
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
+  access_role text,
   document_count integer
 )
 language sql
@@ -2061,7 +2207,10 @@ as $$
        or (
         coalesce(p_user_email, '') <> ''
         and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
+        and exists (
+          select 1 from public.project_access_grants g
+          where g.project_id = p.id and g.email = lower(p_user_email)
+        )
       )
        or (
         p.org_id is not null
@@ -2167,7 +2316,11 @@ as $$
     vr.shared_with,
     vr.created_at,
     vr.updated_at,
-    vr.user_id::text = p_user_id as is_owner,
+    coalesce(vr.user_id::text = p_user_id, false) as is_owner,
+    public.review_access_role(
+      vr.user_id, vr.project_id, vr.shared_with, vr.org_id,
+      p_user_id, p_user_email
+    ) as access_role,
     rdc.document_count
   from visible_reviews vr
   join review_document_counts rdc
@@ -2228,6 +2381,7 @@ returns table (
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
+  access_role text,
   document_count integer
 )
 language sql
@@ -2270,7 +2424,10 @@ as $$
        or (
         coalesce(p_user_email, '') <> ''
         and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
+        and exists (
+          select 1 from public.project_access_grants g
+          where g.project_id = p.id and g.email = lower(p_user_email)
+        )
       )
        or (
         p.org_id is not null
@@ -2543,7 +2700,10 @@ as $$
        or (
          coalesce(p_user_email, '') <> ''
          and p.user_id::text <> p_user_id
-         and p.shared_with @> jsonb_build_array(p_user_email)
+         and exists (
+           select 1 from public.project_access_grants g
+           where g.project_id = p.id and g.email = lower(p_user_email)
+         )
        )
        or (
          -- Org arm: same predicate as get_projects_overview, so the filter
@@ -2730,6 +2890,7 @@ returns table (
   is_owner boolean,
   owner_display_name text,
   owner_email text,
+  access_role text,
   document_count integer,
   chat_count integer,
   review_count integer
@@ -2745,7 +2906,10 @@ as $$
         or (
           coalesce(p_user_email, '') <> ''
           and p.user_id::text <> p_user_id
-          and p.shared_with @> jsonb_build_array(p_user_email)
+          and exists (
+            select 1 from public.project_access_grants g
+            where g.project_id = p.id and g.email = lower(p_user_email)
+          )
         )
         or (
           p.org_id is not null
@@ -2816,9 +2980,15 @@ as $$
     vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id::text = p_user_id as is_owner,
+    coalesce(vp.user_id::text = p_user_id, false) as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
-    null::text as owner_email,
+    -- Populated at last. The column has always been declared and always
+    -- returned NULL, so the UI's "ask the project admin" line had no address
+    -- to render and silently collapsed to nothing.
+    up.email as owner_email,
+    public.project_access_role(
+      vp.id, vp.user_id, vp.org_id, p_user_id, p_user_email
+    ) as access_role,
     coalesce(dc.document_count, 0) as document_count,
     coalesce(cc.chat_count, 0) as chat_count,
     coalesce(rc.review_count, 0) as review_count
@@ -2886,7 +3056,10 @@ as $$
       or (
         coalesce(p_user_email, '') <> ''
         and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
+        and exists (
+          select 1 from public.project_access_grants g
+          where g.project_id = p.id and g.email = lower(p_user_email)
+        )
       )
       or (
         p.org_id is not null
@@ -3207,13 +3380,16 @@ as $$
     p.name,
     p.created_at,
     p.updated_at,
-    p.user_id::text = p_user_id as is_owner
+    coalesce(p.user_id::text = p_user_id, false) as is_owner
   from public.projects p
   where p.user_id::text = p_user_id
      or (
        coalesce(p_user_email, '') <> ''
        and p.user_id::text <> p_user_id
-       and p.shared_with @> jsonb_build_array(p_user_email)
+       and exists (
+         select 1 from public.project_access_grants g
+         where g.project_id = p.id and g.email = lower(p_user_email)
+       )
      )
      or (
        p.org_id is not null
@@ -4205,8 +4381,8 @@ $$;
 revoke all on public.user_profiles from anon, authenticated;
 revoke all on public.organizations from anon, authenticated;
 revoke all on public.org_members from anon, authenticated;
-revoke all on public.teams from anon, authenticated;
-revoke all on public.team_members from anon, authenticated;
+revoke all on public.org_invitations from anon, authenticated;
+revoke all on public.project_access_grants from anon, authenticated;
 revoke all on public.projects from anon, authenticated;
 revoke all on public.project_subfolders from anon, authenticated;
 revoke all on public.library_folders from anon, authenticated;
