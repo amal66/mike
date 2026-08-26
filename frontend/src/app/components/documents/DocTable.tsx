@@ -424,7 +424,7 @@ export function DocTable({
         (
             capability: Capability,
             action: string,
-            requiredRole: "manager" | "editor",
+            requiredRole: "admin" | "member",
         ) => {
             if (allowed(capability)) return true;
             setOwnerOnlyAction({ action, requiredRole });
@@ -443,7 +443,7 @@ export function DocTable({
         // Same capability the header Add button is gated on — this also
         // covers the empty-state click, which calls openAddDocuments
         // directly.
-        if (!requireCapability("content.edit", "add documents", "editor"))
+        if (!requireCapability("content.edit", "add documents", "member"))
             return;
         if (renderAddDocumentsModalRef.current) {
             setAddDocsOpen(true);
@@ -567,13 +567,13 @@ export function DocTable({
     function requireDocOwnerForVersions(docId: string, action: string): boolean {
         const doc = documents.find((d) => d.id === docId);
         if (!doc || !isSharedDocument(doc)) return true;
-        setOwnerOnlyAction({ action, requiredRole: "owner" });
+        setOwnerOnlyAction({ action, requiredRole: "admin" });
         return false;
     }
 
     async function submitNewVersion(doc: Document, file: File, filename: string) {
         // Same tier as the server's POST /versions guard (content.edit).
-        if (!requireCapability("content.edit", "upload a new version", "editor"))
+        if (!requireCapability("content.edit", "upload a new version", "member"))
             return;
         try {
             await uploadDocumentVersion(doc.id, file, filename);
@@ -622,7 +622,7 @@ export function DocTable({
      */
     async function handleRenameVersion(docId: string, versionId: string, filename: string | null) {
         // Server PATCH /versions/:id guard is content.edit.
-        if (!requireCapability("content.edit", "rename versions", "editor"))
+        if (!requireCapability("content.edit", "rename versions", "member"))
             return;
         const previousFilename = versionsByDocId
             .get(docId)
@@ -977,7 +977,7 @@ export function DocTable({
             setCreatingFolderIn(undefined);
             return;
         }
-        if (!requireCapability("docs.organize", "create folders", "editor")) {
+        if (!requireCapability("docs.organize", "create folders", "member")) {
             setCreatingFolderIn(undefined);
             return;
         }
@@ -1016,13 +1016,9 @@ export function DocTable({
         const name = renameFolderValue.trim();
         setRenamingFolderId(null);
         if (!name) return;
-        if (
-            !requireCapability(
-                "structure.manage",
-                "rename folders",
-                "manager",
-            )
-        )
+        // Folder operations are member-level: organizing the shelf is part
+        // of collaborating on what sits on it, not an administrative act.
+        if (!requireCapability("docs.organize", "rename folders", "member"))
             return;
         const updatedAt = new Date().toISOString();
         setFolders((prev) =>
@@ -1066,9 +1062,9 @@ export function DocTable({
     function requestDeleteFolder(folderId: string) {
         if (
             !requireCapability(
-                "structure.manage",
+                "docs.organize",
                 "delete folders and their documents",
-                "manager",
+                "member",
             )
         )
             return;
@@ -1239,7 +1235,7 @@ export function DocTable({
 
     async function handleRemoveDocFromFolder(docId: string) {
         if (
-            !requireCapability("docs.organize", "move documents", "editor")
+            !requireCapability("docs.organize", "move documents", "member")
         )
             return;
         setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, folder_id: null } : d)));
@@ -1258,7 +1254,7 @@ export function DocTable({
             return;
         }
         if (
-            !requireCapability("docs.organize", "rename documents", "editor")
+            !requireCapability("docs.organize", "rename documents", "member")
         ) {
             setRenamingDocumentId(null);
             return;
@@ -1429,7 +1425,7 @@ export function DocTable({
         // (capability-gated) Add button, so they need the same
         // content.edit check: viewers get the role popup instead of a
         // doomed upload that the backend would 403 anyway.
-        if (!requireCapability("content.edit", "add documents", "editor"))
+        if (!requireCapability("content.edit", "add documents", "member"))
             return;
         const { supported, unsupported } = partitionSupportedDocumentFiles(
             entries.map((entry) => entry.file),
@@ -1745,7 +1741,7 @@ export function DocTable({
         if (files.length === 0) return;
         // Same tier as the server's POST /versions guard (content.edit) —
         // without it an org viewer's drop fails into console.error only.
-        if (!requireCapability("content.edit", "upload a new version", "editor"))
+        if (!requireCapability("content.edit", "upload a new version", "member"))
             return;
         const { supported, unsupported } = partitionSupportedDocumentFiles(files);
         setDocumentUploadWarning(formatUnsupportedDocumentWarning(unsupported));
@@ -1866,7 +1862,7 @@ export function DocTable({
             });
             if (movingIds.length === 0) return;
             if (
-                !requireCapability("docs.organize", "move documents", "editor")
+                !requireCapability("docs.organize", "move documents", "member")
             )
                 return;
             const updatedAt = new Date().toISOString();
@@ -1909,11 +1905,7 @@ export function DocTable({
             }
         } else if (subFolderId && subFolderId !== targetFolderId) {
             if (
-                !requireCapability(
-                    "structure.manage",
-                    "move folders",
-                    "manager",
-                )
+                !requireCapability("docs.organize", "move folders", "member")
             )
                 return;
             if (targetFolderId !== null && wouldCreateCycle(subFolderId, targetFolderId)) return;
@@ -3039,7 +3031,7 @@ export function DocTable({
 
     const handleRemoveSelectedFromFolder = useCallback(async () => {
         if (
-            !requireCapability("docs.organize", "move documents", "editor")
+            !requireCapability("docs.organize", "move documents", "member")
         )
             return;
         const ids = selectedStandaloneDocIds.filter(

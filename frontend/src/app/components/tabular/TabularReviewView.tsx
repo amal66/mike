@@ -45,7 +45,7 @@ import { AddColumnModal } from "./AddColumnModal";
 import { TRWorkflowModal } from "./TRWorkflowModal";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 import { PeopleModal } from "../modals/PeopleModal";
-import { OwnerOnlyPopup } from "../popups/OwnerOnlyPopup";
+import { PermissionDeniedPopup } from "../popups/PermissionDeniedPopup";
 import { ApiKeyMissingPopup } from "../popups/ApiKeyMissingPopup";
 import { ConfirmPopup } from "../popups/ConfirmPopup";
 import { WarningPopup } from "../popups/WarningPopup";
@@ -274,28 +274,45 @@ export function TRView({ reviewId, projectId }: Props) {
         );
     }
 
-    // Role ladder for this review; "owner" until it loads. Column/document
-    // mutations and clearing cells are manager+ server-side; generation and
-    // chat are editor+; delete stays owner-only.
-    const reviewRole = review ? roleFrom(review) : "owner";
-    const canManageStructure = can(reviewRole, "structure.manage");
-
-    function requireStructure(action: string): boolean {
-        if (canManageStructure) return true;
-        setOwnerOnlyAction({ action, requiredRole: "manager" });
-        return false;
-    }
-
-    // Generation and review chat are editor-tier server-side; without this
-    // gate an org viewer is offered affordances that always fail with an
-    // unexplained error.
+    // Role ladder for this review; "admin" until it loads. Reshaping the
+    // review (columns, document set, clearing cells) and running it are both
+    // member-tier server-side now — a member is the normal collaborator, and
+    // splitting "edit content" from "edit structure" only ever produced two
+    // refusals for one job. Deleting the review stays admin.
+    const reviewRole = review ? roleFrom(review) : "admin";
     const canEditContent = can(reviewRole, "content.edit");
 
     function requireContent(action: string): boolean {
         if (canEditContent) return true;
-        setOwnerOnlyAction({ action, requiredRole: "editor" });
+        setOwnerOnlyAction({ action, requiredRole: "member" });
         return false;
     }
+
+    const requireStructure = requireContent;
+
+    // Who to ask when an action is refused. A review inside a project inherits
+    // that project's admin contacts; a standalone review's contact is its
+    // creator, which only the people roster knows — so it is fetched the first
+    // time a refusal actually happens rather than on every page load.
+    const [reviewContacts, setReviewContacts] = useState<
+        { email: string | null; display_name: string | null }[] | null
+    >(null);
+    const deniedContacts = project?.admin_contacts ?? reviewContacts;
+    useEffect(() => {
+        if (!ownerOnlyAction || project || reviewContacts) return;
+        let cancelled = false;
+        getTabularReviewPeople(reviewId)
+            .then((people) => {
+                if (cancelled) return;
+                setReviewContacts(people.owner ? [people.owner] : []);
+            })
+            .catch(() => {
+                if (!cancelled) setReviewContacts([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [ownerOnlyAction, project, reviewContacts, reviewId]);
 
     async function saveColumnsConfig(nextColumns: ColumnConfig[]) {
         setSavingColumnsConfig(true);
@@ -305,8 +322,8 @@ export function TRView({ reviewId, projectId }: Props) {
             });
             // The PATCH response is the bare DB row — no access_role /
             // is_owner — so replacing the review state with it would send
-            // roleFrom's fallback to "owner" and silently open every client
-            // gate for a manager. Merge so the detail fields survive.
+            // roleFrom to its fail-closed fallback and shut every client gate
+            // for an admin. Merge so the detail fields survive.
             setReview((prev) => (prev ? { ...prev, ...updated } : updated));
             setColumns(updated.columns_config || nextColumns);
         } finally {
@@ -946,10 +963,10 @@ export function TRView({ reviewId, projectId }: Props) {
     }
 
     function requestReviewDetails() {
-        if (review && !canManageStructure) {
+        if (review && !can(reviewRole, "access.manage")) {
             setOwnerOnlyAction({
                 action: "edit tabular review details",
-                requiredRole: "manager",
+                requiredRole: "admin",
             });
             return;
         }
@@ -963,14 +980,13 @@ export function TRView({ reviewId, projectId }: Props) {
         if (!review || !requireStructure("edit tabular review details"))
             return;
         // Only send project_id when it actually changes: moving a review
-        // between projects is owner-only server-side, and sending an
-        // unchanged value would 403 a manager editing just the title.
+        // between projects is admin-only server-side, and sending an
+        // unchanged value would 403 a member editing just the title.
         const nextProjectId = values.projectId ?? null;
         const projectChanged = nextProjectId !== (review.project_id ?? null);
-        // Moving a review between projects is owner-only server-side; gate
-        // it here so a manager changing the project selector gets an
-        // explanation instead of an unexplained failed save.
-        if (projectChanged && reviewRole !== "owner") {
+        // Gate the move here so somebody who touched the project selector
+        // gets an explanation instead of an unexplained failed save.
+        if (projectChanged && !can(reviewRole, "access.manage")) {
             setOwnerOnlyAction("move this review to another project");
             return;
         }
@@ -1681,7 +1697,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 open={detailsOpen}
                 review={review}
                 projects={project ? [project] : availableProjects}
-                canEdit={canManageStructure}
+                canEdit={can(reviewRole, "access.manage")}
                 lockProject={Boolean(projectId)}
                 onClose={() => setDetailsOpen(false)}
                 onSave={handleDetailsSave}
@@ -1702,7 +1718,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 // PeopleModal hides the add/remove controls when this prop
                 // is undefined.
                 onSharedWithChange={
-                    !can(reviewRole, "members.manage")
+                    !can(reviewRole, "access.manage")
                         ? undefined
                         : async (next) => {
                               const updated = await updateTabularReview(
@@ -1769,7 +1785,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 onConfirm={() => void confirmReviewDelete()}
             />
 
-            <OwnerOnlyPopup
+            <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
                 action={
                     typeof ownerOnlyAction === "string"
@@ -1778,9 +1794,10 @@ export function TRView({ reviewId, projectId }: Props) {
                 }
                 requiredRole={
                     typeof ownerOnlyAction === "string"
-                        ? "owner"
+                        ? "admin"
                         : ownerOnlyAction?.requiredRole
                 }
+                contacts={deniedContacts}
                 onClose={() => setOwnerOnlyAction(null)}
             />
 

@@ -2,6 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import { Loader2 } from "lucide-react";
+import { can, roleFrom } from "@/app/lib/permissions";
 import {
     RowActionMenuItems,
     RowActions,
@@ -45,7 +46,6 @@ export function ProjectReviewsTable({
     reviews,
     selectedReviewIds,
     creatingReview,
-    currentUserId,
     onCreateReview,
     onOpenReview,
     onOpenDetails,
@@ -71,7 +71,6 @@ export function ProjectReviewsTable({
     reviews: TabularReview[];
     selectedReviewIds: string[];
     creatingReview: boolean;
-    currentUserId?: string | null;
     onCreateReview: () => void;
     onOpenReview: (reviewId: string) => void;
     onOpenDetails: (review: TabularReview) => void;
@@ -309,9 +308,12 @@ export function ProjectReviewsTable({
                                                           ? undefined
                                                           : () => {
                                                                 if (
-                                                                    currentUserId &&
-                                                                    review.user_id !==
-                                                                        currentUserId
+                                                                    !can(
+                                                                        roleFrom(
+                                                                            review,
+                                                                        ),
+                                                                        "access.manage",
+                                                                    )
                                                                 ) {
                                                                     onOwnerOnlyAction(
                                                                         "edit tabular review details",
@@ -390,8 +392,10 @@ export function ProjectReviewsTable({
                                         viewLabel="Open"
                                         onEditDetails={() => {
                                             if (
-                                                currentUserId &&
-                                                review.user_id !== currentUserId
+                                                !can(
+                                                    roleFrom(review),
+                                                    "access.manage",
+                                                )
                                             ) {
                                                 onOwnerOnlyAction(
                                                     "edit tabular review details",

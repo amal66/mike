@@ -12,6 +12,7 @@ import {
 } from "@/app/components/projects/ProjectWorkspace";
 import type { TabularReview } from "@/app/components/shared/types";
 import { useAuth } from "@/app/contexts/AuthContext";
+import { can, roleFrom } from "@/app/lib/permissions";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
@@ -112,7 +113,9 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     const effectiveLoading = loading && !previewEmptyStates;
 
     function handleOpenDetails(review: TabularReview) {
-        if (user?.id && review.user_id !== user.id) {
+        // Each row carries its own merged access_role now, so a project admin
+        // is no longer refused on a review a colleague created.
+        if (!can(roleFrom(review), "access.manage")) {
             setOwnerOnlyAction("edit tabular review details");
             return;
         }
@@ -124,7 +127,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         projectId?: string | null;
     }) {
         if (!detailsReview) return;
-        if (user?.id && detailsReview.user_id !== user.id) {
+        if (!can(roleFrom(detailsReview), "access.manage")) {
             setOwnerOnlyAction("edit tabular review details");
             return;
         }
@@ -153,7 +156,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     }
 
     async function handleDeleteReviewRow(review: TabularReview) {
-        if (user?.id && review.user_id !== user.id) {
+        if (!can(roleFrom(review), "container.delete")) {
             setOwnerOnlyAction("delete this tabular review");
             return;
         }
@@ -182,7 +185,12 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         const ids = [...selectedReviewIds];
         setActionsOpen(false);
         setBulkDeleteNotice(null);
+        const roleById = new Map(
+            reviews.map((review) => [review.id, roleFrom(review)] as const),
+        );
         const owned = ids.filter((id) => {
+            const role = roleById.get(id);
+            if (role) return can(role, "container.delete");
             const ownerId = getReviewOwnerId(id);
             return !!ownerId && ownerId === user?.id;
         });
@@ -205,7 +213,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         }
         const notices = [
             blocked > 0
-                ? `${blocked} selected review${blocked === 1 ? " was" : "s were"} skipped because only the review creator can delete them.`
+                ? `${blocked} selected review${blocked === 1 ? " was" : "s were"} skipped because only a review admin can delete them.`
                 : null,
             failedIds.length > 0
                 ? `${failedIds.length} review${failedIds.length === 1 ? " was" : "s were"} not deleted because the request failed. ${failedIds.length === 1 ? "It remains" : "They remain"} selected so you can try again.`
@@ -240,7 +248,6 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
                 reviews={visibleReviews}
                 selectedReviewIds={selectedReviewIds}
                 creatingReview={workspace.creatingReview}
-                currentUserId={user?.id}
                 loading={effectiveLoading}
                 loadingMore={loadingMore}
                 hasMore={hasMore}
@@ -275,7 +282,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
                 projects={project ? [project] : []}
                 canEdit={
                     !!detailsReview &&
-                    (!user?.id || detailsReview.user_id === user.id)
+                    can(roleFrom(detailsReview), "access.manage")
                 }
                 lockProject
                 onClose={() => setDetailsReview(null)}

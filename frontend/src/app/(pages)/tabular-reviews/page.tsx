@@ -20,7 +20,8 @@ import type { TabularReview, Project } from "@/app/components/shared/types";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { TabularReviewDetailsModal } from "@/app/components/tabular/TabularReviewDetailsModal";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import { can, roleFrom } from "@/app/lib/permissions";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -256,7 +257,10 @@ export default function TabularReviewsPage() {
     };
 
     function requestReviewDetails(review: TabularReview) {
-        if (user?.id && review.user_id !== user.id) {
+        // The overview RPC now returns each row's merged access_role, so a
+        // project admin acting on a colleague's review is recognised here
+        // instead of being refused for not having created it.
+        if (!can(roleFrom(review), "access.manage")) {
             setOwnerOnlyAction("edit tabular review details");
             return;
         }
@@ -268,7 +272,7 @@ export default function TabularReviewsPage() {
         projectId?: string | null;
     }) {
         if (!detailsReview) return;
-        if (user?.id && detailsReview.user_id !== user.id) {
+        if (!can(roleFrom(detailsReview), "access.manage")) {
             setOwnerOnlyAction("edit tabular review details");
             return;
         }
@@ -301,7 +305,15 @@ export default function TabularReviewsPage() {
         setConfirmDeleteAllOpen(false);
         setSelectionCameFromSelectAll(false);
         setBulkDeleteNotice(null);
+        // Prefer the loaded row's role; select-all-matching can hand back
+        // ids that were never paged in, and for those the creator id is the
+        // only signal available.
+        const roleById = new Map(
+            reviews.map((review) => [review.id, roleFrom(review)] as const),
+        );
         const owned = ids.filter((id) => {
+            const role = roleById.get(id);
+            if (role) return can(role, "container.delete");
             const ownerId = getReviewOwnerId(id);
             return !!ownerId && (!user?.id || ownerId === user.id);
         });
@@ -324,7 +336,7 @@ export default function TabularReviewsPage() {
         }
         const notices = [
             blocked > 0
-                ? `${blocked} selected review${blocked === 1 ? " was" : "s were"} skipped because only the review creator can delete them.`
+                ? `${blocked} selected review${blocked === 1 ? " was" : "s were"} skipped because only a review admin can delete them.`
                 : null,
             failedIds.length > 0
                 ? `${failedIds.length} review${failedIds.length === 1 ? " was" : "s were"} not deleted because the request failed. ${failedIds.length === 1 ? "It remains" : "They remain"} selected so you can try again.`
@@ -334,7 +346,7 @@ export default function TabularReviewsPage() {
     }
 
     async function handleDeleteReviewRow(review: TabularReview) {
-        if (user?.id && review.user_id !== user.id) {
+        if (!can(roleFrom(review), "container.delete")) {
             setOwnerOnlyAction("delete this tabular review");
             return;
         }
@@ -775,13 +787,13 @@ export default function TabularReviewsPage() {
                 projects={projects}
                 canEdit={
                     !!detailsReview &&
-                    (!user?.id || detailsReview.user_id === user.id)
+                    can(roleFrom(detailsReview), "access.manage")
                 }
                 onClose={() => setDetailsReview(null)}
                 onSave={handleDetailsSave}
             />
 
-            <OwnerOnlyPopup
+            <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
@@ -795,7 +807,7 @@ export default function TabularReviewsPage() {
             <ConfirmPopup
                 open={confirmDeleteAllOpen && selectedIds.length > 0}
                 title="Delete all selected reviews?"
-                message={`This will permanently delete every selected review you own, including selected reviews not currently shown. Their review results and associated data will also be deleted. Reviews owned by others will be skipped. ${selectedIds.length} reviews are selected.`}
+                message={`This will permanently delete every selected review you administer, including selected reviews not currently shown. Their review results and associated data will also be deleted. Reviews you cannot delete will be skipped. ${selectedIds.length} reviews are selected.`}
                 confirmLabel="Delete"
                 onCancel={() => setConfirmDeleteAllOpen(false)}
                 onConfirm={() => void handleDeleteSelected()}
