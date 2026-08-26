@@ -230,14 +230,22 @@ maybeDescribe("get_chats_overview — deploy-window overload pair", () => {
         expect(titlesFrom(legacy.data)).toEqual(
             ["inMyProject", "inSharedOrgProject", "mine"].sort(),
         );
-        // Old callers must keep seeing the old column set, too.
+        // Old callers must keep seeing the pre-#363 column set — which since
+        // #383 includes `model` (main's 20260826_01 added it to this
+        // signature before this branch existed).
         const row = (legacy.data as Record<string, unknown>[]).find(
             (r) => r.id === chats.mine,
         );
         expect(row).toBeDefined();
-        expect(Object.keys(row!).sort()).toEqual(
-            ["created_at", "id", "project_id", "project_name", "title", "user_id"],
-        );
+        expect(Object.keys(row!).sort()).toEqual([
+            "created_at",
+            "id",
+            "model",
+            "project_id",
+            "project_name",
+            "title",
+            "user_id",
+        ]);
     });
 
     it("answers the new four-argument call with the wider, email-aware set", async () => {
