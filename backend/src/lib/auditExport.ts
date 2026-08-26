@@ -43,20 +43,20 @@ export async function accessibleProjectIds(
     const own = await db.from("projects").select("id").eq("user_id", userId);
     for (const row of (own.data ?? []) as { id: string }[]) ids.add(row.id);
     if (email) {
-        // shared_with is jsonb, so containment must be sent as a jsonb
-        // literal. supabase-js .contains() serializes arrays as a PgArray
-        // ({...}), which Postgres rejects for jsonb; the error was swallowed
-        // and every shared-project event silently vanished from the feed.
+        // Direct sharing is `project_access_grants`: one row per recipient,
+        // keyed on normalized email. `projects.shared_with` is only a display
+        // mirror rebuilt from these rows (lib/projectAccess.ts) — a mirror can
+        // be backfilled, hand-edited or stale, and no authorization decision
+        // may read it. This one gates an audit trail.
         const shared = await db
-            .from("projects")
-            .select("id")
-            .filter(
-                "shared_with",
-                "cs",
-                JSON.stringify([email.trim().toLowerCase()]),
-            );
-        for (const row of (shared.data ?? []) as { id: string }[])
-            ids.add(row.id);
+            .from("project_access_grants")
+            .select("project_id")
+            .eq("email", email.trim().toLowerCase());
+        for (const row of (shared.data ?? []) as {
+            project_id: string | null;
+        }[]) {
+            if (row.project_id) ids.add(row.project_id);
+        }
     }
     return [...ids];
 }

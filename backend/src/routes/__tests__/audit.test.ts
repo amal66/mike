@@ -120,18 +120,25 @@ describe("parseQuery", () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Chainable Supabase mock. `projects` select responses are keyed by whether the
- * query used .eq (owned) or .filter (shared containment). The audit_events
- * builder records the .or / .eq filter it was given so tests can assert
- * scoping. The builder deliberately has no .contains: shared_with is jsonb, and
- * supabase-js .contains serializes arrays as PgArray, which Postgres rejects —
- * a regression back to it fails loudly here.
+ * Chainable Supabase mock.
+ *
+ * `owned` answers the `projects` lookup (.eq on user_id) and `shared` answers
+ * the `project_access_grants` lookup, which is where direct sharing actually
+ * lives. `mirrorOnly` seeds projects that carry the caller's address in the
+ * legacy `projects.shared_with` mirror WITHOUT a grant: they are what a
+ * regression to mirror-based authorization would let through, and the mock
+ * records any containment query so such a regression is visible rather than
+ * merely wrong.
+ *
+ * The builder deliberately has no .contains: shared_with is jsonb, and
+ * supabase-js .contains serializes arrays as PgArray, which Postgres rejects.
  */
 function makeDb(
     owned: string[],
     shared: string[],
     events: Record<string, unknown>[] = [],
     profiles: Record<string, unknown>[] = [],
+    mirrorOnly: string[] = [],
 ) {
     const calls: {
         or?: string;
@@ -140,10 +147,11 @@ function makeDb(
         ilike?: [string, string];
         profileUserIds?: string[];
         sharedFilter?: [string, string, string];
+        grantEmail?: unknown;
     } = { eq: [] };
 
     function projectsBuilder() {
-        let mode: "owned" | "shared" = "owned";
+        let mode: "owned" | "mirror" = "owned";
         const b: any = {
             select: () => b,
             eq: () => {
@@ -152,14 +160,31 @@ function makeDb(
             },
             filter: (column: string, op: string, value: string) => {
                 calls.sharedFilter = [column, op, value];
-                mode = "shared";
+                mode = "mirror";
                 return b;
             },
             then: (resolve: (v: { data: { id: string }[] }) => unknown) =>
                 Promise.resolve({
-                    data: (mode === "owned" ? owned : shared).map((id) => ({
+                    data: (mode === "owned" ? owned : mirrorOnly).map((id) => ({
                         id,
                     })),
+                }).then(resolve),
+        };
+        return b;
+    }
+
+    function grantsBuilder() {
+        const b: any = {
+            select: () => b,
+            eq: (column: string, value: unknown) => {
+                if (column === "email") calls.grantEmail = value;
+                return b;
+            },
+            then: (
+                resolve: (v: { data: { project_id: string }[] }) => unknown,
+            ) =>
+                Promise.resolve({
+                    data: shared.map((id) => ({ project_id: id })),
                 }).then(resolve),
         };
         return b;
@@ -213,6 +238,7 @@ function makeDb(
     const db = {
         from(table: string) {
             if (table === "projects") return projectsBuilder();
+            if (table === "project_access_grants") return grantsBuilder();
             if (table === "user_profiles") return profilesBuilder();
             return auditBuilder();
         },
@@ -251,14 +277,25 @@ describe("queryEvents visibility scoping", () => {
         expect([...both].sort()).toEqual(["p1", "p2", "p3"]);
     });
 
-    it("sends shared containment as a lowercased jsonb literal", async () => {
+    it("looks direct sharing up by normalized email in the grant table", async () => {
         const { db, calls } = makeDb([], ["p-shared"]);
         await accessibleProjectIds(db, "u1", " U1@Example.com ");
-        expect(calls.sharedFilter).toEqual([
-            "shared_with",
-            "cs",
-            JSON.stringify(["u1@example.com"]),
-        ]);
+        expect(calls.grantEmail).toBe("u1@example.com");
+        // Grants are the source of truth; the mirror is never consulted.
+        expect(calls.sharedFilter).toBeUndefined();
+    });
+
+    it("admits a grant holder and refuses an address that is only in the mirror", async () => {
+        // `projects.shared_with` is rewritten from the grants after every
+        // mutation, so in the happy path the two agree — which is exactly why
+        // reading the mirror looked harmless. It is not the same statement:
+        // the mirror was backfilled from legacy rows by migration _03, is
+        // still writable directly, and is declared display-only. An audit
+        // trail is not something a display column gets to hand out.
+        const { db } = makeDb([], ["p-granted"], [], [], ["p-mirror-only"]);
+        const visible = await accessibleProjectIds(db, "u1", "u1@example.com");
+        expect(visible).toContain("p-granted");
+        expect(visible).not.toContain("p-mirror-only");
     });
 
     it("applies categorical filters and the requested sort", async () => {
