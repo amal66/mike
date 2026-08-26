@@ -30,13 +30,15 @@ import {
     type ProjectRole,
 } from "@/app/lib/permissions";
 import { cn } from "@/app/lib/utils";
-import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/shared/ui/LiquidGlassUI";
+import {
+    LIQUID_GLASS_MODAL_ROW_HOVER_CLASS,
+    LIQUID_GLASS_SUBTLE_CLASS,
+} from "@/shared/ui/LiquidGlassUI";
 
 const PERSONAL_WORKSPACE = "__personal__";
 
-/** Same control as the share dialog's, so the two dialogs match. */
-const ROLE_SELECT_CLASS =
-    "h-6 rounded-full px-2 text-xs text-gray-700 bg-white/70 ring-1 ring-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:opacity-50";
+/** Byte-identical to the share dialog's picker, so the two dialogs match. */
+const ROLE_SELECT_CLASS = `h-6 rounded-full px-2 text-xs text-gray-700 ${LIQUID_GLASS_SUBTLE_CLASS} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:opacity-50`;
 
 /** A recipient chosen before the project exists, with the role they'll get. */
 type PendingRecipient = UserLookupResult & { role: ProjectRole };
