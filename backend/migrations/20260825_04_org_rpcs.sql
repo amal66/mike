@@ -600,8 +600,11 @@ as $$
       and (p_type is null or w.type = p_type)
   ),
   org_shared as (
-    -- Workflows in an org the caller belongs to (read-only; edits stay
-    -- owner/share-gated). Mirrors the org branch in lib/access.ts.
+    -- Workflows in an org the caller belongs to. Editable: an org workflow
+    -- belongs to the ORGANIZATION, and both org roles sit at member or above
+    -- on the project ladder where editing content is a member capability.
+    -- Mirrors resolveWorkflowAccess in routes/workflows.ts, so a row's
+    -- affordances in the list match what the detail route will allow.
     select
       w.id,
       w.user_id::text as user_id,
@@ -614,7 +617,7 @@ as $$
       w.jurisdictions,
       false as is_system,
       w.created_at,
-      false as allow_edit,
+      true as allow_edit,
       false as is_owner,
       nullif(trim(up.display_name), '') as shared_by_name,
       2 as sort_bucket
@@ -727,16 +730,18 @@ as $$
       and (p_type is null or w.type = p_type)
   ),
   org_shared as (
-    -- Workflows in an org the caller belongs to (read-only; edits stay
-    -- owner/share-gated). Mirrors the org branch in lib/access.ts and the
-    -- legacy 3-argument overload. Under the scope filter these rows count
-    -- as "shared" — shared-with-me and shared-via-my-org are one bucket
-    -- from the caller's point of view.
+    -- Workflows in an org the caller belongs to. Editable: an org workflow
+    -- belongs to the ORGANIZATION, and both org roles sit at member or above
+    -- on the project ladder where editing content is a member capability.
+    -- Mirrors resolveWorkflowAccess in routes/workflows.ts and the legacy
+    -- 3-argument overload. Under the scope filter these rows count as
+    -- "shared" — shared-with-me and shared-via-my-org are one bucket from
+    -- the caller's point of view.
     select
       w.id, w.user_id::text as user_id, w.title, w.type, w.prompt_md,
       w.columns_config, w.language, w.practice, w.jurisdictions,
       false as is_system, w.created_at,
-      false as allow_edit, false as is_owner,
+      true as allow_edit, false as is_owner,
       nullif(trim(up.display_name), '') as shared_by_name,
       2 as sort_bucket
     from public.workflows w

@@ -48,6 +48,28 @@ describe.each(Object.entries(SOURCES))("%s", (_name, sql) => {
         expect(offenders).toEqual([]);
     });
 
+    it("lets an org member edit an org workflow", () => {
+        // The org arm of both get_workflows_overview overloads reported
+        // `false as allow_edit`, so a firm's shared workflow was read-only for
+        // every member of the firm including its admins. The list's
+        // affordances and routes/workflows.ts's resolveWorkflowAccess have to
+        // agree, or the UI offers an edit the server then refuses.
+        const orgArms = [
+            ...sql.matchAll(/org_shared as \(([\s\S]*?)\n  \),/g),
+        ].map(([, body]) => body);
+        // Only the arms that project an allow_edit column: the filter-options
+        // RPC has an org arm too, and it returns facets, not capabilities.
+        const editArms = orgArms.filter((arm) => /as allow_edit/.test(arm));
+        expect(editArms.length).toBeGreaterThan(0);
+        for (const arm of editArms) {
+            expect(arm).toContain("true as allow_edit");
+            expect(arm).not.toContain("false as allow_edit");
+            // Editing is a member capability; ownership is provenance and
+            // still gates share/delete.
+            expect(arm).toContain("false as is_owner");
+        }
+    });
+
     it("never offers NULL as an owner-filter option", () => {
         // `on delete set null` means a project can outlive its creator with
         // user_id = NULL. Emitting that as a dropdown option produced an entry

@@ -341,15 +341,22 @@ async function resolveWorkflowAccess(
       };
   }
 
-  // Org-visibility branch: a workflow living in an org the caller belongs to is
-  // readable (allow_edit stays false; edits remain owner/share-gated). Keeps
-  // the workflow_shares mechanism intact and consistent with the updated
-  // get_workflows_overview RPC.
+  // Org branch: a workflow filed under an organization belongs to the
+  // organization, so any member of it may edit. Both org roles sit at
+  // `member` or above on the project ladder, and editing content is a member
+  // capability there — a firm's shared workflow that only its original author
+  // can change is not a shared workflow.
+  //
+  // `isOwner` stays false: it means "created this row", which is provenance,
+  // and it gates the owner-only operations (share, delete) that this branch
+  // deliberately does not confer. Mirrors the `allow_edit` the org arm of
+  // get_workflows_overview reports, so the list's affordances and the route's
+  // answer cannot disagree.
   const orgId = (workflowRecord as { org_id?: string | null }).org_id ?? null;
   if (orgId) {
     const role = await getOrgRole(userId, orgId, db);
     if (role)
-      return { workflow: workflowRecord, allowEdit: false, isOwner: false };
+      return { workflow: workflowRecord, allowEdit: true, isOwner: false };
   }
 
   return null;
@@ -600,10 +607,11 @@ workflowsRouter.post(
   requireAuth,
   asyncRoute(async (req, res) => {
     const userId = res.locals.userId as string;
-    const { metadata, skill_md, columns_config } = req.body as {
+    const { metadata, skill_md, columns_config, org_id } = req.body as {
       metadata?: Partial<WorkflowMetadata>;
       skill_md?: string;
       columns_config?: unknown;
+      org_id?: unknown;
     };
     const title = metadata?.title;
     const type = metadata?.type;
@@ -617,9 +625,24 @@ workflowsRouter.post(
         .json({ detail: "metadata.type must be 'assistant' or 'tabular'" });
 
     const db = createServerSupabase();
-    // Workflows are personal unless a future change gives them an explicit
-    // organization; there is no personal org to file them under any more.
-    const orgId: string | null = null;
+    // Tenant assignment, exactly as POST /projects does it: an explicit
+    // org_id must be one the caller belongs to, and its absence means
+    // personal (org_id stays NULL, which IS the representation of personal
+    // now that hidden personal orgs are gone). Workflows have no project to
+    // inherit from, so an explicit id is the only context available.
+    let orgId: string | null = null;
+    if (org_id != null) {
+      if (typeof org_id !== "string" || !org_id.trim())
+        return void res
+          .status(400)
+          .json({ detail: "org_id must be a non-empty string" });
+      const role = await getOrgRole(userId, org_id, db);
+      if (!role)
+        return void res
+          .status(400)
+          .json({ detail: "You are not a member of that organization." });
+      orgId = org_id;
+    }
     devLog("[workflows/create] request", {
       userId,
       title: title.trim(),

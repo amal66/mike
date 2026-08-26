@@ -4,10 +4,13 @@ import request from "supertest";
 // ---------------------------------------------------------------------------
 // Hoisted mock fns we want to reconfigure per-test.
 // ---------------------------------------------------------------------------
-const { checkProjectAccess, deleteUserProjects } = vi.hoisted(() => ({
-    checkProjectAccess: vi.fn(),
-    deleteUserProjects: vi.fn(),
-}));
+const { checkProjectAccess, deleteUserProjects, getOrgRole } = vi.hoisted(
+    () => ({
+        checkProjectAccess: vi.fn(),
+        deleteUserProjects: vi.fn(),
+        getOrgRole: vi.fn(),
+    }),
+);
 
 // ---------------------------------------------------------------------------
 // Configurable Supabase stub — same shape as projects.routes.test.ts's, since
@@ -106,6 +109,7 @@ vi.mock("../../lib/access", () => ({
     ensureReviewAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
+    getOrgRole: (...args: unknown[]) => getOrgRole(...args),
 }));
 
 vi.mock("../../lib/userDataCleanup", () => ({
@@ -151,6 +155,8 @@ describe("workflows.routes", () => {
         vi.clearAllMocks();
         resetSupabaseState();
         resetEnsuredDefaultUsersForTests();
+        // Default: the caller belongs to no organization.
+        getOrgRole.mockResolvedValue(null);
     });
 
     // ── GET /workflows (overview) ─────────────────────────────────────────
@@ -398,6 +404,108 @@ describe("workflows.routes", () => {
       expect(res.body).toEqual({
         detail: "Assets are only available for assistant workflows",
       });
+    });
+  });
+
+  // ── Organization workflows ────────────────────────────────────────────
+  // Before this, org workflows were write-dead: POST hardcoded org_id null so
+  // no API call could create one, and the org arm of the list RPC reported
+  // allow_edit false so even an org admin could not change one that already
+  // existed. The only way to get an org workflow at all was the account
+  // -deletion detach path — a firm's shared workflow that nobody could make
+  // and nobody could edit.
+  describe("organization workflows", () => {
+    const create = (body: Record<string, unknown>) =>
+      request(app)
+        .post("/workflows")
+        .set(...AUTH)
+        .send({
+          metadata: { title: "Firm playbook", type: "assistant" },
+          ...body,
+        });
+
+    it("files a workflow under an organization the caller belongs to", async () => {
+      getOrgRole.mockResolvedValue("member");
+      supabaseState.tables.workflows = {
+        data: { id: "w-org", user_id: "u1", org_id: "org-1" },
+        error: null,
+      };
+
+      const res = await create({ org_id: "org-1" });
+
+      expect(res.status).toBe(201);
+      expect(
+        supabaseState.inserts.find((i) => i.table === "workflows")?.payload,
+      ).toMatchObject({ org_id: "org-1", user_id: "u1" });
+    });
+
+    it("400s an org the caller does not belong to, and writes nothing", async () => {
+      getOrgRole.mockResolvedValue(null);
+
+      const res = await create({ org_id: "org-elsewhere" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.detail).toBe(
+        "You are not a member of that organization.",
+      );
+      expect(supabaseState.inserts).toEqual([]);
+    });
+
+    it("keeps a workflow personal when no org is named", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w1", user_id: "u1", org_id: null },
+        error: null,
+      };
+
+      const res = await create({});
+
+      expect(res.status).toBe(201);
+      expect(
+        supabaseState.inserts.find((i) => i.table === "workflows")?.payload,
+      ).toMatchObject({ org_id: null });
+    });
+
+    it("lets a colleague in the same org edit an org workflow", async () => {
+      // The workflow belongs to the organization, not to whoever drafted it.
+      // Both org roles sit at member or above on the ladder, where editing
+      // content is a member capability.
+      supabaseState.tables.workflows = {
+        data: {
+          id: "w-org",
+          user_id: "someone-else",
+          org_id: "org-1",
+          title: "Firm playbook",
+        },
+        error: null,
+      };
+      supabaseState.tables.workflow_shares = { data: null, error: null };
+      getOrgRole.mockResolvedValue("member");
+
+      const res = await request(app)
+        .patch("/workflows/w-org")
+        .set(...AUTH)
+        .send({ metadata: { title: "Firm playbook v2" } });
+
+      expect(res.status).toBe(200);
+      // Editable, but not owned: share and delete stay with the creator.
+      expect(res.body.allow_edit).toBe(true);
+      expect(res.body.is_owner).toBe(false);
+    });
+
+    it("still refuses an org workflow to somebody outside the org", async () => {
+      supabaseState.tables.workflows = {
+        data: { id: "w-org", user_id: "someone-else", org_id: "org-1" },
+        error: null,
+      };
+      supabaseState.tables.workflow_shares = { data: null, error: null };
+      getOrgRole.mockResolvedValue(null);
+
+      const res = await request(app)
+        .patch("/workflows/w-org")
+        .set(...AUTH)
+        .send({ metadata: { title: "Nope" } });
+
+      expect(res.status).toBe(404);
     });
   });
 });
