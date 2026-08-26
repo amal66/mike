@@ -11,6 +11,7 @@ import {
     type ProjectRole,
 } from "@/app/lib/permissions";
 import { AddUserInput } from "../shared/AddUserInput";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import { Modal } from "./Modal";
 import { cn } from "@/app/lib/utils";
 import {
@@ -275,12 +276,19 @@ export function PeopleModal({
         if (busy !== null) return;
         setBusy("add");
         setError(null);
+        // Failures propagate deliberately. `AddUserInput` renders them
+        // through `userFacingApiError`, which shows an intentional 4xx detail
+        // and falls back to a generic line for anything else — but only while
+        // the error still carries its status. Catching here and rethrowing
+        // `new Error("Couldn't add the member. Try again.")` stripped that, so
+        // the grants endpoint's own sentences ("The project creator already
+        // has admin access", "role must be admin, member or viewer") never
+        // reached the person who needed to read them, and the dialog advised
+        // retrying something that would fail identically.
         try {
             if (access) await access.onGrant(email, newRole);
             else if (onSharedWithChange)
                 await onSharedWithChange([...sharedWith, email]);
-        } catch {
-            throw new Error("Couldn't add the member. Try again.");
         } finally {
             setBusy(null);
         }
@@ -293,8 +301,13 @@ export function PeopleModal({
         setError(null);
         try {
             await access.onGrant(email, role);
-        } catch {
-            setError("Couldn't change that role. Try again.");
+        } catch (error) {
+            setError(
+                userFacingApiError(
+                    error,
+                    "Couldn't change that role. Try again.",
+                ),
+            );
         } finally {
             setBusy(null);
             setPendingEmail(null);
@@ -314,8 +327,13 @@ export function PeopleModal({
                         (e) => e.toLowerCase() !== email.toLowerCase(),
                     ),
                 );
-        } catch {
-            setError("Couldn't remove the member. Try again.");
+        } catch (error) {
+            setError(
+                userFacingApiError(
+                    error,
+                    "Couldn't remove the member. Try again.",
+                ),
+            );
         } finally {
             setBusy(null);
             setPendingEmail(null);

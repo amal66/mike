@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MikeApiError } from "@/app/lib/mikeApi";
 import { PeopleModal } from "./PeopleModal";
 
-vi.mock("@/app/lib/mikeApi", () => ({
+// `importOriginal` keeps the real `MikeApiError` class: `userFacingApiError`
+// decides with `instanceof`, so a stand-in class would make every 4xx look
+// like an unexpected failure and the tests below would pass vacuously.
+vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
     lookupUserByEmail: vi.fn().mockResolvedValue({
         exists: true,
         email: "known@firm.example",
@@ -112,6 +117,88 @@ describe("PeopleModal — per-recipient roles", () => {
                 "viewer",
             ),
         );
+    });
+
+    it("shows the server's own refusal instead of a fixed retry line", async () => {
+        // The grants endpoint writes its 400s to be read by a person — "The
+        // project creator already has admin access", "role must be admin,
+        // member or viewer". `handleAdd` caught them and threw
+        // `new Error("Couldn't add the member. Try again.")`, so by the time
+        // AddUserInput's own `userFacingApiError` saw it there was no status
+        // left to read, and the user was advised to repeat something that
+        // would fail identically.
+        const user = userEvent.setup();
+        renderRoleAware({
+            onGrant: () =>
+                Promise.reject(
+                    new MikeApiError({
+                        status: 400,
+                        message:
+                            "The project creator already has admin access",
+                    }),
+                ),
+        });
+        await screen.findByLabelText("Role for the new recipient");
+        await user.type(
+            screen.getByPlaceholderText("Add by email..."),
+            "creator@firm.example2",
+        );
+        await user.click(screen.getByRole("button", { name: "Add" }));
+
+        expect(
+            await screen.findByText(
+                "The project creator already has admin access",
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("keeps the generic fallback for errors that are not intentional 4xx", async () => {
+        // A 500, or a thrown DB message, must not reach the dialog.
+        const user = userEvent.setup();
+        renderRoleAware({
+            onGrant: () =>
+                Promise.reject(
+                    new MikeApiError({
+                        status: 500,
+                        message:
+                            'duplicate key value violates unique constraint "grants_pkey"',
+                    }),
+                ),
+        });
+        await screen.findByLabelText("Role for the new recipient");
+        await user.type(
+            screen.getByPlaceholderText("Add by email..."),
+            "someone@firm.example",
+        );
+        await user.click(screen.getByRole("button", { name: "Add" }));
+
+        expect(
+            await screen.findByText("Could not add this user. Try again."),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(/grants_pkey/)).not.toBeInTheDocument();
+    });
+
+    it("surfaces the server's message when a re-role is refused", async () => {
+        const user = userEvent.setup();
+        renderRoleAware({
+            onGrant: () =>
+                Promise.reject(
+                    new MikeApiError({
+                        status: 403,
+                        message:
+                            "Only a project admin can change who has access.",
+                    }),
+                ),
+        });
+        await user.selectOptions(
+            await screen.findByLabelText("Role for counsel@outside.example"),
+            "admin",
+        );
+        expect(
+            await screen.findByText(
+                "Only a project admin can change who has access.",
+            ),
+        ).toBeInTheDocument();
     });
 
     it("revokes a grant", async () => {
