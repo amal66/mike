@@ -147,6 +147,15 @@ export interface Chat {
     model?: string | null;
     reasoning_level?: Message["reasoning"] | null;
     created_at: string;
+    /** Provenance only: "I started this thread". Authorization reads
+     *  access_role — an admin's standing on a colleague's chat is there. */
+    is_owner?: boolean;
+    /**
+     * Server-computed role for the caller ON THIS CHAT, already merged
+     * strongest-wins across the creator, share-list and project branches.
+     * Served by GET /chat/:chatId and by the project chat list.
+     */
+    access_role?: "admin" | "member" | "viewer";
 }
 
 export interface EditAnnotation {

@@ -335,6 +335,35 @@ export async function ensureDocAccess(
 }
 
 /**
+ * The standing a shared row confers ON ITS OWN, before any container is
+ * consulted: its creator is its admin, and an email on its `shared_with` is a
+ * member. Both branches are decided from the row and the caller alone, so
+ * this needs no database round-trip.
+ *
+ * Split out for two callers. `ensureSharedRowAccess` below uses it for those
+ * two branches. A LIST endpoint uses it to label every row it returns with
+ * the caller's role, having resolved the shared container once instead of per
+ * row — the per-row alternative is an N+1 of `checkProjectAccess` calls, and
+ * hand-writing the "creator or share list" test at the list site is how the
+ * list and the detail route drift apart, which is the class of bug this PR
+ * exists to remove.
+ */
+export function sharedRowOwnRole(
+    row: { user_id?: string | null; shared_with?: string[] | null },
+    userId: string,
+    userEmail: string | null | undefined,
+): { isCreator: boolean; role: ProjectRole | null } {
+    if (row.user_id && row.user_id === userId)
+        return { isCreator: true, role: "admin" };
+    const email = normalizeEmail(userEmail);
+    const directShare =
+        !!email &&
+        Array.isArray(row.shared_with) &&
+        row.shared_with.some((e) => (e ?? "").toLowerCase() === email);
+    return { isCreator: false, role: directShare ? "member" : null };
+}
+
+/**
  * Shared derivation for the content rows that carry the full sharing shape
  * (`user_id`, `project_id`, `shared_with`, `org_id`) — today tabular reviews
  * and assistant chats. A row can be reached in four ways:
@@ -357,13 +386,9 @@ async function ensureSharedRowAccess(
     userEmail: string | null | undefined,
     db: Db,
 ): Promise<ResourceAccess> {
-    if (row.user_id && row.user_id === userId)
+    const own = sharedRowOwnRole(row, userId, userEmail);
+    if (own.isCreator)
         return { ok: true, isCreator: true, orgRole: null, projectRole: "admin" };
-    const email = normalizeEmail(userEmail);
-    const directShare =
-        !!email &&
-        Array.isArray(row.shared_with) &&
-        row.shared_with.some((e) => (e ?? "").toLowerCase() === email);
     // Merge all branches strongest-wins. The direct share is a floor, not a
     // ceiling: it must not shadow a stronger standing coming from the
     // project (its admins) — being added to a row's share list must never
@@ -371,7 +396,7 @@ async function ensureSharedRowAccess(
     const access = row.project_id
         ? await checkProjectAccess(row.project_id, userId, userEmail, db)
         : ({ ok: false } as const);
-    let best: ProjectRole | null = directShare ? "member" : null;
+    let best: ProjectRole | null = own.role;
     let bestOrg: OrgRole | null = null;
     // On a tie the project verdict wins so the org `orgRole` field survives.
     if (
