@@ -1787,7 +1787,7 @@ describe("tabular.routes", () => {
         });
 
         // A departed creator leaves `user_id` NULL (the FK is ON DELETE SET
-        // NULL since 20260825_02). "Only the creator may act" would then mean
+        // NULL since 20260828_01). "Only the creator may act" would then mean
         // NOBODY may act, and the thread would sit in the organization's
         // review forever with no way to rename or remove it. #267's
         // `creatorScopedAllowed` exists for exactly this: an authorship-scoped

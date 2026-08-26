@@ -9,8 +9,8 @@
 -- chat by URL through a project access grant (GET /chat/:id → 200 via
 -- checkProjectAccess's grant branch) that never appeared in GET /chat.
 --
--- Now that chats carry shared_with + org_id (20260825_10), a chat has exactly
--- the shape 20260825_04's review_access_role() already takes: creator, own
+-- Now that chats carry shared_with + org_id (20260828_04), a chat has exactly
+-- the shape 20260828_03's review_access_role() already takes: creator, own
 -- share list, containing project, own org — merged strongest-wins. So this
 -- predicate does not restate those four branches, it CALLS that function:
 --
@@ -94,7 +94,7 @@
 --     because project_access_role's grant arm carries the same email guard --
 --     exactly the old function's second and third branches.
 --   * the row's OWN org arm has no old counterpart, but it can never add a
---     chat: 20260825_10's backfill -- and resolveContentOrgId, which writes
+--     chat: 20260828_04's backfill -- and resolveContentOrgId, which writes
 --     the column going forward -- set chats.org_id to the project's org for
 --     project chats (making that arm a subset of the project arm) and leave it
 --     NULL otherwise, which the arm's `p_org_id is not null` guard skips. Old
@@ -115,6 +115,7 @@ returns table (
   project_id uuid,
   user_id text,
   title text,
+  model text,
   created_at timestamptz,
   project_name text,
   is_owner boolean
@@ -127,6 +128,7 @@ as $$
     c.project_id,
     c.user_id::text as user_id,
     c.title,
+    c.model,
     c.created_at,
     p.name as project_name,
     -- Provenance ("I started this thread"), not a role: the ladder itself is
@@ -166,6 +168,7 @@ returns table (
   project_id uuid,
   user_id text,
   title text,
+  model text,
   created_at timestamptz,
   project_name text
 )
@@ -177,6 +180,7 @@ as $$
     o.project_id,
     o.user_id,
     o.title,
+    o.model,
     o.created_at,
     o.project_name
   from public.get_chats_overview(p_user_id, null::text, p_limit, p_offset) o;
@@ -186,7 +190,7 @@ $$;
 -- btree at all, so without a GIN index every such probe degrades to a
 -- sequential scan of the whole table. tabular_reviews carries one for exactly
 -- this predicate (tabular_reviews_shared_with_idx); chats got the column in
--- 20260825_10 without one, so give it the sibling index here.
+-- 20260828_04 without one, so give it the sibling index here.
 --
 -- The RPC above reaches the column through review_access_role(), so the
 -- planner cannot use this index for the list query -- and could not have used

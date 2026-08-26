@@ -444,7 +444,7 @@ export async function ensureReviewAccess(
 
 /**
  * Same shape as `ensureReviewAccess`, for assistant chats — chats carry the
- * identical sharing columns since 20260825_10. A project chat inherits the
+ * identical sharing columns since 20260828_04. A project chat inherits the
  * project verdict; a standalone chat can be shared through its own
  * `shared_with`, and is personal (org_id null) until it is.
  *

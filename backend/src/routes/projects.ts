@@ -1370,7 +1370,7 @@ projectsRouter.patch(
 
 // GET /projects/:projectId/chats — every assistant chat under this project
 // (any author with project access). Used by the project page's chat tab so
-// it doesn't have to filter the global GET /chat list. Since 20260825_11 the
+// it doesn't have to filter the global GET /chat list. Since 20260828_05 the
 // global list shows these too (its predicate matches ensureChatAccess), so
 // this endpoint is a convenience scoping, not the only way to find them.
 projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
@@ -1401,7 +1401,7 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   // verdict is resolved once (above) and merged per row with the row's own
   // standing — creator or share list. Calling ensureChatAccess per row would
   // repeat checkProjectAccess for each chat. The chat's own org branch is
-  // omitted for the same reason 20260825_11 records: chats.org_id is only
+  // omitted for the same reason 20260828_05 records: chats.org_id is only
   // ever written as the project's org (or null), so it can add nothing the
   // project verdict has not already granted.
   for (const chat of chats as {
