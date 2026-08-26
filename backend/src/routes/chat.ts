@@ -506,8 +506,15 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
         .select("id, title, model, reasoning_level, shared_with")
         .single();
 
-    if (error || !data)
-        return void res.status(404).json({ detail: "Chat not found" });
+    // Two different failures that must not share an answer. Authorization
+    // already passed above, so a database error here is OUR fault, not a
+    // statement about what exists: reporting it as "404 Chat not found" tells
+    // the client a lie it will act on (dropping the chat from the sidebar)
+    // and hides the outage from whoever is reading the logs. The row being
+    // gone is the only real 404 — the chat was deleted between the access
+    // check and the write. DELETE below already splits them this way.
+    if (error) return void sendInternalError(res, error);
+    if (!data) return void res.status(404).json({ detail: "Chat not found" });
 
     if (typeof updates.model === "string") {
         const profileError = await persistLastSelectedChatModel(

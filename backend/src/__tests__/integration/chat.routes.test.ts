@@ -1187,6 +1187,7 @@ describe("PATCH /word-chat/:chatId/model", () => {
             expect.anything(),
         );
     });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -1219,6 +1220,10 @@ const rbacRpcCalls: { fn: string; args: unknown }[] = [];
 function tableQuery(
     seed: Record<string, unknown> | Record<string, unknown>[] | null,
     table = "unknown",
+    // When set, a write against this table fails the way a real outage does:
+    // an error object rather than an empty result set. The two must not
+    // produce the same HTTP answer.
+    writeError: string | null = null,
 ) {
     const rows = Array.isArray(seed) ? seed : seed ? [seed] : [];
     const q: Record<string, unknown> = {};
@@ -1270,18 +1275,21 @@ function tableQuery(
         write?.op === "update"
             ? { ...(rows[0] ?? {}), ...(write.value as Record<string, unknown>) }
             : (selected()[0] ?? null);
-    q.single = vi.fn(() => Promise.resolve({ data: first(), error: null }));
-    q.maybeSingle = vi.fn(() =>
-        Promise.resolve({ data: first(), error: null }),
-    );
+    const outcome = () =>
+        write && writeError
+            ? { data: null, error: { message: writeError } }
+            : { data: first(), error: null };
+    q.single = vi.fn(() => Promise.resolve(outcome()));
+    q.maybeSingle = vi.fn(() => Promise.resolve(outcome()));
     q.then = (
         resolve: (v: unknown) => unknown,
         reject?: (e: unknown) => unknown,
     ) =>
-        Promise.resolve({ data: write ? rows : selected(), error: null }).then(
-            resolve,
-            reject,
-        );
+        Promise.resolve(
+            write && writeError
+                ? { data: null, error: { message: writeError } }
+                : { data: write ? rows : selected(), error: null },
+        ).then(resolve, reject);
     return q;
 }
 
@@ -1292,6 +1300,7 @@ function makeRbacDb(
         grantRole?: "admin" | "member" | "viewer" | null;
         chat?: Record<string, unknown>;
         profiles?: Record<string, unknown>[];
+        chatWriteError?: string;
     } = {},
 ) {
     return {
@@ -1308,6 +1317,7 @@ function makeRbacDb(
                         ...overrides.chat,
                     },
                     table,
+                    overrides.chatWriteError ?? null,
                 );
             if (table === "projects")
                 return tableQuery(
@@ -1543,6 +1553,31 @@ describe("chat sharing, deletion and roster (chat permission schema)", () => {
         // filter still in place this write would match zero rows and the
         // admin's rename would silently vanish.
         expect(update?.filters).toEqual([{ column: "id", value: "chat-1" }]);
+    });
+
+    it("reports a failed rename as a server error, not as a missing chat", async () => {
+        // Authorization already passed, so the row is there and the caller
+        // may write it: a database failure at this point is ours. Answering
+        // "404 Chat not found" would tell the client the thread is gone and
+        // have it drop the chat from the sidebar over a transient outage.
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb("admin", "colleague-1", {
+                    chatWriteError: "connection terminated unexpectedly",
+                }) as never,
+        );
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ title: "Renamed" });
+
+        expect(res.status).toBe(500);
+        expect(res.body.detail).not.toBe("Chat not found");
+        // Never the raw driver message — sendInternalError redacts.
+        expect(JSON.stringify(res.body)).not.toContain(
+            "connection terminated",
+        );
     });
 
     it("403s a project viewer renaming a colleague's chat", async () => {
