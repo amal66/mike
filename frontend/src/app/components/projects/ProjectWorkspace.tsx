@@ -35,7 +35,10 @@ import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import {
+    PermissionDeniedPopup,
+    type AccessContact,
+} from "@/app/components/popups/PermissionDeniedPopup";
 import { PeopleModal } from "@/app/components/modals/PeopleModal";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -55,10 +58,41 @@ import {
 /**
  * A denied action: the sentence for the popup plus which role the action is
  * reserved for. A plain string means the strictest tier, admin.
+ *
+ * The third shape is for rules that are not rungs on the ladder at all — the
+ * server asks "did you create this row?", which no role can answer for you.
+ * Those carry their own sentence, and deliberately offer nobody to ask,
+ * because there is nobody who could grant it.
  */
 export type OwnerGate =
     | string
-    | { action: string; requiredRole: "admin" | "member" };
+    | { action: string; requiredRole: "admin" | "member" }
+    | { title?: string; message: string };
+
+/**
+ * Turn a gate into `PermissionDeniedPopup` props, so every surface renders
+ * the same gate the same way instead of re-deriving `requiredRole` inline.
+ */
+export function permissionDeniedProps(
+    gate: OwnerGate | null,
+    contacts?: AccessContact[] | null,
+) {
+    if (gate && typeof gate === "object" && "message" in gate) {
+        return {
+            open: true,
+            title: gate.title,
+            message: gate.message,
+            contacts: null,
+        };
+    }
+    return {
+        open: !!gate,
+        action: typeof gate === "string" ? gate : gate?.action,
+        requiredRole:
+            typeof gate === "string" ? ("admin" as const) : gate?.requiredRole,
+        contacts,
+    };
+}
 
 type ProjectWorkspaceValue = {
     projectId: string;
@@ -556,18 +590,10 @@ export function ProjectWorkspaceProvider({
                 />
 
                 <PermissionDeniedPopup
-                    open={!!ownerOnlyAction}
-                    action={
-                        typeof ownerOnlyAction === "string"
-                            ? ownerOnlyAction
-                            : ownerOnlyAction?.action
-                    }
-                    requiredRole={
-                        typeof ownerOnlyAction === "string"
-                            ? "admin"
-                            : ownerOnlyAction?.requiredRole
-                    }
-                    contacts={project?.admin_contacts}
+                    {...permissionDeniedProps(
+                        ownerOnlyAction,
+                        project?.admin_contacts,
+                    )}
                     onClose={() => setOwnerOnlyAction(null)}
                 />
 

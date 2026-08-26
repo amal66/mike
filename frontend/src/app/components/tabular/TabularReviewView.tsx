@@ -59,7 +59,10 @@ import {
     roleFromLoaded,
     type ProjectRole,
 } from "@/app/lib/permissions";
-import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
+import {
+    permissionDeniedProps,
+    type OwnerGate,
+} from "@/app/components/projects/ProjectWorkspace";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     getModelProvider,
@@ -976,12 +979,43 @@ export function TRView({ reviewId, projectId }: Props) {
         await clearResultsForRows(rows.map((row) => row.id));
     }
 
+    /**
+     * The details dialog edits a review's title and, when it is not locked to
+     * a project, which project it belongs to. Those are two different server
+     * rules, so they get two gates — but each gate is stated once and used
+     * everywhere it applies, instead of one tier for opening the dialog and a
+     * different one for saving from it.
+     *
+     * Title: `PATCH /tabular-review/:id` requires `content.edit` (member) —
+     * 403 "Only a review member can change review settings".
+     */
+    const canEditDetails = canEditContent;
+
+    /**
+     * Moving a review between projects is `creatorScopedAllowed` server-side
+     * (backend/src/routes/tabular.ts) — the review's creator, or an admin
+     * only once the creator's account is gone and `user_id` is null. It is
+     * NOT `access.manage`: gating on admin let a project admin who did not
+     * create the review through to a 403 the client had promised would work.
+     */
+    function canMoveReview(): boolean {
+        if (!review) return false;
+        if (review.user_id) return review.user_id === user?.id;
+        return can(reviewRole, "container.delete");
+    }
+
     function requestReviewDetails() {
-        if (review && !can(reviewRole, "access.manage")) {
-            setOwnerOnlyAction({
-                action: "edit tabular review details",
-                requiredRole: "admin",
-            });
+        // Member-tier, matching the PATCH the dialog will issue. This used to
+        // demand access.manage while the save path demanded content.edit, so
+        // a member was told "only an admin can edit tabular review details"
+        // about a save the server would have accepted.
+        if (!canEditDetails) {
+            if (roleKnown) {
+                setOwnerOnlyAction({
+                    action: "edit tabular review details",
+                    requiredRole: "member",
+                });
+            }
             return;
         }
         setDetailsOpen(true);
@@ -994,14 +1028,18 @@ export function TRView({ reviewId, projectId }: Props) {
         if (!review || !requireStructure("edit tabular review details"))
             return;
         // Only send project_id when it actually changes: moving a review
-        // between projects is admin-only server-side, and sending an
+        // between projects is creator-only server-side, and sending an
         // unchanged value would 403 a member editing just the title.
         const nextProjectId = values.projectId ?? null;
         const projectChanged = nextProjectId !== (review.project_id ?? null);
         // Gate the move here so somebody who touched the project selector
         // gets an explanation instead of an unexplained failed save.
-        if (projectChanged && !can(reviewRole, "access.manage")) {
-            setOwnerOnlyAction("move this review to another project");
+        if (projectChanged && !canMoveReview()) {
+            setOwnerOnlyAction({
+                title: "Review creator only",
+                message:
+                    "Only the person who created this review can move it to another project.",
+            });
             return;
         }
         const updated = await updateTabularReview(reviewId, {
@@ -1716,7 +1754,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 open={detailsOpen}
                 review={review}
                 projects={project ? [project] : availableProjects}
-                canEdit={can(reviewRole, "access.manage")}
+                canEdit={canEditDetails}
                 lockProject={Boolean(projectId)}
                 onClose={() => setDetailsOpen(false)}
                 onSave={handleDetailsSave}
@@ -1805,18 +1843,7 @@ export function TRView({ reviewId, projectId }: Props) {
             />
 
             <PermissionDeniedPopup
-                open={!!ownerOnlyAction}
-                action={
-                    typeof ownerOnlyAction === "string"
-                        ? ownerOnlyAction
-                        : ownerOnlyAction?.action
-                }
-                requiredRole={
-                    typeof ownerOnlyAction === "string"
-                        ? "admin"
-                        : ownerOnlyAction?.requiredRole
-                }
-                contacts={deniedContacts}
+                {...permissionDeniedProps(ownerOnlyAction, deniedContacts)}
                 onClose={() => setOwnerOnlyAction(null)}
             />
 
