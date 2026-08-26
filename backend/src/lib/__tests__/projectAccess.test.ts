@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
     deleteProjectGrant,
     listProjectAdminContacts,
     listProjectGrants,
     removeGrantsForEmail,
     replaceGrantsFromEmails,
+    syncSharedWithMirror,
     upsertProjectGrant,
 } from "../projectAccess";
 
@@ -392,5 +393,72 @@ describe("project admin contacts", () => {
                 source: "organization",
             },
         ]);
+    });
+});
+
+describe("syncSharedWithMirror", () => {
+    // The mirror is best-effort by design, which is exactly why its failure
+    // has to be audible: the grants are already written, so a stale
+    // `shared_with` is invisible from every other angle.
+    function mirrorFailureDb(error: Record<string, unknown>) {
+        return {
+            from: (table: string) => {
+                const builder: any = {
+                    select: () => builder,
+                    order: () => builder,
+                    update: () => builder,
+                    eq: () => builder,
+                    then: (resolve: (v: unknown) => unknown) =>
+                        Promise.resolve(
+                            table === "project_access_grants"
+                                ? {
+                                      data: [
+                                          {
+                                              email: "outside@counsel.test",
+                                              role: "viewer",
+                                          },
+                                      ],
+                                      error: null,
+                                  }
+                                : { data: null, error },
+                        ).then(resolve),
+                };
+                return builder;
+            },
+        } as any;
+    }
+
+    it("reports a failed mirror refresh to the logger without failing the caller", async () => {
+        const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const db = mirrorFailureDb({
+            code: "42501",
+            message: "permission denied for table projects",
+            // Postgres attaches the offending row to details/hint. Here the
+            // rows ARE email addresses, so the log must not carry them.
+            details: "Failing row contains (outside@counsel.test)",
+        });
+
+        await expect(syncSharedWithMirror(db, "p1")).resolves.toEqual([
+            "outside@counsel.test",
+        ]);
+
+        expect(spy).toHaveBeenCalledWith(
+            "[project-access] shared_with mirror is now stale",
+            {
+                projectId: "p1",
+                code: "42501",
+                message: "permission denied for table projects",
+            },
+        );
+        expect(JSON.stringify(spy.mock.calls)).not.toContain("Failing row");
+        spy.mockRestore();
+    });
+
+    it("says nothing when the refresh succeeds", async () => {
+        const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const db = mirrorFailureDb(null as unknown as Record<string, unknown>);
+        await syncSharedWithMirror(db, "p1");
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
     });
 });

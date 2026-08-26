@@ -54,6 +54,16 @@ export async function listProjectGrants(
 /**
  * Rewrite `projects.shared_with` from the grant table so the two never drift.
  * Called after every grant mutation.
+ *
+ * A failure here does NOT fail the caller. The grant table is the source of
+ * truth and it has already been written; refusing the whole operation because
+ * a display column could not be refreshed would turn a cosmetic problem into
+ * a functional one, and the retry would replay a mutation that already
+ * succeeded. But it is not nothing either — the one state this design has to
+ * be able to notice is "the mirror is stale" — so it is logged loudly, with
+ * the SQLSTATE and message only rather than the raw error object: Postgres
+ * error payloads carry `details`/`hint` strings that quote the offending row,
+ * and these rows are email addresses.
  */
 export async function syncSharedWithMirror(
     db: Db,
@@ -61,10 +71,17 @@ export async function syncSharedWithMirror(
 ): Promise<string[]> {
     const grants = await listProjectGrants(db, projectId);
     const emails = grants.map((g) => g.email);
-    await db
+    const { error } = await db
         .from("projects")
         .update({ shared_with: emails })
         .eq("id", projectId);
+    if (error) {
+        console.error("[project-access] shared_with mirror is now stale", {
+            projectId,
+            code: (error as { code?: string }).code ?? null,
+            message: error.message,
+        });
+    }
     return emails;
 }
 
