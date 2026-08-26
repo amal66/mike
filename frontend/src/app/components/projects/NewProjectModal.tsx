@@ -56,14 +56,15 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const formId = "new-project-modal-form";
 
     // Load the caller's organizations so a project can be created inside a
-    // firm instead of the private personal workspace. Best-effort: without
-    // orgs the field simply doesn't render.
+    // firm instead of the caller's private workspace. Every row is a real
+    // organization now — there is no hidden personal one to filter out.
+    // Best-effort: without orgs the field simply doesn't render.
     useEffect(() => {
         if (!open) return;
         let cancelled = false;
         listOrgs()
             .then((rows) => {
-                if (!cancelled) setOrgs(rows.filter((o) => !o.personal));
+                if (!cancelled) setOrgs(rows);
             })
             .catch(() => {});
         return () => {

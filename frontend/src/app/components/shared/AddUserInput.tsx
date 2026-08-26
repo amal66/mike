@@ -27,6 +27,17 @@ interface AddUserInputProps {
     autoFocus?: boolean;
     submitLabel?: string;
     className?: string;
+    /**
+     * Refuse addresses that don't already belong to a Mike account.
+     *
+     * True is right where the address must resolve to a user immediately. It
+     * is wrong for the two flows that address people who have not signed up
+     * yet: an access grant is claimed by email whenever its recipient does
+     * create an account, and an organization invitation is sent precisely so
+     * somebody outside can join. Those pass false and validate the format
+     * only.
+     */
+    requireExistingUser?: boolean;
 }
 
 export function AddUserInput({
@@ -37,6 +48,7 @@ export function AddUserInput({
     autoFocus = false,
     submitLabel = "Add user",
     className,
+    requireExistingUser = true,
 }: AddUserInputProps) {
     const [input, setInput] = useState("");
     const [checking, setChecking] = useState(false);
@@ -62,8 +74,10 @@ export function AddUserInput({
                 return;
             }
 
-            const user = await lookupUserByEmail(email);
-            if (!user.exists) {
+            const user = requireExistingUser
+                ? await lookupUserByEmail(email)
+                : { exists: false, email, display_name: null };
+            if (requireExistingUser && !user.exists) {
                 setError(`${email} does not belong to a Mike user.`);
                 return;
             }

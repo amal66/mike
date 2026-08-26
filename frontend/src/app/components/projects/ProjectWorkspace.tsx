@@ -17,9 +17,13 @@ import {
     createTabularReview,
     deleteProject,
     getProject,
+    getProjectAccess,
     getProjectPeople,
+    grantProjectAccess,
     listProjectChats,
+    revokeProjectAccess,
     updateProject,
+    type ProjectGrant,
 } from "@/app/lib/mikeApi";
 import type {
     Chat,
@@ -31,7 +35,7 @@ import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 import { NewTRModal } from "@/app/components/tabular/NewTRModal";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
 import { PeopleModal } from "@/app/components/modals/PeopleModal";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -50,11 +54,11 @@ import {
 
 /**
  * A denied action: the sentence for the popup plus which role the action is
- * reserved for. Plain strings keep the historic owner-only phrasing.
+ * reserved for. A plain string means the strictest tier, admin.
  */
 export type OwnerGate =
     | string
-    | { action: string; requiredRole: "owner" | "manager" | "editor" };
+    | { action: string; requiredRole: "admin" | "member" };
 
 type ProjectWorkspaceValue = {
     projectId: string;
@@ -83,7 +87,7 @@ type ProjectWorkspaceValue = {
         React.SetStateAction<Array<{ label: string; onClick: () => void }>>
     >;
     setOwnerOnlyAction: React.Dispatch<React.SetStateAction<OwnerGate | null>>;
-    /** The caller's role on this project ("owner" until the project loads). */
+    /** The caller's role on this project ("admin" until the project loads). */
     accessRole: ProjectRole;
     /** Capability check against the caller's role — mirror of the server. */
     canDo: (capability: Capability) => boolean;
@@ -137,6 +141,9 @@ export function ProjectWorkspaceProvider({
     const [projectChats, setProjectChats] = useState<Chat[] | null>(null);
     const [projectChatsLoading, setProjectChatsLoading] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
+    // Direct access grants, loaded only when the share dialog is opened: every
+    // project page would otherwise pay for a roster nobody looked at.
+    const [grants, setGrants] = useState<ProjectGrant[] | null>(null);
     const [projectDetailsOpen, setProjectDetailsOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<OwnerGate | null>(
         null,
@@ -255,21 +262,40 @@ export function ProjectWorkspaceProvider({
         void ensureProjectChats();
     }, [ensureProjectChats]);
 
-    // Role derived from the loaded project; "owner" until it loads, matching
-    // the historic `is_owner !== false` optimism. The server enforces.
-    const accessRole: ProjectRole = project ? roleFrom(project) : "owner";
+    // Role derived from the loaded project; "admin" until it loads, so the
+    // shell does not flash disabled controls at an admin on every navigation.
+    // The server enforces regardless.
+    const accessRole: ProjectRole = project ? roleFrom(project) : "admin";
     const canDo = useCallback(
         (capability: Capability) => can(accessRole, capability),
         [accessRole],
     );
 
+    const refreshGrants = useCallback(async () => {
+        try {
+            const access = await getProjectAccess(projectId);
+            setGrants(access.grants);
+        } catch (error) {
+            console.error("[project workspace] failed to load access", error);
+            setGrants([]);
+        }
+    }, [projectId]);
+
+    useEffect(() => {
+        setGrants(null);
+    }, [projectId]);
+
+    useEffect(() => {
+        if (peopleModalOpen && grants === null) void refreshGrants();
+    }, [peopleModalOpen, grants, refreshGrants]);
+
     const createChat = useCallback(async () => {
-        // Creating a chat in a project is editor-tier server-side; without
+        // Creating a chat in a project is member-tier server-side; without
         // this gate an org viewer's click fails with a silent 404.
         if (project && !canDo("content.edit")) {
             setOwnerOnlyAction({
                 action: "start a chat in this project",
-                requiredRole: "editor",
+                requiredRole: "member",
             });
             return;
         }
@@ -310,13 +336,13 @@ export function ProjectWorkspaceProvider({
     ]);
 
     const openNewReview = useCallback(() => {
-        // Creating a review is editor-tier server-side (POST /tabular-review
+        // Creating a review is member-tier server-side (POST /tabular-review
         // gates on content.edit) — stop viewers before the modal, not after
         // an unexplained failed submit.
         if (project && !canDo("content.edit")) {
             setOwnerOnlyAction({
                 action: "create a tabular review",
-                requiredRole: "editor",
+                requiredRole: "member",
             });
             return;
         }
@@ -354,10 +380,10 @@ export function ProjectWorkspaceProvider({
         cmNumber: string;
         practice: string;
     }) {
-        if (project && !canDo("members.manage")) {
+        if (project && !canDo("access.manage")) {
             setOwnerOnlyAction({
                 action: "edit project details",
-                requiredRole: "manager",
+                requiredRole: "admin",
             });
             return;
         }
@@ -469,7 +495,7 @@ export function ProjectWorkspaceProvider({
                     activeSection={activeSection}
                     creatingChat={creatingChat}
                     creatingReview={creatingReview}
-                    isOwner={canDo("members.manage")}
+                    canManageProject={canDo("access.manage")}
                     onBackToProjects={() => router.push("/projects")}
                     onProjectRoot={openProjectRoot}
                     onOpenDetails={() => setProjectDetailsOpen(true)}
@@ -501,7 +527,7 @@ export function ProjectWorkspaceProvider({
                     projectCmNumber={project?.cm_number}
                 />
 
-                <OwnerOnlyPopup
+                <PermissionDeniedPopup
                     open={!!ownerOnlyAction}
                     action={
                         typeof ownerOnlyAction === "string"
@@ -510,17 +536,17 @@ export function ProjectWorkspaceProvider({
                     }
                     requiredRole={
                         typeof ownerOnlyAction === "string"
-                            ? "owner"
+                            ? "admin"
                             : ownerOnlyAction?.requiredRole
                     }
-                    ownerEmail={project?.owner_email}
+                    contacts={project?.admin_contacts}
                     onClose={() => setOwnerOnlyAction(null)}
                 />
 
                 <ProjectDetailsModal
                     open={projectDetailsOpen}
                     project={project}
-                    canEdit={canDo("members.manage")}
+                    canEdit={canDo("access.manage")}
                     onClose={() => setProjectDetailsOpen(false)}
                     onSave={handleProjectDetailsSave}
                     onShareProject={() => {
@@ -565,25 +591,23 @@ export function ProjectWorkspaceProvider({
                                     : ""),
                             "People",
                         ]}
-                        onSharedWithChange={
-                            !canDo("members.manage")
-                                ? undefined
-                                : async (next) => {
-                                      const updated = await updateProject(
-                                          projectId,
-                                          { shared_with: next },
-                                      );
-                                      setProject((prev) =>
-                                          prev
-                                              ? {
-                                                    ...prev,
-                                                    shared_with:
-                                                        updated.shared_with,
-                                                }
-                                              : prev,
-                                      );
-                                  }
-                        }
+                        access={{
+                            grants: grants ?? [],
+                            orgId: project.org_id ?? null,
+                            canManage: canDo("access.manage"),
+                            onGrant: async (email, role) => {
+                                await grantProjectAccess(
+                                    projectId,
+                                    email,
+                                    role,
+                                );
+                                await refreshGrants();
+                            },
+                            onRevoke: async (email) => {
+                                await revokeProjectAccess(projectId, email);
+                                await refreshGrants();
+                            },
+                        }}
                     />
                 )}
             </div>

@@ -363,7 +363,7 @@ export function ProjectPageHeader({
     activeSection,
     creatingChat,
     creatingReview,
-    isOwner,
+    canManageProject,
     onBackToProjects,
     onProjectRoot,
     onOpenDetails,
@@ -382,7 +382,8 @@ export function ProjectPageHeader({
     activeSection: ProjectWorkspaceSection;
     creatingChat: boolean;
     creatingReview: boolean;
-    isOwner: boolean;
+    /** Whether the caller holds access.manage on this project. */
+    canManageProject: boolean;
     onBackToProjects: () => void;
     onProjectRoot: () => void;
     onOpenDetails: () => void;
@@ -481,7 +482,7 @@ export function ProjectPageHeader({
                             <HeaderActionsMenu
                                 items={[
                                     {
-                                        label: isOwner
+                                        label: canManageProject
                                             ? "Edit details"
                                             : "View details",
                                         icon: Pencil,
