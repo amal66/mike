@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+    ORG_ROLES,
+    ORG_ROLE_DESCRIPTIONS,
+    ORG_ROLE_LABELS,
+    PROJECT_ROLES,
+    PROJECT_ROLE_DESCRIPTIONS,
+    PROJECT_ROLE_LABELS,
     can,
     roleFrom,
+    strongerRole,
     type Capability,
     type ProjectRole,
 } from "./permissions";
@@ -13,32 +20,22 @@ const EXPECTED: Record<ProjectRole, Record<Capability, boolean>> = {
         "project.view": true,
         "content.edit": false,
         "docs.organize": false,
-        "structure.manage": false,
-        "members.manage": false,
+        "access.manage": false,
         "container.delete": false,
     },
-    editor: {
+    member: {
+        "project.view": true,
+        "content.edit": true,
+        // Organizing folders is member work, not an administrative act.
+        "docs.organize": true,
+        "access.manage": false,
+        "container.delete": false,
+    },
+    admin: {
         "project.view": true,
         "content.edit": true,
         "docs.organize": true,
-        "structure.manage": false,
-        "members.manage": false,
-        "container.delete": false,
-    },
-    manager: {
-        "project.view": true,
-        "content.edit": true,
-        "docs.organize": true,
-        "structure.manage": true,
-        "members.manage": true,
-        "container.delete": false,
-    },
-    owner: {
-        "project.view": true,
-        "content.edit": true,
-        "docs.organize": true,
-        "structure.manage": true,
-        "members.manage": true,
+        "access.manage": true,
         "container.delete": true,
     },
 };
@@ -58,38 +55,81 @@ describe("permissions matrix (client mirror)", () => {
         expect(can(null, "project.view")).toBe(false);
         expect(can(undefined, "container.delete")).toBe(false);
     });
+
+    it("has exactly three project roles and two organization roles", () => {
+        expect(PROJECT_ROLES).toEqual(["admin", "member", "viewer"]);
+        expect(ORG_ROLES).toEqual(["admin", "member"]);
+    });
+});
+
+describe("role vocabulary", () => {
+    it("never says Owner, Manager or Editor", () => {
+        const words = [
+            ...Object.values(PROJECT_ROLE_LABELS),
+            ...Object.values(ORG_ROLE_LABELS),
+            ...Object.values(PROJECT_ROLE_DESCRIPTIONS),
+            ...Object.values(ORG_ROLE_DESCRIPTIONS),
+        ].join(" ");
+        expect(words).not.toMatch(/owner|manager|editor/i);
+    });
+
+    it("labels every role the product exposes", () => {
+        expect(PROJECT_ROLES.map((r) => PROJECT_ROLE_LABELS[r])).toEqual([
+            "Admin",
+            "Member",
+            "Viewer",
+        ]);
+        expect(ORG_ROLES.map((r) => ORG_ROLE_LABELS[r])).toEqual([
+            "Admin",
+            "Member",
+        ]);
+    });
+});
+
+describe("strongerRole", () => {
+    it("lets an overlapping grant add standing but never subtract it", () => {
+        expect(strongerRole("admin", "viewer")).toBe("admin");
+        expect(strongerRole("viewer", "admin")).toBe("admin");
+        expect(strongerRole("member", "viewer")).toBe("member");
+    });
+
+    it("treats absent roles as no claim at all", () => {
+        expect(strongerRole(null, "member")).toBe("member");
+        expect(strongerRole("member", null)).toBe("member");
+        expect(strongerRole(null, null)).toBeNull();
+    });
 });
 
 describe("roleFrom", () => {
-    it("prefers access_role from detail responses", () => {
+    it("prefers access_role, which both detail and list rows now carry", () => {
         expect(roleFrom({ access_role: "viewer", is_owner: false })).toBe(
             "viewer",
         );
-        expect(roleFrom({ access_role: "manager", is_owner: false })).toBe(
-            "manager",
+        expect(roleFrom({ access_role: "admin", is_owner: false })).toBe(
+            "admin",
         );
     });
 
-    it("falls back to the is_owner list-row contract", () => {
-        expect(roleFrom({ is_owner: true })).toBe("owner");
-        expect(roleFrom({ is_owner: false })).toBe("editor");
+    it("falls back to the is_owner provenance flag", () => {
+        expect(roleFrom({ is_owner: true })).toBe("admin");
+        expect(roleFrom({ is_owner: false })).toBe("member");
     });
 
     it("fails closed when a row carries neither field", () => {
         // Bare mutation responses (PATCH handlers return the raw DB row)
-        // have neither access_role nor is_owner. Defaulting to "owner"
-        // here once let a manager's client gates silently open after a
-        // column save; the unknown case must resolve to the weakest role.
+        // have neither access_role nor is_owner. Defaulting to the top role
+        // here once let a client's gates silently open after a column save;
+        // the unknown case must resolve to the weakest role.
         expect(roleFrom({})).toBe("viewer");
         expect(roleFrom({ access_role: null, is_owner: null })).toBe("viewer");
     });
 
-    it("ignores unknown access_role values", () => {
-        expect(
-            roleFrom({
-                access_role: "superuser" as never,
-                is_owner: false,
-            }),
-        ).toBe("editor");
+    it("ignores role values that are no longer in the ladder", () => {
+        // "manager" and "editor" were removed; a stale payload must not
+        // resolve to something the matrix cannot rank.
+        expect(roleFrom({ access_role: "manager", is_owner: false })).toBe(
+            "member",
+        );
+        expect(roleFrom({ access_role: "owner" })).toBe("viewer");
     });
 });
