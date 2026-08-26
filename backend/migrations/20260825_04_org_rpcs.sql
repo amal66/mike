@@ -981,7 +981,7 @@ as $$
           p_project_id is null
           and coalesce(p_user_email, '') <> ''
           and (tr.user_id is null or tr.user_id::text <> p_user_id)
-          and tr.shared_with @> jsonb_build_array(p_user_email)
+          and tr.shared_with @> jsonb_build_array(lower(p_user_email))
         )
         or (
           p_project_id is null
@@ -1197,7 +1197,7 @@ as $$
         p_project_id is null
         and coalesce(p_user_email, '') <> ''
         and (tr.user_id is null or tr.user_id::text <> p_user_id)
-        and tr.shared_with @> jsonb_build_array(p_user_email)
+        and tr.shared_with @> jsonb_build_array(lower(p_user_email))
       )
       or (
         p_project_id is null
