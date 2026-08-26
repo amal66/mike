@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     decideMcpPendingToolCall,
     MCP_APPROVAL_KEEP_ALIVE_FRAME,
-    MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS,
 } from "../approvals";
+import { SSE_KEEP_ALIVE_INTERVAL_MS } from "../../sse";
 import { buildUserMcpTools, executeMcpToolCall } from "../servers";
 import type { Db } from "../types";
 
@@ -314,13 +314,13 @@ describe("the approval pause keeps the SSE stream alive", () => {
         // Just before the first tick: still silent, by design — the frames
         // are a cadence, not a burst.
         await vi.advanceTimersByTimeAsync(
-            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS - 1_000,
+            SSE_KEEP_ALIVE_INTERVAL_MS - 1_000,
         );
         expect(keepAlives).toBe(0);
 
         // Three intervals of human deliberation, three frames on the wire.
         await vi.advanceTimersByTimeAsync(
-            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS * 3,
+            SSE_KEEP_ALIVE_INTERVAL_MS * 3,
         );
         expect(keepAlives).toBe(3);
         expect(tables.user_mcp_pending_tool_calls[0].status).toBe("pending");
@@ -335,7 +335,7 @@ describe("the approval pause keeps the SSE stream alive", () => {
 
         // ...and never write again to a stream the turn has moved past.
         await vi.advanceTimersByTimeAsync(
-            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS * 4,
+            SSE_KEEP_ALIVE_INTERVAL_MS * 4,
         );
         expect(keepAlives).toBe(atResolution);
     });
@@ -377,7 +377,7 @@ describe("the approval pause keeps the SSE stream alive", () => {
         ).rejects.toThrow("poll exploded");
 
         await vi.advanceTimersByTimeAsync(
-            MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS * 3,
+            SSE_KEEP_ALIVE_INTERVAL_MS * 3,
         );
         expect(keepAlives).toBe(0);
     });
@@ -392,6 +392,6 @@ describe("the approval pause keeps the SSE stream alive", () => {
         // Must comfortably beat the shortest idle timeout we can sit behind
         // (nginx's proxy_read_timeout and ELB's idle timeout both default to
         // 60s; 30s is a common hardened setting).
-        expect(MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS).toBeLessThan(30_000);
+        expect(SSE_KEEP_ALIVE_INTERVAL_MS).toBeLessThan(30_000);
     });
 });

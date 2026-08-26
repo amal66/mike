@@ -23,9 +23,9 @@ import {
     createPendingMcpToolCall,
     markMcpToolCallExecuted,
     markMcpToolCallFailed,
-    MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS,
     waitForMcpApprovalDecision,
 } from "./approvals";
+import { SSE_KEEP_ALIVE_INTERVAL_MS } from "../sse";
 import {
     completeMcpConnectorOAuthAuthorization,
     DbMcpOAuthProvider,
@@ -657,7 +657,7 @@ export async function executeMcpToolCall(
                 const tick = options.onApprovalWaitKeepAlive;
                 keepAlive = setInterval(
                     () => tick(),
-                    MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS,
+                    SSE_KEEP_ALIVE_INTERVAL_MS,
                 );
             }
             decision = await waitForMcpApprovalDecision(

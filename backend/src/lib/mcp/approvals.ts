@@ -1,3 +1,4 @@
+import { sseKeepAliveFrame } from "../sse";
 import { createServerSupabase } from "../supabase";
 import type { ConnectorRow, Db, PendingToolCallRow, ToolCacheRow } from "./types";
 
@@ -12,22 +13,14 @@ export const MCP_APPROVAL_TTL_MS = 2 * 60 * 1000;
 // lapsed.
 export const MCP_APPROVAL_WAIT_MS = 90 * 1000;
 // While that wait blocks, the chat turn produces no SSE data at all — the
-// model is paused mid-turn on a human. A minute and a half of silence is
-// long enough for a proxy, load balancer, or CDN to conclude the response is
-// dead and close it, which would kill the confirmation the user is still
-// looking at. So the stream emits SSE COMMENT frames on this cadence for the
-// duration of the wait: bytes on the wire that every conforming SSE reader
-// discards (they do not start with "data:"), keeping intermediaries from
-// idling us out and surfacing a half-open peer as a write failure instead of
-// a silent hang. Well under the ~30-60s idle timeout typical of proxy
-// defaults. See executeMcpToolCall for the wiring.
-export const MCP_APPROVAL_KEEP_ALIVE_INTERVAL_MS = 15 * 1000;
-// The exact bytes written on that cadence. It MUST stay an SSE comment — a
-// line beginning with ":" and terminated by a blank line — because that is
-// what makes it invisible to the client: every reader in this repo skips any
-// line that does not start with "data:". Turning it into a data frame would
-// push an unknown event type into the chat transcript.
-export const MCP_APPROVAL_KEEP_ALIVE_FRAME = ": keep-alive\n\n";
+// model is paused mid-turn on a human. A minute and a half of silence is long
+// enough for a proxy, load balancer, or CDN to conclude the response is dead
+// and close it, which would kill the confirmation the user is still looking
+// at. So the stream keeps the connection warm for the duration of the wait,
+// using the cadence and comment-frame shape shared with the Word client tool
+// loop — the other place a chat turn parks with nothing to say (lib/sse.ts).
+// See executeMcpToolCall for the wiring.
+export const MCP_APPROVAL_KEEP_ALIVE_FRAME = sseKeepAliveFrame("mcp-approval");
 const POLL_INTERVAL_MS = 1_500;
 
 // Terminal ledger rows keep the full tool-argument payload — which in a

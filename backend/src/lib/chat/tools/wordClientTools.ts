@@ -17,6 +17,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { NormalizedToolCall, OpenAIToolSchema } from "../../llm";
+import { SSE_KEEP_ALIVE_INTERVAL_MS, sseKeepAliveFrame } from "../../sse";
 import { MAX_DOCUMENT_CONTEXT_CHARS, spotlight } from "../contextBuilders";
 import { WORD_EDIT_FORMATS } from "../wordDocumentEdits";
 import { ACTIVE_WORD_DOCUMENT_LIVE_FILENAME } from "../wordPrompt";
@@ -214,7 +215,6 @@ export const CLIENT_TOOL_RESULT_TIMEOUT_MS = 60_000;
 const APPLY_TIMEOUT_BASE_MS = 30_000;
 const APPLY_TIMEOUT_PER_EDIT_MS = 3_000;
 const APPLY_TIMEOUT_MAX_MS = 180_000;
-const KEEP_ALIVE_INTERVAL_MS = 15_000;
 
 export function applyTimeoutMsFor(editCount: number): number {
   return Math.min(
@@ -696,10 +696,12 @@ export function createWordClientToolsAdapter(params: {
       // intermediaries from idling the stream out (the pane's readSSE ignores
       // any line not starting with "data:"). On a half-open TCP peer these
       // periodic writes are also what eventually surface the reset and fire
-      // the request's close/abort path.
+      // the request's close/abort path. Cadence and frame shape are shared
+      // with the other place a turn parks — the MCP approval wait — so both
+      // pauses answer an idle proxy the same way (lib/sse.ts).
       keepAlive = setInterval(() => {
-        write(": tool-wait\n\n");
-      }, KEEP_ALIVE_INTERVAL_MS);
+        write(sseKeepAliveFrame("tool-wait"));
+      }, SSE_KEEP_ALIVE_INTERVAL_MS);
       const result = await pending;
       if (result === CLIENT_TOOL_TIMEOUT_RESULT) {
         consecutiveTimeouts += 1;
