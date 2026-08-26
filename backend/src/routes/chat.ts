@@ -69,7 +69,7 @@ async function validateAccessibleProjectId(
     db: Db,
 ): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
     if (!projectId) return { ok: true };
-    // Creating a chat under a project contributes content to it: editor+.
+    // Creating a chat under a project contributes content to it: member+.
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
     if (!access.ok || !can(access.projectRole, "content.edit"))
         return { ok: false, status: 404, detail: "Project not found" };
@@ -82,9 +82,10 @@ type ChatAccess =
 
 // Resolve a chat AND the caller's role for it, so callers can gate reads and
 // writes separately: "can you see it" (project.view) and "can you write to
-// it" (content.edit) are different questions. The chat owner is always
-// "owner"; for project chats everyone else inherits their project role
-// (lib/access.ts) — org admins are "manager", plain org members "viewer".
+// it" (content.edit) are different questions. The chat's creator is always
+// "admin" of their own thread; for project chats everyone else inherits their
+// project role (lib/access.ts) — org admins land on admin, org members on
+// member, and a direct grant gives exactly the role it names.
 // Chats without a project stay owner-only.
 async function getAccessibleChat(
     chatId: string,
@@ -100,8 +101,11 @@ async function getAccessibleChat(
     if (error || !chat) return { ok: false };
 
     const row = chat as AccessibleChat;
+    // The chat's creator administers their own thread regardless of what the
+    // surrounding project grants them: a project viewer who started a chat
+    // must still be able to continue it.
     if (row.user_id === userId)
-        return { ok: true, chat: row, projectRole: "owner" };
+        return { ok: true, chat: row, projectRole: "admin" };
 
     if (row.project_id) {
         const access = await checkProjectAccess(
@@ -555,7 +559,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         if (!access.ok)
             return void res.status(404).json({ detail: "Chat not found" });
         // Appending messages (and triggering LLM generation) writes to the
-        // chat: editor+ only, mirroring the new-chat path below. Org viewers
+        // chat: member+ only, mirroring the new-chat path below. Viewers
         // can read this chat (GET) but must not be able to write into it.
         if (!can(access.projectRole, "content.edit"))
             return void res.status(403).json({

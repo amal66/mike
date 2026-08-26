@@ -96,8 +96,8 @@ vi.mock("../../lib/userSettings", () => ({
 
 vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
-    ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
-    ensureReviewAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
+    ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
+    ensureReviewAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
 }));
@@ -127,8 +127,9 @@ describe("POST /projects/:projectId/chat", () => {
         });
         checkProjectAccess.mockResolvedValue({
             ok: true,
-            isOwner: true,
-            projectRole: "owner",
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
             project: { id: "p1", user_id: "u1", shared_with: null },
         });
     });

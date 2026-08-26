@@ -102,8 +102,8 @@ vi.mock("../../middleware/auth", () => ({
 
 vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
-    ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
-    ensureReviewAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
+    ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
+    ensureReviewAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
 }));

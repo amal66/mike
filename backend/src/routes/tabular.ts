@@ -507,10 +507,9 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
         ? await filterAccessibleDocumentIds(document_ids, userId, userEmail, db)
         : [];
     const grouping = normalizeGrouping(document_grouping);
-    // Tenant assignment: inherit the project's org when project-scoped,
-    // otherwise the caller's personal org.
+    // Tenant assignment: inherit the project's org when project-scoped.
+    // A standalone review is personal, which is simply org_id null.
     const orgId = await resolveContentOrgId(db, {
-        userId,
         projectId: project_id ?? null,
     });
     const { data: review, error } = await db
@@ -688,7 +687,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     res.json({
         review: {
             ...clientReview,
-            is_owner: access.isOwner,
+            is_owner: access.isCreator,
             access_role: access.projectRole,
             is_running: isReviewGenerationRunning(review),
         },
@@ -807,21 +806,20 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
     // Per-field gates, generalising #175's owner-only "settings" rule to
-    // the role ladder: title, document set and column set are structural
-    // (manager+ — renaming the container and re-shaping the grid, which
-    // destroys cells when narrowed); sharing is manager+; moving the
-    // review between projects stays owner-only. For shared_with
-    // collaborators this is exactly #175's behaviour; only org
-    // owners/admins gain these rights.
+    // the role ladder. Title, document set and column set are content work
+    // (member+): reshaping the grid destroys cells when narrowed, but so does
+    // any other edit a member may already make. Sharing is admin-only — it
+    // changes WHO can reach the review, which is a different kind of power.
+    // Moving the review between projects stays with its creator.
     if (
         (req.body.title != null ||
             Array.isArray(req.body.document_ids) ||
             req.body.document_grouping != null ||
             modelUpdateProvided) &&
-        !can(access.projectRole, "structure.manage")
+        !can(access.projectRole, "content.edit")
     ) {
         return void res.status(403).json({
-            detail: "Only a review manager can change review settings",
+            detail: "Only a review member can change review settings",
         });
     }
     if (modelUpdateProvided) {
@@ -838,9 +836,9 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         updates.model = selectedModel.model;
     }
     if (req.body.columns_config != null) {
-        if (!can(access.projectRole, "structure.manage")) {
+        if (!can(access.projectRole, "content.edit")) {
             return void res.status(403).json({
-                detail: "Only a review manager can change columns",
+                detail: "Only a review member can change columns",
             });
         }
         updates.columns_config = req.body.columns_config;
@@ -865,10 +863,10 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         );
     }
     if (sharedWithUpdate !== undefined) {
-        if (!can(access.projectRole, "members.manage"))
+        if (!can(access.projectRole, "access.manage"))
             return void res
                 .status(403)
-                .json({ detail: "Only a review manager can change sharing" });
+                .json({ detail: "Only a project admin can change sharing" });
         const missingSharedUsers = await findMissingUserEmails(
             db,
             sharedWithUpdate,
@@ -881,7 +879,7 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         updates.shared_with = sharedWithUpdate;
     }
     if (projectIdUpdateProvided) {
-        if (!access.isOwner) {
+        if (!access.isCreator) {
             return void res.status(403).json({
                 detail: "Only the review owner can move a review",
             });
@@ -951,12 +949,12 @@ tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
     const { reviewId } = req.params;
     const db = createServerSupabase();
     // container.delete keeps review deletion at the top of the ladder: the
-    // review's own owner, or the owner of the project it lives in (who could
+    // review's own creator, or an admin of the project it lives in (who could
     // already delete the whole project, review included). The old
-    // `.eq("user_id", userId)` filter made that project owner's DELETE a
+    // `.eq("user_id", userId)` filter made that project admin's DELETE a
     // silent 204 no-op — the row survived and the UI showed it again on the
-    // next load. Resolving the role first also lets managers/editors/viewers
-    // learn they were refused (403) instead of guessing at a 404.
+    // next load. Resolving the role first also lets members and viewers learn
+    // they were refused (403) instead of guessing at a 404.
     const { data: review, error: reviewError } = await db
         .from("tabular_reviews")
         .select("id, user_id, project_id, shared_with, org_id")
@@ -1005,11 +1003,12 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     const access = await ensureReviewAccess(review, userId, userEmail, db);
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
-    // Blanking extracted cells is bulk-destructive, so manager+ — the
-    // analogue of deleting a folder tree.
-    if (!can(access.projectRole, "structure.manage"))
+    // Blanking extracted cells is destructive but it is still editing the
+    // review's contents, so it sits with the rest of content.edit. Viewers,
+    // being read-only, are refused.
+    if (!can(access.projectRole, "content.edit"))
         return void res.status(403).json({
-            detail: "Only a review manager can clear cells",
+            detail: "Only a review member can clear cells",
         });
     if (isReviewGenerationRunning(review)) {
         return void res.status(409).json({

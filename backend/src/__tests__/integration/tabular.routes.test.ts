@@ -158,10 +158,9 @@ vi.mock("../../lib/access", async (importOriginal) => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     filterAccessibleDocumentIds: (...args: unknown[]) =>
         filterAccessibleDocumentIds(...args),
-    ensureDocAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
+    ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     listAccessibleProjectIds: vi.fn(async () => []),
     getOrgRole: vi.fn(async () => null),
-    getPersonalOrgId: vi.fn(async () => null),
     resolveContentOrgId: vi.fn(async () => null),
 }));
 
@@ -190,13 +189,15 @@ describe("tabular.routes", () => {
         // Default: caller is the owner with full access.
         ensureReviewAccess.mockResolvedValue({
             ok: true,
-            isOwner: true,
-            projectRole: "owner",
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
         });
         checkProjectAccess.mockResolvedValue({
             ok: true,
-            isOwner: true,
-            projectRole: "owner",
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
             project: { id: "p1", user_id: "u1", shared_with: null },
         });
         // Default: every requested doc is accessible (identity passthrough).
@@ -702,15 +703,19 @@ describe("tabular.routes", () => {
             expect(res.body.detail).toBe("Review not found");
         });
 
-        it("returns 403 when an editor (shared member) edits columns_config", async () => {
+        it("returns 403 when a viewer edits columns_config", async () => {
+            // Reshaping a review's grid is content work, so members may do it
+            // (Will's review: members "use chats and reviews"). Only viewers,
+            // who are read-only by definition, are refused.
             supabaseState.tables.tabular_reviews = {
                 data: { id: "r1", user_id: "other", project_id: "p1" },
                 error: null,
             };
             ensureReviewAccess.mockResolvedValue({
                 ok: true,
-                isOwner: false,
-                projectRole: "editor",
+                isCreator: false,
+                orgRole: null,
+                projectRole: "viewer",
             });
 
             const res = await request(app)
@@ -719,7 +724,7 @@ describe("tabular.routes", () => {
                 .send({ columns_config: [{ index: 0, name: "X", prompt: "p" }] });
 
             expect(res.status).toBe(403);
-            expect(res.body.detail).toBe("Only a review manager can change columns");
+            expect(res.body.detail).toBe("Only a review member can change columns");
         });
     });
 
@@ -740,8 +745,9 @@ describe("tabular.routes", () => {
             seedReview([ownedRow, { data: null, error: null }]);
             ensureReviewAccess.mockResolvedValue({
                 ok: true,
-                isOwner: true,
-                projectRole: "owner",
+                isCreator: true,
+                orgRole: null,
+                projectRole: "admin",
             });
 
             const res = await request(app)
@@ -765,8 +771,9 @@ describe("tabular.routes", () => {
             ]);
             ensureReviewAccess.mockResolvedValue({
                 ok: true,
-                isOwner: false,
-                projectRole: "owner",
+                isCreator: false,
+                orgRole: null,
+                projectRole: "admin",
             });
 
             const res = await request(app)
@@ -788,7 +795,8 @@ describe("tabular.routes", () => {
                 ]);
                 ensureReviewAccess.mockResolvedValue({
                     ok: true,
-                    isOwner: false,
+                    isCreator: false,
+                    orgRole: null,
                     projectRole,
                 });
 
@@ -835,8 +843,9 @@ describe("tabular.routes", () => {
             ]);
             ensureReviewAccess.mockResolvedValue({
                 ok: true,
-                isOwner: true,
-                projectRole: "owner",
+                isCreator: true,
+                orgRole: null,
+                projectRole: "admin",
             });
 
             const res = await request(app)
@@ -876,15 +885,16 @@ describe("tabular.routes", () => {
             expect(res.body.detail).toBe("Review not found");
         });
 
-        it("returns 403 for an editor — clearing cells is manager+", async () => {
+        it("returns 403 for a viewer — clearing cells is member+", async () => {
             supabaseState.tables.tabular_reviews = {
                 data: { id: "r1", user_id: "other", project_id: "p1" },
                 error: null,
             };
             ensureReviewAccess.mockResolvedValue({
                 ok: true,
-                isOwner: false,
-                projectRole: "editor",
+                isCreator: false,
+                orgRole: null,
+                projectRole: "viewer",
             });
 
             const res = await request(app)
@@ -893,7 +903,7 @@ describe("tabular.routes", () => {
                 .send({ row_ids: ["row-1"] });
 
             expect(res.status).toBe(403);
-            expect(res.body.detail).toBe("Only a review manager can clear cells");
+            expect(res.body.detail).toBe("Only a review member can clear cells");
         });
 
         it("rejects clearing cells while generation holds the review lease", async () => {

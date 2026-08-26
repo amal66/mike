@@ -1184,13 +1184,14 @@ describe("PATCH /word-chat/:chatId/model", () => {
 // ---------------------------------------------------------------------------
 // Org RBAC on chat writes.
 //
-// Scenario: chat "chat-1" lives in project "proj-1", owned by "colleague-1",
+// Scenario: chat "chat-1" lives in project "proj-1", created by "colleague-1",
 // inside org "org-1". The authenticated caller is "u1" (see the auth mock).
-// A table-aware supabase stub lets us vary u1's org role: "member" derives a
-// "viewer" project role (may read, must not write), "admin" derives "manager"
-// (may write). The security property under test: POST /chat with an existing
-// chat_id and POST /chat/:chatId/generate-title are WRITES and must require
-// content.edit, while GET /chat/:chatId stays a read open to viewers.
+// A table-aware supabase stub lets us vary how u1 reaches the project: a
+// direct 'viewer' grant (may read, must not write), or org membership, which
+// inherits project member and may write. The security property under test:
+// POST /chat with an existing chat_id and POST /chat/:chatId/generate-title
+// are WRITES and must require content.edit, while GET /chat/:chatId stays a
+// read open to viewers.
 // ---------------------------------------------------------------------------
 
 function tableQuery(row: Record<string, unknown> | null) {
@@ -1217,6 +1218,7 @@ function tableQuery(row: Record<string, unknown> | null) {
 function makeRbacDb(
     orgRole: "admin" | "member" | null,
     chatUserId = "colleague-1",
+    grantRole: "admin" | "member" | "viewer" | null = null,
 ) {
     return {
         from: vi.fn((table: string) => {
@@ -1236,6 +1238,8 @@ function makeRbacDb(
                 });
             if (table === "org_members")
                 return tableQuery(orgRole ? { role: orgRole } : null);
+            if (table === "project_access_grants")
+                return tableQuery(grantRole ? { role: grantRole } : null);
             return tableQuery(null);
         }),
         rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
@@ -1263,8 +1267,10 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         mockedCreate.mockImplementation(() => mockSupabase() as never);
     });
 
-    it("403s an org viewer POSTing to an existing chat in a colleague's project", async () => {
-        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+    it("403s a project viewer POSTing to an existing chat in a colleague's project", async () => {
+        mockedCreate.mockImplementation(
+            () => makeRbacDb(null, "colleague-1", "viewer") as never,
+        );
 
         const res = await request(app)
             .post("/chat")
@@ -1276,8 +1282,10 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(runLLMStream).not.toHaveBeenCalled();
     });
 
-    it("403s an org viewer calling generate-title on a colleague's chat", async () => {
-        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+    it("403s a project viewer calling generate-title on a colleague's chat", async () => {
+        mockedCreate.mockImplementation(
+            () => makeRbacDb(null, "colleague-1", "viewer") as never,
+        );
 
         const res = await request(app)
             .post("/chat/chat-1/generate-title")
@@ -1326,7 +1334,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(res.body.title).toBe("Generated Title");
     });
 
-    it("still lets an org viewer GET the chat (reads stay project.view)", async () => {
+    it("still lets a project viewer GET the chat (reads stay project.view)", async () => {
         mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
 
         const res = await request(app)

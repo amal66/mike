@@ -33,7 +33,7 @@ import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
 } from "../lib/documentVersions";
-import { getOrgRole, getPersonalOrgId } from "../lib/access";
+import { getOrgRole } from "../lib/access";
 
 export const workflowsRouter = Router();
 
@@ -617,7 +617,9 @@ workflowsRouter.post(
         .json({ detail: "metadata.type must be 'assistant' or 'tabular'" });
 
     const db = createServerSupabase();
-    const orgId = await getPersonalOrgId(userId, db);
+    // Workflows are personal unless a future change gives them an explicit
+    // organization; there is no personal org to file them under any more.
+    const orgId: string | null = null;
     devLog("[workflows/create] request", {
       userId,
       title: title.trim(),

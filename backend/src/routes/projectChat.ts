@@ -103,29 +103,30 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const askInputsResponse = parsedAskInputsResponse.value;
 
     const db = createServerSupabase();
-    // Verify the user has access to the project (owner or shared member).
-    // Project chat writes messages and can create document versions via
-    // tools: editor+.
+
+    // Verify the caller can reach the project at all. Whether they may WRITE
+    // is decided below, once we know whether this is their own chat.
     const projectAccess = await checkProjectAccess(
         projectId,
         userId,
         userEmail,
         db,
     );
-    if (!projectAccess.ok || !can(projectAccess.projectRole, "content.edit"))
+    if (!projectAccess.ok)
         return void res.status(404).json({ detail: "Project not found" });
 
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let chatModel: string | null = null;
     let chatReasoningLevel: string | null = null;
+    let chatCreatorId: string | null = null;
 
     if (chatId) {
         const { data: existing } = await db
             .from("chats")
-            .select("id, title, model, reasoning_level, project_id")
+            .select("id, title, model, reasoning_level, project_id, user_id")
             .eq("id", chatId)
-            .single();
+            .maybeSingle();
         const canUse = !!existing && existing.project_id === projectId;
         if (!canUse) chatId = null;
         else {
@@ -133,6 +134,8 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             chatModel = (existing!.model as string | null) ?? null;
             chatReasoningLevel =
                 (existing!.reasoning_level as string | null) ?? null;
+            chatCreatorId =
+                (existing as { user_id?: string | null }).user_id ?? null;
         }
     }
 
@@ -177,6 +180,22 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 .json({ detail: "Failed to save chat model" });
         }
     }
+
+    // Writing to a project chat needs `content.edit` — EXCEPT that a chat's
+    // own creator may always continue their thread, exactly as POST /chat
+    // allows (lib/access.ts derives "admin" for a row's creator there).
+    //
+    // The two routes used to disagree: this one gated purely on the project
+    // role, so a project viewer who had started a chat got a 404 when they
+    // sent the next message. The client, which gates on
+    // `canEditContent || chatOwnerId === user.id`, rendered the message
+    // locally and then lost it — the server had persisted nothing. Keeping
+    // both ladders identical is what stops that class of silent data loss.
+    const isOwnChat = !!chatCreatorId && chatCreatorId === userId;
+    if (!isOwnChat && !can(projectAccess.projectRole, "content.edit"))
+        return void res.status(403).json({
+            detail: "You do not have permission to write in this project.",
+        });
 
     if (!chatId) {
         const { data: newChat, error } = await db

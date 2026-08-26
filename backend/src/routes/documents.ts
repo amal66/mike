@@ -655,7 +655,7 @@ documentsRouter.post(
         !targetDoc.project_id &&
         sourceDoc.user_id === userId &&
         targetDoc.user_id === userId);
-    if (willDeleteSource && !sourceAccess.isOwner) {
+    if (willDeleteSource && !sourceAccess.isCreator) {
       return void res.status(403).json({
         detail: "Only the source document owner can move it into a version.",
       });

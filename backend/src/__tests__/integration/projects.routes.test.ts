@@ -4,9 +4,9 @@ import request from "supertest";
 // ---------------------------------------------------------------------------
 // Hoisted mock fns we want to reconfigure per-test.
 // ---------------------------------------------------------------------------
-const { checkProjectAccess, deleteUserProjects } = vi.hoisted(() => ({
+const { checkProjectAccess, deleteProjectsByIds } = vi.hoisted(() => ({
     checkProjectAccess: vi.fn(),
-    deleteUserProjects: vi.fn(),
+    deleteProjectsByIds: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -112,13 +112,12 @@ vi.mock("../../lib/access", async (importOriginal) => ({
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
     getOrgRole: vi.fn(async () => null),
-    getPersonalOrgId: vi.fn(async () => null),
     resolveContentOrgId: vi.fn(async () => null),
 }));
 
 // user router imports all four cleanup helpers at module load.
 vi.mock("../../lib/userDataCleanup", () => ({
-    deleteUserProjects: (...args: unknown[]) => deleteUserProjects(...args),
+    deleteProjectsByIds: (...args: unknown[]) => deleteProjectsByIds(...args),
     deleteAllUserChats: vi.fn(async () => {}),
     deleteAllUserTabularReviews: vi.fn(async () => {}),
     deleteUserAccountData: vi.fn(async () => {}),
@@ -169,11 +168,12 @@ describe("projects.routes", () => {
         resetSupabaseState();
         checkProjectAccess.mockResolvedValue({
             ok: true,
-            isOwner: true,
-            projectRole: "owner",
-            project: { id: "p1", user_id: "u1", shared_with: null },
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
+            project: { id: "p1", user_id: "u1", org_id: null, shared_with: null },
         });
-        deleteUserProjects.mockResolvedValue(1);
+        deleteProjectsByIds.mockResolvedValue(1);
     });
 
     // ── GET /projects (overview) ──────────────────────────────────────────
@@ -545,8 +545,10 @@ describe("projects.routes", () => {
     it("returns project folder conflicts without replacement permissions", async () => {
       checkProjectAccess.mockResolvedValue({
         ok: true,
-        isOwner: false,
-        project: { id: "p1", user_id: "u2", shared_with: ["u1@test.local"] },
+        isCreator: false,
+        orgRole: null,
+        projectRole: "member",
+        project: { id: "p1", user_id: "u2", org_id: null, shared_with: ["u1@test.local"] },
       });
       supabaseState.rpc = {
         data: {
@@ -776,11 +778,12 @@ describe("projects.routes", () => {
             );
         });
 
-        it("grants shared access via the case-insensitive helper (editor role)", async () => {
+        it("grants direct access via the case-insensitive helper (member role)", async () => {
             checkProjectAccess.mockResolvedValue({
                 ok: true,
-                isOwner: false,
-                projectRole: "editor",
+                isCreator: false,
+                orgRole: null,
+                projectRole: "member",
                 project: {
                     id: "p1",
                     user_id: "someone-else",
@@ -806,7 +809,7 @@ describe("projects.routes", () => {
             expect(res.body).toMatchObject({
                 id: "p1",
                 is_owner: false,
-                access_role: "editor",
+                access_role: "member",
             });
             expect(checkProjectAccess).toHaveBeenCalledTimes(1);
         });
@@ -840,14 +843,17 @@ describe("projects.routes", () => {
     });
 
     // ── DELETE /projects/:projectId/folders/:folderId (role ladder) ──────
-    // Folder deletion cascades into nested documents, so it is manager+:
-    // owner and org owner/admin pass; shared editors and org viewers do not.
+    // Organizing documents and folders is member work (Will's review): a
+    // collaborator who may upload and delete documents is not meaningfully
+    // restrained by being unable to remove the folder holding them. Only
+    // viewers are refused.
     describe("DELETE /projects/:projectId/folders/:folderId", () => {
         const roleAccess = (projectRole: string) => ({
             ok: true,
-            isOwner: projectRole === "owner",
+            isCreator: projectRole === "admin",
+            orgRole: null,
             projectRole,
-            project: { id: "p1", user_id: "u1", shared_with: null },
+            project: { id: "p1", user_id: "u1", org_id: null, shared_with: null },
         });
 
         beforeEach(() => {
@@ -858,30 +864,22 @@ describe("projects.routes", () => {
             supabaseState.tables.documents = { data: [], error: null };
         });
 
-        it("allows the owner (204)", async () => {
+        it("allows a project admin (204)", async () => {
             const res = await request(app)
                 .delete("/projects/p1/folders/f1")
                 .set(...AUTH);
             expect(res.status).toBe(204);
         });
 
-        it("allows an org owner/admin (manager) (204)", async () => {
-            checkProjectAccess.mockResolvedValue(roleAccess("manager"));
+        it("allows a member — folder work is member-level (204)", async () => {
+            checkProjectAccess.mockResolvedValue(roleAccess("member"));
             const res = await request(app)
                 .delete("/projects/p1/folders/f1")
                 .set(...AUTH);
             expect(res.status).toBe(204);
         });
 
-        it("blocks a shared editor (404)", async () => {
-            checkProjectAccess.mockResolvedValue(roleAccess("editor"));
-            const res = await request(app)
-                .delete("/projects/p1/folders/f1")
-                .set(...AUTH);
-            expect(res.status).toBe(404);
-        });
-
-        it("blocks a plain org member (viewer) (404)", async () => {
+        it("blocks a viewer (404)", async () => {
             checkProjectAccess.mockResolvedValue(roleAccess("viewer"));
             const res = await request(app)
                 .delete("/projects/p1/folders/f1")
@@ -951,7 +949,7 @@ describe("projects.routes", () => {
     // stranger, who fails the access check outright, still gets 404).
     describe("DELETE /projects/:projectId", () => {
         it("returns 404 when nothing was deleted", async () => {
-            deleteUserProjects.mockResolvedValue(0);
+            deleteProjectsByIds.mockResolvedValue(0);
 
       const res = await request(app)
         .delete("/projects/p1")
@@ -961,30 +959,31 @@ describe("projects.routes", () => {
             expect(res.body.detail).toBe("Project not found");
         });
 
-        it("returns 204 when the owner deletes the project", async () => {
-            deleteUserProjects.mockResolvedValue(1);
+        it("returns 204 when a project admin deletes the project", async () => {
+            deleteProjectsByIds.mockResolvedValue(1);
 
       const res = await request(app)
         .delete("/projects/p1")
         .set(...AUTH);
 
             expect(res.status).toBe(204);
-            // Signature is deleteUserProjects(db, ownerUserId, [projectId]) —
-            // the cascade walks the ROW OWNER's content tree; the capability
-            // check, not this argument, is what authorised the call.
-      expect(deleteUserProjects).toHaveBeenCalledWith(expect.anything(), "u1", [
+            // Deleted by id, with no owner filter: the capability check is
+            // what authorised this, and an organization project may have no
+            // creator left to scope by.
+      expect(deleteProjectsByIds).toHaveBeenCalledWith(expect.anything(), [
         "p1",
       ]);
         });
 
-        it.each(["manager", "editor", "viewer"] as const)(
+        it.each(["member", "viewer"] as const)(
             "returns 403 when a %s tries to delete the project",
             async (projectRole) => {
                 checkProjectAccess.mockResolvedValue({
                     ok: true,
-                    isOwner: false,
+                    isCreator: false,
+                    orgRole: null,
                     projectRole,
-                    project: { id: "p1", user_id: "owner", shared_with: null },
+                    project: { id: "p1", user_id: "owner", org_id: null, shared_with: null },
                 });
 
                 const res = await request(app)
@@ -993,10 +992,10 @@ describe("projects.routes", () => {
 
                 expect(res.status).toBe(403);
                 expect(res.body.detail).toBe(
-                    "You do not have permission to delete this project",
+                    "Only a project admin can delete this project.",
                 );
                 // Refused before the cascade could run.
-                expect(deleteUserProjects).not.toHaveBeenCalled();
+                expect(deleteProjectsByIds).not.toHaveBeenCalled();
             },
         );
 
@@ -1009,11 +1008,11 @@ describe("projects.routes", () => {
 
             expect(res.status).toBe(404);
             expect(res.body.detail).toBe("Project not found");
-            expect(deleteUserProjects).not.toHaveBeenCalled();
+            expect(deleteProjectsByIds).not.toHaveBeenCalled();
         });
 
         it("returns 500 when deletion throws", async () => {
-            deleteUserProjects.mockRejectedValue(new Error("cascade failed"));
+            deleteProjectsByIds.mockRejectedValue(new Error("cascade failed"));
 
       const res = await request(app)
         .delete("/projects/p1")
