@@ -55,7 +55,6 @@ import { DocumentUploadMenu } from "../shared/DocumentUploadMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
 import {
     can,
-    roleFrom,
     roleFromLoaded,
     type ProjectRole,
 } from "@/app/lib/permissions";

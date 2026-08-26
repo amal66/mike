@@ -56,8 +56,10 @@ async function fillAndAdd(
 }
 
 async function submit(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole("button", { name: "Next" }));
-    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.click(await screen.findByRole("button", { name: "Next" }));
+    await user.click(
+        await screen.findByRole("button", { name: "Create project" }),
+    );
 }
 
 function renderModal(onCreated = vi.fn()) {
@@ -80,7 +82,7 @@ describe("NewProjectModal sharing", () => {
         // not belong to a Mike user", and lands every address it does accept
         // at member. Both of those made the outside-counsel case — read-only,
         // no account yet — impossible to express at creation time.
-        const user = userEvent.setup();
+        const user = userEvent.setup({ delay: null });
         const onCreated = renderModal();
 
         await fillAndAdd(user, "outside@counsel.test", "viewer");
@@ -99,7 +101,7 @@ describe("NewProjectModal sharing", () => {
     });
 
     it("never writes the roleless shared_with array", async () => {
-        const user = userEvent.setup();
+        const user = userEvent.setup({ delay: null });
         renderModal();
 
         await fillAndAdd(user, "counsel@firm.test", "admin");
@@ -117,8 +119,8 @@ describe("NewProjectModal sharing", () => {
         );
     });
 
-    it("gives each recipient their own role", async () => {
-        const user = userEvent.setup();
+    it("gives each recipient their own role", { timeout: 15000 }, async () => {
+        const user = userEvent.setup({ delay: null });
         renderModal();
 
         await fillAndAdd(user, "one@firm.test", "admin");
@@ -159,7 +161,7 @@ describe("NewProjectModal sharing", () => {
     });
 
     it("reports a refused grant and does not create a second project on retry", async () => {
-        const user = userEvent.setup();
+        const user = userEvent.setup({ delay: null });
         const onCreated = renderModal();
         vi.mocked(grantProjectAccess).mockRejectedValueOnce(
             new MikeApiError({

@@ -9,6 +9,7 @@ import {
     PROJECT_ROLE_LABELS,
     can,
     creatorScopedAllowed,
+    isOrgRole,
     isProjectRole,
     roleFrom,
     roleFromLoaded,
@@ -239,5 +240,23 @@ describe("roleFrom", () => {
         expect(isProjectRole(null)).toBe(false);
         expect(isProjectRole(undefined)).toBe(false);
         expect(isProjectRole(1)).toBe(false);
+    });
+
+    it("guards organization roles the same way", () => {
+        // Same exposure as isProjectRole: this reads `<select>` values in the
+        // organizations settings page before they are sent as an invitation's
+        // role, so it has to refuse everything that is not one of the two.
+        for (const role of ORG_ROLES) expect(isOrgRole(role)).toBe(true);
+        for (const value of [
+            "viewer",
+            "owner",
+            "toString",
+            "constructor",
+            null,
+            undefined,
+            2,
+        ]) {
+            expect(isOrgRole(value)).toBe(false);
+        }
     });
 });
