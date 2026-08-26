@@ -130,6 +130,7 @@ returns table (
   project_id uuid,
   user_id text,
   title text,
+  model text,
   created_at timestamptz,
   project_name text
 )
@@ -141,6 +142,7 @@ as $$
     c.project_id,
     c.user_id::text as user_id,
     c.title,
+    c.model,
     c.created_at,
     p.name as project_name
   from public.chats c
