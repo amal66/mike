@@ -363,6 +363,40 @@ describe("POST /chat — streaming endpoint", () => {
         expect(res.text).toContain("[DONE]");
     });
 
+    it("does not call a denied MCP tool call an empty upstream completion", async () => {
+        // A user who declines a confirmation gets a turn with no model prose
+        // — that is the correct outcome, not a provider failure. The
+        // empty-completion guard above must stay off it, and what keeps it
+        // off is that the denial's `mcp_tool_call` event carries an `error`
+        // field. If that event shape ever changes, the user would start
+        // seeing "the model returned an empty response" every time they say
+        // no, which reads as a bug in the very control that protects them.
+        runLLMStream.mockResolvedValue({
+            fullText: "",
+            events: [
+                {
+                    type: "mcp_tool_call",
+                    connector_id: "connector-1",
+                    connector_name: "Acme",
+                    tool_name: "delete_case",
+                    openai_tool_name: "mcp_acme_delete_case_abc",
+                    status: "error",
+                    error: "The user declined this tool call.",
+                },
+            ],
+            citations: [],
+        });
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(res.status).toBe(200);
+        expect(res.text).not.toContain("empty response");
+        expect(res.text).toContain("[DONE]");
+    });
+
     it("stores cloud Word chats only in the document-scoped Word tables", async () => {
         const chatLib = await import("../../lib/chat");
         const res = await request(app)
