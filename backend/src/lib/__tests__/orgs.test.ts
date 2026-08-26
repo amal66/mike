@@ -1,21 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+    acceptInvitation,
+    cancelInvitation,
+    createInvitation,
     createOrg,
+    declineInvitation,
     getOrg,
+    listInvitations,
+    listMembers,
+    listMyInvitations,
     listMyOrgs,
-    addMember,
-    updateMember,
     removeMember,
-    createTeam,
-    deleteTeam,
-    addTeamMember,
+    resendInvitation,
+    updateMember,
 } from "../orgs";
 
 type Row = Record<string, unknown>;
 
 // Stateful in-memory Supabase fake: unlike the read-only makeDb in
 // access.test.ts, this one actually mutates the seeded tables so
-// insert/update/delete round-trips (membership changes, last-owner counts) can
+// insert/update/delete round-trips (membership changes, last-admin counts) can
 // be asserted. Supports the subset of the query builder the service uses.
 function makeDb(initial: Record<string, Row[]>) {
     const tables: Record<string, Row[]> = {};
@@ -123,16 +127,22 @@ function makeDb(initial: Record<string, Row[]>) {
     return { from: (t: string) => query(t), _tables: tables } as any;
 }
 
-describe("orgs.service RBAC", () => {
-    it("createOrg makes the creator an owner", async () => {
+
+
+// ---------------------------------------------------------------------------
+// Roles: admin / member only
+// ---------------------------------------------------------------------------
+
+describe("orgs.service roles", () => {
+    it("createOrg makes the creator an admin", async () => {
         const db = makeDb({});
         const result = await createOrg(db, { userId: "u1", name: "Acme" });
         expect(result.ok).toBe(true);
         if (!result.ok) return;
-        expect(result.org.role).toBe("owner");
+        expect(result.org.role).toBe("admin");
         const members = db._tables.org_members as Row[];
         expect(members).toHaveLength(1);
-        expect(members[0]).toMatchObject({ user_id: "u1", role: "owner" });
+        expect(members[0]).toMatchObject({ user_id: "u1", role: "admin" });
     });
 
     it("rejects a blank org name", async () => {
@@ -141,273 +151,600 @@ describe("orgs.service RBAC", () => {
         expect(result).toMatchObject({ ok: false, kind: "validation" });
     });
 
-    it("hides orgs from non-members (getOrg)", async () => {
+    it("has no owner role left to grant", async () => {
         const db = makeDb({
-            organizations: [{ id: "o1", name: "Acme", created_by: "u1" }],
-            org_members: [{ org_id: "o1", user_id: "u1", role: "owner" }],
-        });
-        await expect(getOrg(db, { userId: "stranger", orgId: "o1" })).resolves.toEqual(
-            { ok: false, kind: "not_found" },
-        );
-        await expect(
-            listMyOrgs(db, "stranger"),
-        ).resolves.toMatchObject({ ok: true, orgs: [] });
-    });
-
-    function seededOrg() {
-        return makeDb({
-            organizations: [{ id: "o1", name: "Acme", created_by: "owner1" }],
+            organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
-                { org_id: "o1", user_id: "owner1", role: "owner" },
-                { org_id: "o1", user_id: "admin1", role: "admin" },
-                { org_id: "o1", user_id: "member1", role: "member" },
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "member1", role: "member" },
             ],
         });
-    }
-
-    it("lets owner/admin add members but forbids plain members", async () => {
-        const db = seededOrg();
-        await expect(
-            addMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                targetUserId: "new1",
-                role: "member",
-            }),
-        ).resolves.toMatchObject({ ok: true });
-        await expect(
-            addMember(db, {
-                actorId: "admin1",
-                orgId: "o1",
-                targetUserId: "new2",
-                role: "member",
-            }),
-        ).resolves.toMatchObject({ ok: true });
-        await expect(
-            addMember(db, {
-                actorId: "member1",
-                orgId: "o1",
-                targetUserId: "new3",
-                role: "member",
-            }),
-        ).resolves.toEqual({ ok: false, kind: "forbidden" });
+        const result = await updateMember(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            targetUserId: "member1",
+            role: "owner",
+        });
+        expect(result).toMatchObject({ ok: false, kind: "validation" });
     });
 
-    it("forbids an admin from granting the owner role (no escalation)", async () => {
-        const db = seededOrg();
-        await expect(
-            addMember(db, {
-                actorId: "admin1",
-                orgId: "o1",
-                targetUserId: "new1",
-                role: "owner",
-            }),
-        ).resolves.toEqual({ ok: false, kind: "forbidden" });
-    });
+    const seedPair = () =>
+        makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "member1", role: "member" },
+            ],
+        });
 
-    it("rejects duplicate memberships", async () => {
-        const db = seededOrg();
+    it("lets an admin promote a member", async () => {
+        const db = seedPair();
         await expect(
-            addMember(db, {
-                actorId: "owner1",
+            updateMember(db, {
+                actorId: "admin1",
                 orgId: "o1",
                 targetUserId: "member1",
+                role: "admin",
+            }),
+        ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("lets a member change nobody's role, including their own", async () => {
+        const db = seedPair();
+        await expect(
+            updateMember(db, {
+                actorId: "member1",
+                orgId: "o1",
+                targetUserId: "admin1",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "forbidden" });
+        await expect(
+            updateMember(db, {
+                actorId: "member1",
+                orgId: "o1",
+                targetUserId: "member1",
+                role: "admin",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "forbidden" });
+    });
+
+    it("hides an org entirely from non-members (404, not 403)", async () => {
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+            ],
+        });
+        await expect(
+            getOrg(db, { userId: "stranger", orgId: "o1" }),
+        ).resolves.toMatchObject({ ok: false, kind: "not_found" });
+        await expect(
+            listMembers(db, { userId: "stranger", orgId: "o1" }),
+        ).resolves.toMatchObject({ ok: false, kind: "not_found" });
+    });
+
+    it("reports each membership's role and roster size", async () => {
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "member1", role: "member" },
+            ],
+        });
+        const result = await listMyOrgs(db, "member1");
+        expect(result).toMatchObject({ ok: true });
+        if (!result.ok) return;
+        expect(result.orgs[0]).toMatchObject({
+            id: "o1",
+            role: "member",
+            member_count: 2,
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The database-backed "at least one admin" rule, at the service layer
+// ---------------------------------------------------------------------------
+
+describe("last-admin protection", () => {
+    const seedSoleAdmin = () =>
+        makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "member1", role: "member" },
+            ],
+        });
+
+    it("refuses to demote the last admin", async () => {
+        const db = seedSoleAdmin();
+        await expect(
+            updateMember(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                targetUserId: "admin1",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "last_admin" });
+    });
+
+    it("refuses to remove the last admin, even by their own hand", async () => {
+        const db = seedSoleAdmin();
+        await expect(
+            removeMember(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                targetUserId: "admin1",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "last_admin" });
+    });
+
+    it("allows both once a second admin exists", async () => {
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "admin2", role: "admin" },
+            ],
+        });
+        await expect(
+            updateMember(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                targetUserId: "admin1",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: true });
+    });
+
+    it("translates the DB trigger's 23514 into the same verdict", async () => {
+        // The in-process count races; the trigger is the real guard. When it
+        // fires, the caller must see `last_admin`, not a 500.
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "admin2", role: "admin" },
+            ],
+        });
+        const realFrom = db.from.bind(db);
+        db.from = (table: string) => {
+            const builder = realFrom(table);
+            if (table !== "org_members") return builder;
+            const originalUpdate = builder.update.bind(builder);
+            builder.update = (payload: Row) => {
+                originalUpdate(payload);
+                builder.single = async () => ({
+                    data: null,
+                    error: {
+                        code: "23514",
+                        message:
+                            'new row violates check "An organization must keep at least one admin"',
+                    },
+                });
+                return builder;
+            };
+            return builder;
+        };
+        await expect(
+            updateMember(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                targetUserId: "admin2",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "last_admin" });
+    });
+
+    it("lets a plain member leave on their own", async () => {
+        const db = seedSoleAdmin();
+        await expect(
+            removeMember(db, {
+                actorId: "member1",
+                orgId: "o1",
+                targetUserId: "member1",
+            }),
+        ).resolves.toMatchObject({ ok: true });
+        expect(db._tables.org_members).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Invitations
+// ---------------------------------------------------------------------------
+
+function seedOrg() {
+    return makeDb({
+        organizations: [{ id: "o1", name: "Acme" }],
+        org_members: [
+            { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+            { id: "m2", org_id: "o1", user_id: "member1", role: "member" },
+        ],
+        user_profiles: [
+            { user_id: "admin1", email: "admin@acme.example" },
+            { user_id: "member1", email: "member@acme.example" },
+            { user_id: "newbie", email: "newbie@acme.example" },
+        ],
+        org_invitations: [],
+    });
+}
+
+describe("org invitations", () => {
+    it("an admin can invite an email at a role", async () => {
+        const db = seedOrg();
+        const result = await createInvitation(db, {
+            actorId: "admin1",
+            actorEmail: "admin@acme.example",
+            orgId: "o1",
+            email: "  Newbie@Acme.Example ",
+            role: "member",
+        });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        // Normalized on the way in, so duplicate detection and the
+        // claim-after-signup email match both work on one canonical form.
+        expect(result.invitation.email).toBe("newbie@acme.example");
+        expect(result.invitation.status).toBe("pending");
+        // Crucially: no membership yet.
+        expect(db._tables.org_members).toHaveLength(2);
+    });
+
+    it("a pending invitation grants no access", async () => {
+        const db = seedOrg();
+        await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "admin",
+        });
+        await expect(
+            getOrg(db, { userId: "newbie", orgId: "o1" }),
+        ).resolves.toMatchObject({ ok: false, kind: "not_found" });
+    });
+
+    it("a plain member cannot invite", async () => {
+        const db = seedOrg();
+        await expect(
+            createInvitation(db, {
+                actorId: "member1",
+                orgId: "o1",
+                email: "newbie@acme.example",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "forbidden" });
+    });
+
+    it("rejects a malformed address and self-invitation", async () => {
+        const db = seedOrg();
+        await expect(
+            createInvitation(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                email: "not-an-email",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "validation" });
+        await expect(
+            createInvitation(db, {
+                actorId: "admin1",
+                actorEmail: "admin@acme.example",
+                orgId: "o1",
+                email: "Admin@Acme.example",
+                role: "member",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "validation" });
+    });
+
+    it("refuses a duplicate while one is still live, and an existing member", async () => {
+        const db = seedOrg();
+        await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+        });
+        await expect(
+            createInvitation(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                email: "newbie@acme.example",
+                role: "admin",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "conflict" });
+
+        await expect(
+            createInvitation(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                email: "member@acme.example",
                 role: "member",
             }),
         ).resolves.toMatchObject({ ok: false, kind: "conflict" });
     });
 
-    it("refuses to add members to a personal org", async () => {
-        // Every org-less row a user creates is tagged with their personal org
-        // (resolveContentOrgId), so admitting a member here would share the
-        // owner's entire private library through the org visibility arms.
-        const db = makeDb({
-            organizations: [
-                {
-                    id: "p1",
-                    name: "Personal",
-                    created_by: "owner1",
-                    personal: true,
-                },
-            ],
-            org_members: [{ org_id: "p1", user_id: "owner1", role: "owner" }],
+    it("re-opens an expired invitation in place rather than stacking rows", async () => {
+        const db = seedOrg();
+        (db._tables.org_invitations as Row[]).push({
+            id: "i-old",
+            org_id: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+            status: "pending",
+            expires_at: new Date(Date.now() - 1000).toISOString(),
         });
-        await expect(
-            addMember(db, {
-                actorId: "owner1",
-                orgId: "p1",
-                targetUserId: "friend1",
-                role: "member",
-            }),
-        ).resolves.toMatchObject({ ok: false, kind: "validation" });
-    });
-
-    it("protects the last owner from demotion and removal", async () => {
-        const db = makeDb({
-            organizations: [{ id: "o1", name: "Solo", created_by: "owner1" }],
-            org_members: [
-                { org_id: "o1", user_id: "owner1", role: "owner" },
-                { org_id: "o1", user_id: "member1", role: "member" },
-            ],
-        });
-        await expect(
-            updateMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                targetUserId: "owner1",
-                role: "member",
-            }),
-        ).resolves.toEqual({ ok: false, kind: "last_owner" });
-        await expect(
-            removeMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                targetUserId: "owner1",
-            }),
-        ).resolves.toEqual({ ok: false, kind: "last_owner" });
-    });
-
-    it("allows demoting an owner when another owner remains", async () => {
-        const db = makeDb({
-            organizations: [{ id: "o1", name: "Duo", created_by: "owner1" }],
-            org_members: [
-                { org_id: "o1", user_id: "owner1", role: "owner" },
-                { org_id: "o1", user_id: "owner2", role: "owner" },
-            ],
-        });
-        await expect(
-            updateMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                targetUserId: "owner2",
-                role: "member",
-            }),
-        ).resolves.toMatchObject({ ok: true });
-    });
-
-    // Rank guard: even with two owners (so last-owner protection is not in
-    // play), an admin must never be able to demote or remove an owner —
-    // only a peer owner outranks-or-equals an owner target.
-    function twoOwnerOrg() {
-        return makeDb({
-            organizations: [{ id: "o1", name: "Duo", created_by: "owner1" }],
-            org_members: [
-                { org_id: "o1", user_id: "owner1", role: "owner" },
-                { org_id: "o1", user_id: "owner2", role: "owner" },
-                { org_id: "o1", user_id: "admin1", role: "admin" },
-            ],
-        });
-    }
-
-    it("forbids an admin from demoting an owner even when owners remain", async () => {
-        const db = twoOwnerOrg();
-        await expect(
-            updateMember(db, {
-                actorId: "admin1",
-                orgId: "o1",
-                targetUserId: "owner2",
-                role: "member",
-            }),
-        ).resolves.toEqual({ ok: false, kind: "forbidden" });
-    });
-
-    it("forbids an admin from removing an owner even when owners remain", async () => {
-        const db = twoOwnerOrg();
-        await expect(
-            removeMember(db, {
-                actorId: "admin1",
-                orgId: "o1",
-                targetUserId: "owner2",
-            }),
-        ).resolves.toEqual({ ok: false, kind: "forbidden" });
-    });
-
-    it("still lets an owner leave when another owner remains", async () => {
-        const db = twoOwnerOrg();
-        await expect(
-            removeMember(db, {
-                actorId: "owner2",
-                orgId: "o1",
-                targetUserId: "owner2",
-            }),
-        ).resolves.toMatchObject({ ok: true });
-    });
-
-    it("vacates the removed member's team seats in that org only", async () => {
-        // Teams group existing members: removal from the org must also
-        // remove the user from the org's teams, but never touch their seats
-        // in OTHER orgs' teams.
-        const db = makeDb({
-            organizations: [
-                { id: "o1", name: "Acme", created_by: "owner1" },
-                { id: "o2", name: "Other", created_by: "owner9" },
-            ],
-            org_members: [
-                { org_id: "o1", user_id: "owner1", role: "owner" },
-                { org_id: "o1", user_id: "member1", role: "member" },
-                { org_id: "o2", user_id: "member1", role: "member" },
-            ],
-            teams: [
-                { id: "t1", org_id: "o1", name: "Litigation" },
-                { id: "t2", org_id: "o2", name: "Elsewhere" },
-            ],
-            team_members: [
-                { id: "tm1", team_id: "t1", user_id: "member1" },
-                { id: "tm2", team_id: "t2", user_id: "member1" },
-            ],
-        });
-        await expect(
-            removeMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                targetUserId: "member1",
-            }),
-        ).resolves.toMatchObject({ ok: true });
-        const seats = db._tables.team_members as Row[];
-        expect(seats.find((s) => s.id === "tm1")).toBeUndefined();
-        expect(seats.find((s) => s.id === "tm2")).toBeDefined();
-    });
-
-    it("gates team creation on owner/admin and requires org membership to join a team", async () => {
-        const db = seededOrg();
-        await expect(
-            createTeam(db, { userId: "member1", orgId: "o1", name: "Litigation" }),
-        ).resolves.toEqual({ ok: false, kind: "forbidden" });
-
-        const created = await createTeam(db, {
-            userId: "owner1",
+        const result = await createInvitation(db, {
+            actorId: "admin1",
             orgId: "o1",
-            name: "Litigation",
+            email: "newbie@acme.example",
+            role: "admin",
+        });
+        expect(result.ok).toBe(true);
+        expect(db._tables.org_invitations).toHaveLength(1);
+        if (!result.ok) return;
+        expect(result.invitation).toMatchObject({ id: "i-old", role: "admin" });
+        expect(result.invitation.status).toBe("pending");
+    });
+
+    it("accepting creates the membership at the invited role", async () => {
+        const db = seedOrg();
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "admin",
+        });
+        if (!created.ok) throw new Error("setup failed");
+        const inviteId = created.invitation.id as string;
+
+        const result = await acceptInvitation(db, {
+            userId: "newbie",
+            userEmail: "Newbie@Acme.Example",
+            invitationId: inviteId,
+        });
+        expect(result).toMatchObject({ ok: true, org_id: "o1", role: "admin" });
+        const members = db._tables.org_members as Row[];
+        expect(members).toHaveLength(3);
+        expect(members[2]).toMatchObject({ user_id: "newbie", role: "admin" });
+        const invite = (db._tables.org_invitations as Row[])[0];
+        expect(invite.status).toBe("accepted");
+        expect(invite.accepted_at).toBeTruthy();
+    });
+
+    it("declining records the answer and creates nothing", async () => {
+        const db = seedOrg();
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+        });
+        if (!created.ok) throw new Error("setup failed");
+        await expect(
+            declineInvitation(db, {
+                userId: "newbie",
+                userEmail: "newbie@acme.example",
+                invitationId: created.invitation.id as string,
+            }),
+        ).resolves.toMatchObject({ ok: true });
+        expect(db._tables.org_members).toHaveLength(2);
+        expect((db._tables.org_invitations as Row[])[0].status).toBe("declined");
+    });
+
+    it("only the addressed account can answer, and a mismatch reads as missing", async () => {
+        const db = seedOrg();
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+        });
+        if (!created.ok) throw new Error("setup failed");
+        // 404 rather than 403: a 403 would confirm the invitation exists for
+        // somebody else.
+        await expect(
+            acceptInvitation(db, {
+                userId: "intruder",
+                userEmail: "intruder@elsewhere.example",
+                invitationId: created.invitation.id as string,
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "not_found" });
+        expect(db._tables.org_members).toHaveLength(2);
+    });
+
+    it("cannot accept an expired invitation", async () => {
+        const db = seedOrg();
+        (db._tables.org_invitations as Row[]).push({
+            id: "i-exp",
+            org_id: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+            status: "pending",
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        });
+        await expect(
+            acceptInvitation(db, {
+                userId: "newbie",
+                userEmail: "newbie@acme.example",
+                invitationId: "i-exp",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "expired" });
+        expect(db._tables.org_members).toHaveLength(2);
+    });
+
+    it("cannot answer an invitation twice", async () => {
+        const db = seedOrg();
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+        });
+        if (!created.ok) throw new Error("setup failed");
+        const inviteId = created.invitation.id as string;
+        await acceptInvitation(db, {
+            userId: "newbie",
+            userEmail: "newbie@acme.example",
+            invitationId: inviteId,
+        });
+        await expect(
+            declineInvitation(db, {
+                userId: "newbie",
+                userEmail: "newbie@acme.example",
+                invitationId: inviteId,
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "conflict" });
+    });
+
+    it("an admin can cancel a pending invitation, killing acceptance", async () => {
+        const db = seedOrg();
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+        });
+        if (!created.ok) throw new Error("setup failed");
+        const inviteId = created.invitation.id as string;
+        await expect(
+            cancelInvitation(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                invitationId: inviteId,
+            }),
+        ).resolves.toMatchObject({ ok: true });
+        expect((db._tables.org_invitations as Row[])[0].status).toBe("cancelled");
+        await expect(
+            acceptInvitation(db, {
+                userId: "newbie",
+                userEmail: "newbie@acme.example",
+                invitationId: inviteId,
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "conflict" });
+    });
+
+    it("resending pushes the expiry out without re-opening an answered one", async () => {
+        const db = seedOrg();
+        (db._tables.org_invitations as Row[]).push({
+            id: "i-exp",
+            org_id: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+            status: "pending",
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        });
+        const resent = await resendInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            invitationId: "i-exp",
+        });
+        expect(resent.ok).toBe(true);
+        if (!resent.ok) return;
+        expect(resent.invitation.status).toBe("pending");
+        expect(
+            new Date(resent.invitation.expires_at as string).getTime(),
+        ).toBeGreaterThan(Date.now());
+
+        (db._tables.org_invitations as Row[])[0].status = "declined";
+        await expect(
+            resendInvitation(db, {
+                actorId: "admin1",
+                orgId: "o1",
+                invitationId: "i-exp",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "conflict" });
+    });
+
+    it("only admins may read or cancel the invitation roster", async () => {
+        const db = seedOrg();
+        await expect(
+            listInvitations(db, { userId: "member1", orgId: "o1" }),
+        ).resolves.toMatchObject({ ok: false, kind: "forbidden" });
+        await expect(
+            cancelInvitation(db, {
+                actorId: "member1",
+                orgId: "o1",
+                invitationId: "whatever",
+            }),
+        ).resolves.toMatchObject({ ok: false, kind: "forbidden" });
+    });
+
+    it("surfaces an invitation created before the recipient had an account", async () => {
+        // claim-after-signup: the invitation is addressed to an email, and the
+        // account that later owns that email finds it waiting.
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+            ],
+            user_profiles: [{ user_id: "admin1", email: "admin@acme.example" }],
+            org_invitations: [],
+        });
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            orgId: "o1",
+            email: "future@acme.example",
+            role: "member",
         });
         expect(created.ok).toBe(true);
-        if (!created.ok) return;
-        const teamId = created.team.id as string;
 
-        // A user outside the org cannot be added to a team.
+        const mine = await listMyInvitations(db, {
+            userEmail: "Future@Acme.example",
+        });
+        expect(mine).toMatchObject({ ok: true });
+        if (!mine.ok) return;
+        expect(mine.invitations).toHaveLength(1);
+        expect(mine.invitations[0]).toMatchObject({
+            org_id: "o1",
+            org_name: "Acme",
+            role: "member",
+        });
+
+        // And the brand-new account can accept it.
         await expect(
-            addTeamMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                teamId,
-                targetUserId: "outsider",
+            acceptInvitation(db, {
+                userId: "future-user",
+                userEmail: "future@acme.example",
+                invitationId: (created.ok && created.invitation.id) as string,
             }),
-        ).resolves.toMatchObject({ ok: false, kind: "validation" });
+        ).resolves.toMatchObject({ ok: true, role: "member" });
+    });
 
-        // An existing org member can.
-        await expect(
-            addTeamMember(db, {
-                actorId: "owner1",
-                orgId: "o1",
-                teamId,
-                targetUserId: "member1",
-            }),
-        ).resolves.toMatchObject({ ok: true });
+    it("omits expired invitations from the recipient's list", async () => {
+        const db = seedOrg();
+        (db._tables.org_invitations as Row[]).push({
+            id: "i-exp",
+            org_id: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+            status: "pending",
+            expires_at: new Date(Date.now() - 1000).toISOString(),
+        });
+        const mine = await listMyInvitations(db, {
+            userEmail: "newbie@acme.example",
+        });
+        expect(mine).toMatchObject({ ok: true, invitations: [] });
+    });
 
-        await expect(
-            deleteTeam(db, { userId: "member1", orgId: "o1", teamId }),
-        ).resolves.toEqual({ ok: false, kind: "forbidden" });
-        await expect(
-            deleteTeam(db, { userId: "owner1", orgId: "o1", teamId }),
-        ).resolves.toMatchObject({ ok: true });
+    it("records the lifecycle in the audit trail", async () => {
+        const db = seedOrg();
+        const created = await createInvitation(db, {
+            actorId: "admin1",
+            actorEmail: "admin@acme.example",
+            orgId: "o1",
+            email: "newbie@acme.example",
+            role: "member",
+        });
+        if (!created.ok) throw new Error("setup failed");
+        await acceptInvitation(db, {
+            userId: "newbie",
+            userEmail: "newbie@acme.example",
+            invitationId: created.invitation.id as string,
+        });
+        const actions = (db._tables.audit_events as Row[]).map((e) => e.action);
+        expect(actions).toEqual([
+            "org.invite.created",
+            "org.invite.accepted",
+        ]);
     });
 });

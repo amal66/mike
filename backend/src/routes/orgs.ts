@@ -3,6 +3,12 @@
 // Thin handlers: they read res.locals (userId/userEmail set by requireAuth),
 // delegate to lib/orgs.ts, and map the discriminated results onto HTTP status
 // codes with {detail} bodies — mirroring routes/projects.ts.
+//
+// Note what is NOT here: there is no "add a member" endpoint. Membership is
+// created by accepting an invitation (POST /orgs/:orgId/invitations here,
+// POST /user/invitations/:id/accept in routes/user.ts), so an admin can never
+// pull somebody into a workspace full of confidential material without them
+// agreeing to it.
 
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
@@ -11,27 +17,22 @@ import {
     listMyOrgs,
     createOrg,
     getOrg,
+    updateOrg,
     listMembers,
-    addMember,
     updateMember,
     removeMember,
-    listTeams,
-    createTeam,
-    deleteTeam,
-    addTeamMember,
-    removeTeamMember,
+    createInvitation,
+    listInvitations,
+    cancelInvitation,
+    resendInvitation,
     type OrgResult,
 } from "../lib/orgs";
-import { findProfileUserByEmail } from "../lib/userLookup";
-import { getOrgRole, roleCanManage } from "../lib/access";
 
 export const orgsRouter = Router();
 
-type Db = ReturnType<typeof createServerSupabase>;
-
 // Map the service's discriminated failure kinds onto HTTP responses. Kept in
 // one place so every handler reports errors consistently.
-function sendFailure(
+export function sendOrgFailure(
     res: { status: (n: number) => { json: (b: unknown) => void } },
     result: Extract<OrgResult<unknown>, { ok: false }>,
 ) {
@@ -39,48 +40,45 @@ function sendFailure(
         case "validation":
             return void res.status(400).json({ detail: result.detail });
         case "forbidden":
-            return void res
-                .status(403)
-                .json({ detail: "You do not have permission to do that." });
+            return void res.status(403).json({
+                detail: "Only an organization admin can do that.",
+            });
         case "not_found":
-            return void res.status(404).json({ detail: "Organization not found" });
+            return void res
+                .status(404)
+                .json({ detail: "Organization not found" });
         case "conflict":
             return void res.status(409).json({ detail: result.detail });
-        case "last_owner":
+        case "last_admin":
             return void res.status(409).json({
-                detail: "An organization must keep at least one owner.",
+                detail: "An organization must keep at least one admin.",
             });
+        case "expired":
+            // 410 Gone: the invitation existed and is no longer actionable,
+            // which is a different story from "never heard of it" (404).
+            return void res
+                .status(410)
+                .json({ detail: "That invitation has expired." });
         case "db_error":
             return void res.status(500).json({ detail: result.detail });
     }
 }
 
-// Resolve an email to a user id via the indexed user_profiles lookup — the
-// same helper routes/user.ts /lookup uses (routes/projects.ts /people relies
-// on the sibling user_profiles helpers). Returns null when unknown.
-async function resolveUserIdByEmail(
-    db: Db,
-    email: string,
-): Promise<string | null> {
-    const user = await findProfileUserByEmail(db, email);
-    return user?.id ?? null;
-}
-
-// GET /orgs — orgs the caller belongs to (with their role).
+// GET /orgs — orgs the caller belongs to (with their role + member count).
 orgsRouter.get("/", requireAuth, async (_req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listMyOrgs(db, userId);
-    if (!result.ok) return sendFailure(res, result);
+    if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.orgs);
 });
 
-// POST /orgs — create an org; caller becomes its owner.
+// POST /orgs — create an org; the caller becomes its first admin.
 orgsRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await createOrg(db, { userId, name: req.body?.name });
-    if (!result.ok) return sendFailure(res, result);
+    if (!result.ok) return sendOrgFailure(res, result);
     res.status(201).json(result.org);
 });
 
@@ -89,52 +87,33 @@ orgsRouter.get("/:orgId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await getOrg(db, { userId, orgId: req.params.orgId });
-    if (!result.ok) return sendFailure(res, result);
+    if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.org);
 });
 
-// GET /orgs/:orgId/members — list members (any member).
+// PATCH /orgs/:orgId — rename the org (admin only).
+orgsRouter.patch("/:orgId", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const db = createServerSupabase();
+    const result = await updateOrg(db, {
+        userId,
+        orgId: req.params.orgId,
+        name: req.body?.name,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.org);
+});
+
+// GET /orgs/:orgId/members — the accepted roster (any member).
 orgsRouter.get("/:orgId/members", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
     const result = await listMembers(db, { userId, orgId: req.params.orgId });
-    if (!result.ok) return sendFailure(res, result);
+    if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.members);
 });
 
-// POST /orgs/:orgId/members — add a member by email (owner/admin only).
-orgsRouter.post("/:orgId/members", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const { email, role } = req.body as { email?: string; role?: string };
-    if (typeof email !== "string" || !email.trim())
-        return void res.status(400).json({ detail: "email is required" });
-
-    const db = createServerSupabase();
-    // Prove the caller may manage this org BEFORE touching the email: with
-    // the lookup first, the two distinguishable 404s ("No user with that
-    // email" vs "Organization not found") let any authenticated user probe
-    // which emails have accounts. addMember re-checks; this only fixes the
-    // ordering.
-    const actorRole = await getOrgRole(userId, req.params.orgId, db);
-    if (!actorRole) return sendFailure(res, { ok: false, kind: "not_found" });
-    if (!roleCanManage(actorRole))
-        return sendFailure(res, { ok: false, kind: "forbidden" });
-
-    const targetUserId = await resolveUserIdByEmail(db, email);
-    if (!targetUserId)
-        return void res.status(404).json({ detail: "No user with that email" });
-
-    const result = await addMember(db, {
-        actorId: userId,
-        orgId: req.params.orgId,
-        targetUserId,
-        role,
-    });
-    if (!result.ok) return sendFailure(res, result);
-    res.status(201).json(result.member);
-});
-
-// PATCH /orgs/:orgId/members/:userId — change a member's role (owner/admin).
+// PATCH /orgs/:orgId/members/:userId — change a member's role (admin only).
 orgsRouter.patch("/:orgId/members/:userId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
@@ -144,11 +123,11 @@ orgsRouter.patch("/:orgId/members/:userId", requireAuth, async (req, res) => {
         targetUserId: req.params.userId,
         role: req.body?.role,
     });
-    if (!result.ok) return sendFailure(res, result);
+    if (!result.ok) return sendOrgFailure(res, result);
     res.json(result.member);
 });
 
-// DELETE /orgs/:orgId/members/:userId — remove a member (owner/admin, or self).
+// DELETE /orgs/:orgId/members/:userId — remove a member (admin, or self).
 orgsRouter.delete("/:orgId/members/:userId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
@@ -157,95 +136,81 @@ orgsRouter.delete("/:orgId/members/:userId", requireAuth, async (req, res) => {
         orgId: req.params.orgId,
         targetUserId: req.params.userId,
     });
-    if (!result.ok) return sendFailure(res, result);
+    if (!result.ok) return sendOrgFailure(res, result);
     res.status(204).send();
 });
 
-// GET /orgs/:orgId/teams — list teams (any member).
-orgsRouter.get("/:orgId/teams", requireAuth, async (req, res) => {
+// ---------------------------------------------------------------------------
+// Invitations (admin side)
+// ---------------------------------------------------------------------------
+
+// POST /orgs/:orgId/invitations — invite an email at a role (admin only).
+orgsRouter.post("/:orgId/invitations", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
-    const result = await listTeams(db, { userId, orgId: req.params.orgId });
-    if (!result.ok) return sendFailure(res, result);
-    res.json(result.teams);
+    const result = await createInvitation(db, {
+        actorId: userId,
+        actorEmail: userEmail,
+        orgId: req.params.orgId,
+        email: req.body?.email,
+        role: req.body?.role,
+    });
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.status(201).json(result.invitation);
 });
 
-// POST /orgs/:orgId/teams — create a team (owner/admin only).
-orgsRouter.post("/:orgId/teams", requireAuth, async (req, res) => {
+// GET /orgs/:orgId/invitations — pending/recent invitations (admin only).
+orgsRouter.get("/:orgId/invitations", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const db = createServerSupabase();
-    const result = await createTeam(db, {
+    const result = await listInvitations(db, {
         userId,
         orgId: req.params.orgId,
-        name: req.body?.name,
     });
-    if (!result.ok) return sendFailure(res, result);
-    res.status(201).json(result.team);
+    if (!result.ok) return sendOrgFailure(res, result);
+    res.json(result.invitations);
 });
 
-// DELETE /orgs/:orgId/teams/:teamId — delete a team (owner/admin only).
-orgsRouter.delete("/:orgId/teams/:teamId", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const db = createServerSupabase();
-    const result = await deleteTeam(db, {
-        userId,
-        orgId: req.params.orgId,
-        teamId: req.params.teamId,
-    });
-    if (!result.ok) return sendFailure(res, result);
-    res.status(204).send();
-});
-
-// POST /orgs/:orgId/teams/:teamId/members — add a team member by email.
-orgsRouter.post(
-    "/:orgId/teams/:teamId/members",
+// DELETE /orgs/:orgId/invitations/:invitationId — cancel (admin only).
+orgsRouter.delete(
+    "/:orgId/invitations/:invitationId",
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const { email } = req.body as { email?: string };
-        if (typeof email !== "string" || !email.trim())
-            return void res.status(400).json({ detail: "email is required" });
-
+        const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
-        // Same ordering as POST /members: manage-role first, email lookup
-        // second, so non-managers can't use the response to probe accounts.
-        const actorRole = await getOrgRole(userId, req.params.orgId, db);
-        if (!actorRole)
-            return sendFailure(res, { ok: false, kind: "not_found" });
-        if (!roleCanManage(actorRole))
-            return sendFailure(res, { ok: false, kind: "forbidden" });
-
-        const targetUserId = await resolveUserIdByEmail(db, email);
-        if (!targetUserId)
-            return void res
-                .status(404)
-                .json({ detail: "No user with that email" });
-
-        const result = await addTeamMember(db, {
+        const result = await cancelInvitation(db, {
             actorId: userId,
+            actorEmail: userEmail,
             orgId: req.params.orgId,
-            teamId: req.params.teamId,
-            targetUserId,
+            invitationId: req.params.invitationId,
         });
-        if (!result.ok) return sendFailure(res, result);
-        res.status(201).json(result.member);
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.status(204).send();
     },
 );
 
-// DELETE /orgs/:orgId/teams/:teamId/members/:userId — remove a team member.
-orgsRouter.delete(
-    "/:orgId/teams/:teamId/members/:userId",
+// POST /orgs/:orgId/invitations/:invitationId/resend — refresh expiry.
+//
+// The repository has no outbound email infrastructure, so "resend" moves the
+// expiry window rather than re-delivering a message; the invitation surfaces
+// in-app through GET /user/invitations either way. Wiring a mailer in would
+// mean adding a dependency this PR deliberately does not take on.
+orgsRouter.post(
+    "/:orgId/invitations/:invitationId/resend",
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
         const db = createServerSupabase();
-        const result = await removeTeamMember(db, {
+        const result = await resendInvitation(db, {
             actorId: userId,
+            actorEmail: userEmail,
             orgId: req.params.orgId,
-            teamId: req.params.teamId,
-            targetUserId: req.params.userId,
+            invitationId: req.params.invitationId,
         });
-        if (!result.ok) return sendFailure(res, result);
-        res.status(204).send();
+        if (!result.ok) return sendOrgFailure(res, result);
+        res.json(result.invitation);
     },
 );

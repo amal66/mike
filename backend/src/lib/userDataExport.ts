@@ -399,19 +399,23 @@ export async function buildUserAccountExport(
         ),
     ]);
 
-    // Organization membership + the orgs/teams the user belongs to, for a
-    // complete GDPR-style export of their multi-tenant footprint.
+    // Organization membership + the orgs the user belongs to and the
+    // invitations addressed to them, for a complete GDPR-style export of
+    // their multi-tenant footprint.
     const orgMemberships = await selectAll(db, "org_members", (query) =>
         query.eq("user_id", userId).order("created_at", { ascending: true }),
     );
     const orgIds = idsFrom(orgMemberships, "org_id");
-    const [organizations, teamMemberships] = await Promise.all([
+    const [organizations, orgInvitations] = await Promise.all([
         selectByIds(db, "organizations", "id", orgIds),
-        selectAll(db, "team_members", (query) =>
-            query.eq("user_id", userId).order("created_at", { ascending: true }),
-        ),
+        userEmail
+            ? selectAll(db, "org_invitations", (query) =>
+                  query
+                      .eq("email", userEmail.trim().toLowerCase())
+                      .order("created_at", { ascending: true }),
+              )
+            : Promise.resolve([]),
     ]);
-    const teams = await selectByIds(db, "teams", "org_id", orgIds);
 
     const projectIds = idsFrom(projects);
     const projectDocuments = await selectByIds(
@@ -439,8 +443,7 @@ export async function buildUserAccountExport(
         router_models: routerModels,
         organizations,
         org_members: orgMemberships,
-        teams,
-        team_members: teamMemberships,
+        org_invitations: orgInvitations,
         projects,
         project_subfolders: folders,
         documents,
