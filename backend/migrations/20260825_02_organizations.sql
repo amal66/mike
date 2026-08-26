@@ -189,13 +189,36 @@ create index if not exists idx_workflows_org on public.workflows(org_id);
 create index if not exists idx_tabular_reviews_org on public.tabular_reviews(org_id);
 
 -- ---------------------------------------------------------------------------
--- Project-tree ownership becomes nullable
+-- Content ownership becomes nullable
 -- ---------------------------------------------------------------------------
 -- Each of these tables anchors a row to the account that created it with a
 -- NOT NULL ON DELETE CASCADE FK. That is right for personal content and wrong
 -- for an organization's: it makes the firm's matters hostage to one leaver's
 -- account. Relax to nullable ON DELETE SET NULL so the rows can outlive their
 -- author, and let userDataCleanup decide which ones actually should.
+--
+-- The list is every table that can hold content an organization owns:
+--
+--   projects, project_subfolders, documents, chats, tabular_reviews
+--     — the project tree.
+--   workflows
+--     — org workflows carry `org_id` exactly like the four tables above; a
+--       cascade here would delete the firm's shared workflows along with
+--       whoever first drafted them.
+--   tabular_review_chats
+--     — hangs off a review that now survives its author. Cascading the
+--       thread away while keeping the review it discusses loses the
+--       reasoning and leaves the review looking like it was never worked on.
+--   workflow_reference_documents
+--     — hangs off a workflow, and its `workflow_id` FK already cascades from
+--       `workflows`. Leaving `user_id` on cascade would strip an org
+--       workflow of the very documents it references the moment its author
+--       left, quietly breaking a workflow that otherwise survived intact.
+--
+-- Deliberately NOT in this list: per-account tables where the row IS the
+-- account's own state and should die with it — user_api_keys, quick_actions,
+-- hidden_workflows, default_workflow_installations, library_folders,
+-- word_documents, word_chats, org_members, audit_events.
 --
 -- Re-runnable: dropping a constraint that is already gone is guarded, and
 -- `drop not null` is idempotent by nature.
@@ -206,7 +229,8 @@ declare
   c text;
 begin
   foreach t in array array[
-    'projects', 'project_subfolders', 'documents', 'chats', 'tabular_reviews'
+    'projects', 'project_subfolders', 'documents', 'chats', 'tabular_reviews',
+    'workflows', 'tabular_review_chats', 'workflow_reference_documents'
   ] loop
     execute format('alter table public.%I alter column user_id drop not null', t);
 

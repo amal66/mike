@@ -25,7 +25,7 @@ type Row = Record<string, unknown>;
 /**
  * Stateful Supabase mock: deletes and updates mutate `tables`, so tests can
  * assert on exactly which rows survived a cleanup call. Supports the chains
- * userDataCleanup uses (select/delete/update + eq/in/order/filter-cs) and can
+ * userDataCleanup uses (select/delete/update + eq/in/not/order/filter-cs) and can
  * inject a delete error per table to exercise error propagation.
  */
 function makeDb(
@@ -64,6 +64,15 @@ function makeDb(
                 order: () => query,
                 in: (column: string, values: unknown[]) => {
                     narrow((row) => values.includes(row[column]));
+                    return query;
+                },
+                // Retention asks "is this row org-owned?" as
+                // .not("org_id", "is", null); a missing key and an explicit
+                // null both mean "no", which is what the column means too.
+                not: (column: string, operator: string, value: unknown) => {
+                    if (operator === "is" && value === null) {
+                        narrow((row) => row[column] !== null && row[column] !== undefined);
+                    }
                     return query;
                 },
                 filter: (column: string, operator: string, value: string) => {
@@ -531,5 +540,149 @@ describe("deleteUserAccountData", () => {
         // ...but the user's own data is still deleted.
         expect(ids(tables.documents)).toEqual(["d-other"]);
         expect(tables.workflows.map((row) => row.id)).toEqual(["w-other"]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// deleteUserAccountData — what the organization keeps
+// ---------------------------------------------------------------------------
+
+describe("deleteUserAccountData organization retention", () => {
+    // u1 is leaving. u2 stays. "org-1" owns two projects: one u1 opened and
+    // one u2 opened that u1 contributed to. Everything org-owned survives
+    // with user_id blanked; everything personal is destroyed.
+    const fixture = () =>
+        makeDb({
+            projects: [
+                { id: "p-own-org", user_id: "u1", org_id: "org-1" },
+                { id: "p-colleague", user_id: "u2", org_id: "org-1" },
+                { id: "p-personal", user_id: "u1", org_id: null },
+            ],
+            documents: [
+                { id: "d-own-org", user_id: "u1", project_id: "p-own-org", org_id: "org-1" },
+                { id: "d-colleague", user_id: "u1", project_id: "p-colleague", org_id: "org-1" },
+                { id: "d-loose-org", user_id: "u1", project_id: null, org_id: "org-1" },
+                { id: "d-personal", user_id: "u1", project_id: "p-personal", org_id: null },
+                { id: "d-loose-personal", user_id: "u1", project_id: null, org_id: null },
+            ],
+            document_versions: [
+                {
+                    id: "v-colleague",
+                    document_id: "d-colleague",
+                    storage_path: "documents/u1/d-colleague/source.pdf",
+                    pdf_storage_path: null,
+                },
+                {
+                    id: "v-personal",
+                    document_id: "d-personal",
+                    storage_path: "documents/u1/d-personal/source.pdf",
+                    pdf_storage_path: null,
+                },
+            ],
+            chats: [
+                { id: "ch-colleague", user_id: "u1", project_id: "p-colleague" },
+                { id: "ch-personal", user_id: "u1", project_id: null },
+            ],
+            project_subfolders: [
+                { id: "f-colleague", user_id: "u1", project_id: "p-colleague" },
+                { id: "f-personal", user_id: "u1", project_id: "p-personal" },
+            ],
+            tabular_reviews: [
+                { id: "r-org", user_id: "u1", project_id: "p-colleague", org_id: "org-1" },
+                { id: "r-personal", user_id: "u1", project_id: null, org_id: null },
+            ],
+            tabular_review_chats: [
+                { id: "rc-org", user_id: "u1", review_id: "r-org" },
+                { id: "rc-personal", user_id: "u1", review_id: "r-personal" },
+            ],
+            workflows: [
+                { id: "w-org", user_id: "u1", org_id: "org-1" },
+                { id: "w-personal", user_id: "u1", org_id: null },
+            ],
+            workflow_reference_documents: [
+                { id: "wr-org", user_id: "u1", workflow_id: "w-org" },
+                { id: "wr-personal", user_id: "u1", workflow_id: "w-personal" },
+            ],
+        });
+
+    const row = (rows: Row[] | undefined, id: string) =>
+        (rows ?? []).find((candidate) => candidate.id === id);
+
+    it("keeps the leaver's content inside a COLLEAGUE's org project", async () => {
+        // The case the first cut missed: retention keyed on "org projects
+        // this user created", so a departing associate's uploads into a
+        // partner's matter were deleted with their account.
+        const { db, tables } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        expect(row(tables.documents, "d-colleague")).toMatchObject({
+            user_id: null,
+            project_id: "p-colleague",
+        });
+        expect(row(tables.chats, "ch-colleague")?.user_id).toBeNull();
+        expect(row(tables.project_subfolders, "f-colleague")?.user_id).toBeNull();
+        expect(row(tables.tabular_reviews, "r-org")?.user_id).toBeNull();
+
+        // And the colleague's own project does NOT change hands.
+        expect(row(tables.projects, "p-colleague")?.user_id).toBe("u2");
+    });
+
+    it("detaches the org projects the leaver created, contents included", async () => {
+        const { db, tables } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        expect(row(tables.projects, "p-own-org")?.user_id).toBeNull();
+        expect(row(tables.documents, "d-own-org")?.user_id).toBeNull();
+    });
+
+    it("keeps org-tagged content that sits outside any project", async () => {
+        const { db, tables } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        expect(row(tables.documents, "d-loose-org")?.user_id).toBeNull();
+    });
+
+    it("keeps org workflows and the reference documents they depend on", async () => {
+        // workflow_reference_documents.workflow_id cascades from workflows,
+        // so a surviving org workflow whose references were cascaded away
+        // would still be there and no longer work.
+        const { db, tables } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        expect(row(tables.workflows, "w-org")?.user_id).toBeNull();
+        expect(row(tables.workflow_reference_documents, "wr-org")?.user_id).toBeNull();
+    });
+
+    it("keeps the review chat attached to a surviving org review", async () => {
+        const { db, tables } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        expect(row(tables.tabular_review_chats, "rc-org")?.user_id).toBeNull();
+    });
+
+    it("still destroys everything personal", async () => {
+        const { db, tables } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        expect(row(tables.projects, "p-personal")).toBeUndefined();
+        expect(row(tables.documents, "d-personal")).toBeUndefined();
+        expect(row(tables.documents, "d-loose-personal")).toBeUndefined();
+        expect(row(tables.chats, "ch-personal")).toBeUndefined();
+        expect(row(tables.project_subfolders, "f-personal")).toBeUndefined();
+        expect(row(tables.tabular_reviews, "r-personal")).toBeUndefined();
+        expect(row(tables.tabular_review_chats, "rc-personal")).toBeUndefined();
+        expect(row(tables.workflows, "w-personal")).toBeUndefined();
+        expect(
+            row(tables.workflow_reference_documents, "wr-personal"),
+        ).toBeUndefined();
+    });
+
+    it("deletes storage only for the documents it actually destroys", async () => {
+        const { db } = fixture();
+        await deleteUserAccountData(db, "u1", null);
+
+        const deleted = deleteFileMock.mock.calls.map(([path]) => path);
+        expect(deleted).toContain("documents/u1/d-personal/source.pdf");
+        expect(deleted).not.toContain("documents/u1/d-colleague/source.pdf");
     });
 });

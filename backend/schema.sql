@@ -996,7 +996,7 @@ create index if not exists document_edits_version_id_idx
 
 create table if not exists public.workflows (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
   title text not null,
   type text not null,
   prompt_md text,
@@ -2501,7 +2501,7 @@ $$;
 create table if not exists public.tabular_review_chats (
   id uuid primary key default gen_random_uuid(),
   review_id uuid not null references public.tabular_reviews(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
   title text,
   model text,
   reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),

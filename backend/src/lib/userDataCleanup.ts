@@ -70,10 +70,87 @@ async function partitionOwnedProjects(
     };
 }
 
+/** The project-tree tables that carry both a `user_id` and a `project_id`. */
+const PROJECT_CONTENT_TABLES = [
+    "documents",
+    "chats",
+    "tabular_reviews",
+    "project_subfolders",
+] as const;
+
+/**
+ * Every organization-owned project this user left content in — including
+ * projects somebody else created.
+ *
+ * The distinction matters more than it looks. A departing associate's
+ * uploads mostly live in matters a partner opened, so scoping retention to
+ * "org projects this user created" keeps the container and deletes the
+ * contents: the firm is left with an empty matter and no idea what used to
+ * be in it. What the organization owns is the project, and therefore
+ * everything inside it, whoever happened to put it there.
+ */
+async function orgProjectIdsHoldingUserContent(
+    db: Db,
+    userId: string,
+): Promise<string[]> {
+    const results = await Promise.all(
+        PROJECT_CONTENT_TABLES.map((table) =>
+            (db as any)
+                .from(table)
+                .select("project_id")
+                .eq("user_id", userId)
+                .not("project_id", "is", null),
+        ),
+    );
+
+    const candidateIds: string[] = [];
+    for (const [index, result] of results.entries()) {
+        await throwIfError(
+            result.error,
+            `Failed to load ${PROJECT_CONTENT_TABLES[index]} projects`,
+        );
+        candidateIds.push(
+            ...uniqueStrings(
+                ((result.data ?? []) as { project_id: string | null }[]).map(
+                    (row) => row.project_id,
+                ),
+            ),
+        );
+    }
+
+    const unique = uniqueStrings(candidateIds);
+    if (unique.length === 0) return [];
+
+    const orgProjectIds: string[] = [];
+    for (const batch of chunks(unique)) {
+        const { data, error } = await db
+            .from("projects")
+            .select("id, org_id")
+            .in("id", batch);
+        await throwIfError(error, "Failed to classify projects holding content");
+        orgProjectIds.push(
+            ...uniqueStrings(
+                (
+                    (data ?? []) as {
+                        id: string | null;
+                        org_id?: string | null;
+                    }[]
+                )
+                    .filter((row) => !!row.org_id)
+                    .map((row) => row.id),
+            ),
+        );
+    }
+    return uniqueStrings(orgProjectIds);
+}
+
 /**
  * Documents that must go when this account is erased: the ones they uploaded
  * plus everything sitting in a personal project of theirs — MINUS anything
- * living in an organization project, which stays with the organization.
+ * the organization owns, which stays behind.
+ *
+ * A document is the organization's if it lives in an org project or carries
+ * an `org_id` of its own (org-tagged documents can sit outside any project).
  */
 async function getDocumentIdsForAccountDeletion(
     db: Db,
@@ -82,15 +159,18 @@ async function getDocumentIdsForAccountDeletion(
     orgProjectIds: string[],
 ): Promise<string[]> {
     const [ownedDocs, projectDocs, orgProjectDocs] = await Promise.all([
-        db.from("documents").select("id").eq("user_id", userId),
+        db.from("documents").select("id, org_id").eq("user_id", userId),
         personalProjectIds.length > 0
             ? db
                   .from("documents")
-                  .select("id")
+                  .select("id, org_id")
                   .in("project_id", personalProjectIds)
             : Promise.resolve({ data: [], error: null }),
         orgProjectIds.length > 0
-            ? db.from("documents").select("id").in("project_id", orgProjectIds)
+            ? db
+                  .from("documents")
+                  .select("id, org_id")
+                  .in("project_id", orgProjectIds)
             : Promise.resolve({ data: [], error: null }),
     ]);
 
@@ -101,21 +181,24 @@ async function getDocumentIdsForAccountDeletion(
         "Failed to load organization project documents",
     );
 
-    const keep = new Set(
-        uniqueStrings(
-            ((orgProjectDocs.data ?? []) as { id: string | null }[]).map(
-                (row) => row.id,
-            ),
+    type DocRow = { id: string | null; org_id?: string | null };
+    const candidates = [
+        ...((ownedDocs.data ?? []) as DocRow[]),
+        ...((projectDocs.data ?? []) as DocRow[]),
+    ];
+
+    const keep = new Set([
+        ...uniqueStrings(
+            ((orgProjectDocs.data ?? []) as DocRow[]).map((row) => row.id),
         ),
+        ...uniqueStrings(
+            candidates.filter((row) => !!row.org_id).map((row) => row.id),
+        ),
+    ]);
+
+    return uniqueStrings(candidates.map((row) => row.id)).filter(
+        (id) => !keep.has(id),
     );
-    return uniqueStrings([
-        ...((ownedDocs.data ?? []) as { id: string | null }[]).map(
-            (row) => row.id,
-        ),
-        ...((projectDocs.data ?? []) as { id: string | null }[]).map(
-            (row) => row.id,
-        ),
-    ]).filter((id) => !keep.has(id));
 }
 
 /**
@@ -129,29 +212,124 @@ async function detachOrgProjectContent(
     userId: string,
     orgProjectIds: string[],
 ) {
-    if (orgProjectIds.length === 0) return;
-    const tables = [
-        "documents",
-        "chats",
-        "tabular_reviews",
-        "project_subfolders",
-    ] as const;
-    for (const table of tables) {
+    if (orgProjectIds.length > 0) {
+        for (const table of PROJECT_CONTENT_TABLES) {
+            for (const batch of chunks(orgProjectIds)) {
+                const { error } = await (db as any)
+                    .from(table)
+                    .update({ user_id: null })
+                    .eq("user_id", userId)
+                    .in("project_id", batch);
+                await throwIfError(error, `Failed to detach ${table}`);
+            }
+        }
+        // Only the projects this user actually created change hands. The set
+        // above deliberately includes colleagues' projects — that is how
+        // their content gets kept — and blanking `user_id` there would erase
+        // a living colleague's authorship of a project they still own.
         for (const batch of chunks(orgProjectIds)) {
-            const { error } = await (db as any)
+            const { error } = await db
+                .from("projects")
+                .update({ user_id: null })
+                .eq("user_id", userId)
+                .in("id", batch);
+            await throwIfError(error, "Failed to detach organization projects");
+        }
+    }
+
+    // Org-tagged content that sits outside any project still belongs to the
+    // organization; `org_id` is the whole claim.
+    for (const table of ["documents", "tabular_reviews"] as const) {
+        const { error } = await (db as any)
+            .from(table)
+            .update({ user_id: null })
+            .eq("user_id", userId)
+            .not("org_id", "is", null);
+        await throwIfError(error, `Failed to detach organization ${table}`);
+    }
+
+    // A firm's shared workflows are not the personal property of whoever
+    // first drafted them.
+    const { error: workflowError } = await db
+        .from("workflows")
+        .update({ user_id: null })
+        .eq("user_id", userId)
+        .not("org_id", "is", null);
+    await throwIfError(workflowError, "Failed to detach organization workflows");
+
+    await detachChildrenOfSurvivingContent(db, userId);
+}
+
+/**
+ * Two tables hang off content that has just been handed to an organization
+ * and carry a `user_id` of their own: the chat threads attached to a review,
+ * and the reference documents attached to a workflow. Their parent FKs
+ * already cascade, so keeping the parent while cascading the child away
+ * would leave a review nobody appears to have worked on and a workflow
+ * whose references have silently vanished.
+ */
+async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
+    const pairs = [
+        {
+            table: "tabular_review_chats",
+            fk: "review_id",
+            parent: "tabular_reviews",
+            label: "review chats",
+        },
+        {
+            table: "workflow_reference_documents",
+            fk: "workflow_id",
+            parent: "workflows",
+            label: "workflow reference documents",
+        },
+    ] as const;
+
+    for (const { table, fk, parent, label } of pairs) {
+        const { data, error } = await (db as any)
+            .from(table)
+            .select(fk)
+            .eq("user_id", userId);
+        await throwIfError(error, `Failed to load ${label}`);
+
+        const parentIds = uniqueStrings(
+            ((data ?? []) as Record<string, string | null>[]).map(
+                (row) => row[fk],
+            ),
+        );
+        if (parentIds.length === 0) continue;
+
+        // A parent survives when it is org-owned — either detached moments
+        // ago (user_id now null) or created by somebody still present.
+        const survivors: string[] = [];
+        for (const batch of chunks(parentIds)) {
+            const { data: parents, error: parentError } = await (db as any)
+                .from(parent)
+                .select("id, org_id")
+                .in("id", batch);
+            await throwIfError(parentError, `Failed to classify ${label}`);
+            survivors.push(
+                ...uniqueStrings(
+                    (
+                        (parents ?? []) as {
+                            id: string | null;
+                            org_id?: string | null;
+                        }[]
+                    )
+                        .filter((row) => !!row.org_id)
+                        .map((row) => row.id),
+                ),
+            );
+        }
+        if (survivors.length === 0) continue;
+
+        for (const batch of chunks(uniqueStrings(survivors))) {
+            const { error: detachError } = await (db as any)
                 .from(table)
                 .update({ user_id: null })
                 .eq("user_id", userId)
-                .in("project_id", batch);
-            await throwIfError(error, `Failed to detach ${table}`);
+                .in(fk, batch);
+            await throwIfError(detachError, `Failed to detach ${label}`);
         }
-    }
-    for (const batch of chunks(orgProjectIds)) {
-        const { error } = await db
-            .from("projects")
-            .update({ user_id: null })
-            .in("id", batch);
-        await throwIfError(error, "Failed to detach organization projects");
     }
 }
 
@@ -582,8 +760,15 @@ export async function deleteUserAccountData(
     userId: string,
     userEmail?: string | null,
 ) {
-    const { personal: personalProjectIds, org: orgProjectIds } =
+    const { personal: personalProjectIds, org: createdOrgProjectIds } =
         await partitionOwnedProjects(db, userId);
+    // Retention follows the organization's projects, not this user's. Their
+    // own org projects must be kept AND detached; a colleague's org project
+    // they contributed to must be kept without changing hands.
+    const orgProjectIds = uniqueStrings([
+        ...createdOrgProjectIds,
+        ...(await orgProjectIdsHoldingUserContent(db, userId)),
+    ]);
     const documentIds = await getDocumentIdsForAccountDeletion(
         db,
         userId,
