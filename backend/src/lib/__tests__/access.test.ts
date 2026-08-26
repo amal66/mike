@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     checkProjectAccess,
+    creatorScopedAllowed,
     ensureDocAccess,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
@@ -437,5 +438,43 @@ describe("content org resolution", () => {
         await expect(
             resolveContentOrgId(db, { projectId: null }),
         ).resolves.toBeNull();
+    });
+});
+
+describe("creator-scoped operations", () => {
+    // A handful of operations — replacing or deleting one version of a
+    // document, moving a review between projects — belong to whoever made the
+    // row rather than to a tier. Account deletion now blanks user_id instead
+    // of destroying an organization's content, so "only the creator" has to
+    // answer the case where the creator no longer exists.
+    it("lets the creator act", () => {
+        expect(
+            creatorScopedAllowed({ isCreator: true, projectRole: "viewer" }, "u1"),
+        ).toBe(true);
+    });
+
+    it("still refuses an admin while the creator exists", () => {
+        // The rule is about authorship, not rank: an admin does not get to
+        // reach into a colleague's versions just for outranking them.
+        expect(
+            creatorScopedAllowed({ isCreator: false, projectRole: "admin" }, "u2"),
+        ).toBe(false);
+    });
+
+    it("hands a creator-less row to the container's admins", () => {
+        // Otherwise deleting the account that made the row would strand it
+        // inside a project the organization is supposed to control, with
+        // nobody able to act on it ever again.
+        expect(
+            creatorScopedAllowed({ isCreator: false, projectRole: "admin" }, null),
+        ).toBe(true);
+    });
+
+    it("does not hand a creator-less row to members or viewers", () => {
+        for (const role of ["member", "viewer"] as const) {
+            expect(
+                creatorScopedAllowed({ isCreator: false, projectRole: role }, null),
+            ).toBe(false);
+        }
     });
 });

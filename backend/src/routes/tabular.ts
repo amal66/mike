@@ -68,6 +68,7 @@ import {
 } from "../lib/modelSelection";
 import {
     checkProjectAccess,
+    creatorScopedAllowed,
     ensureReviewAccess,
     filterAccessibleDocumentIds,
     resolveContentOrgId,
@@ -879,9 +880,9 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         updates.shared_with = sharedWithUpdate;
     }
     if (projectIdUpdateProvided) {
-        if (!access.isCreator) {
+        if (!creatorScopedAllowed(access, existingReview.user_id)) {
             return void res.status(403).json({
-                detail: "Only the review owner can move a review",
+                detail: "Only the review's creator can move a review",
             });
         }
         if (projectIdUpdate) {

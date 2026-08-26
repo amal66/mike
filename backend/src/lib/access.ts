@@ -222,6 +222,28 @@ type ResourceAccess =
       }
     | { ok: false };
 
+/**
+ * Some operations stay scoped to the person who made the row — replacing or
+ * deleting one version of a document, moving a review between projects.
+ * Those rules are about authorship, not tier, and they predate this module.
+ *
+ * They acquired a hole the moment account deletion started blanking
+ * `user_id` instead of destroying an organization's content: a row can now
+ * have no creator at all, and "only the creator may act" then means NOBODY
+ * may act. The document is stranded inside a project the organization is
+ * supposed to control — exactly the outcome detaching the row was meant to
+ * prevent. So when the creator is gone, the container's admins inherit the
+ * operation. While a creator still exists, nothing changes: an admin does
+ * not get to reach into a colleague's versions.
+ */
+export function creatorScopedAllowed(
+    access: { isCreator: boolean; projectRole: ProjectRole },
+    creatorId: string | null | undefined,
+): boolean {
+    if (access.isCreator) return true;
+    return !creatorId && can(access.projectRole, "container.delete");
+}
+
 /** Build the ResourceAccess for a derived project role. */
 function resourceAccessFor(
     projectRole: ProjectRole,

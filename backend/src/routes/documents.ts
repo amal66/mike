@@ -33,6 +33,7 @@ import {
 import { can } from "../lib/permissions";
 import {
     checkProjectAccess,
+    creatorScopedAllowed,
     ensureDocAccess,
     resolveContentOrgId,
 } from "../lib/access";
@@ -655,9 +656,12 @@ documentsRouter.post(
         !targetDoc.project_id &&
         sourceDoc.user_id === userId &&
         targetDoc.user_id === userId);
-    if (willDeleteSource && !sourceAccess.isCreator) {
+    if (
+      willDeleteSource &&
+      !creatorScopedAllowed(sourceAccess, sourceDoc.user_id)
+    ) {
       return void res.status(403).json({
-        detail: "Only the source document owner can move it into a version.",
+        detail: "Only the source document's creator can move it into a version.",
       });
     }
 
