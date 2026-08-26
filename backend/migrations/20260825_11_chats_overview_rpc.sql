@@ -9,23 +9,38 @@
 -- chat by URL through a project access grant (GET /chat/:id → 200 via
 -- checkProjectAccess's grant branch) that never appeared in GET /chat.
 --
--- Now that chats carry shared_with + org_id (20260825_10), the predicate is
--- the same four-branch shape as the other content RPCs, mirroring
--- ensureChatAccess exactly:
+-- Now that chats carry shared_with + org_id (20260825_10), a chat has exactly
+-- the shape 20260825_04's review_access_role() already takes: creator, own
+-- share list, containing project, own org — merged strongest-wins. So this
+-- predicate does not restate those four branches, it CALLS that function:
 --
---   1. the chat's creator;
---   2. the caller's email in the chat's own shared_with (standalone shares);
---   3. the caller is a member of the chat's own org (a no-op in practice —
---      see the wrapper note below);
---   4. the chat's project is reachable, which is precisely
---      `project_access_role(...) is not null`: project creator, direct access
---      grant, or membership of the project's org. Calling 20260825_04's
---      helper rather than restating its three arms is what keeps this file
---      in lockstep with get_projects_overview for free.
+--   review_access_role(c.user_id, c.project_id, c.shared_with, c.org_id,
+--                      p_user_id, p_user_email) is not null
+--
+-- Its name comes from its first caller, not from a restriction. It is the SQL
+-- twin of lib/access.ts's `ensureSharedRowAccess`, which `ensureReviewAccess`
+-- and `ensureChatAccess` both delegate to for exactly this reason; chats carry
+-- no column it does not take. (Renaming it to say so belongs in the migration
+-- that introduced it, not here.)
+--
+-- Why delegate rather than restate: a copied predicate is a predicate that
+-- drifts. List and detail disagreeing about what exists is the bug this file
+-- exists to fix, and the surest way to reintroduce it is to keep a second copy
+-- of the rule that a later change updates only once.
+--
+-- Verified equivalent rather than assumed: on a scratch Postgres carrying this
+-- schema, the delegating predicate and the hand-written four-branch one were
+-- run over eight chats covering every branch — creator's own, in an org
+-- project, in a granted project, shared directly, tagged with an org but in no
+-- project, a stranger's, and two whose creator's account was deleted so
+-- user_id is NULL — for nine caller/email combinations including mixed case
+-- and a NULL email (the wrapper's path). Identical row sets and identical
+-- is_owner values; the symmetric difference was empty.
 --
 -- Disclosed behaviour change: chats inside projects the caller reaches only
--- through an access grant (branch 4's grant arm) now appear in the global
--- list; they were previously reachable by URL but deliberately unlisted.
+-- through an access grant (the project arm's grant branch) now appear in the
+-- global list; they were previously reachable by URL but deliberately
+-- unlisted.
 
 -- ---------------------------------------------------------------------------
 -- Deploy-window compatibility: why the old 3-arg signature survives
@@ -71,20 +86,20 @@
 --
 -- Why the wrapper's rows are IDENTICAL to pre-migration behaviour, and not
 -- merely "close enough" -- passing p_user_email => null replays the old
--- predicate branch for branch:
+-- predicate arm for arm. Reading review_access_role's four arms in order:
 --
---   * branch 2 (chat shared_with) is gated on coalesce(p_user_email,'') <> ''
---     and so is switched off entirely; the old function had no such branch.
---   * branch 4 collapses to "project creator OR project-org member", because
---     project_access_role's grant arm carries the same email guard -- exactly
---     the old function's second and third branches.
---   * branch 3 (the chat's OWN org) has no old counterpart, but it can never
---     add a row: 20260825_10's backfill -- and resolveContentOrgId, which
---     writes the column going forward -- set chats.org_id to the project's
---     org for project chats (so branch 3 is a subset of branch 4) and leave
---     it NULL otherwise, which the branch's `c.org_id is not null` guard
---     skips. Old instances writing chats during the deploy window do not know
---     the column at all and also leave it null.
+--   * the share-list arm is gated on coalesce(p_user_email,'') <> '' and so is
+--     switched off entirely; the old function had no such arm.
+--   * the project arm collapses to "project creator OR project-org member",
+--     because project_access_role's grant arm carries the same email guard --
+--     exactly the old function's second and third branches.
+--   * the row's OWN org arm has no old counterpart, but it can never add a
+--     chat: 20260825_10's backfill -- and resolveContentOrgId, which writes
+--     the column going forward -- set chats.org_id to the project's org for
+--     project chats (making that arm a subset of the project arm) and leave it
+--     NULL otherwise, which the arm's `p_org_id is not null` guard skips. Old
+--     instances writing chats during the deploy window do not know the column
+--     at all and also leave it null.
 --
 --   The wrapper also drops the new is_owner column, so an old instance's
 --   `res.json(data)` returns the same six fields it always did.
@@ -120,26 +135,17 @@ as $$
     coalesce(c.user_id::text = p_user_id, false) as is_owner
   from public.chats c
   left join public.projects p on p.id = c.project_id
-  where c.user_id::text = p_user_id
-     or (
-       coalesce(p_user_email, '') <> ''
-       and c.user_id::text is distinct from p_user_id
-       and c.shared_with @> jsonb_build_array(lower(p_user_email))
-     )
-     or (
-       c.org_id is not null
-       and c.user_id::text is distinct from p_user_id
-       and exists (
-         select 1 from public.org_members m
-         where m.org_id = c.org_id and m.user_id::text = p_user_id
-       )
-     )
-     or (
-       p.id is not null
-       and public.project_access_role(
-             p.id, p.user_id, p.org_id, p_user_id, p_user_email
-           ) is not null
-     )
+  -- The whole predicate, in one call -- see this function's header comment.
+  -- The join above is for project_name only; the function resolves the
+  -- project itself.
+  where public.review_access_role(
+          c.user_id,
+          c.project_id,
+          c.shared_with,
+          c.org_id,
+          p_user_id,
+          p_user_email
+        ) is not null
   order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null
@@ -176,11 +182,19 @@ as $$
   from public.get_chats_overview(p_user_id, null::text, p_limit, p_offset) o;
 $$;
 
--- The new predicate probes chats.shared_with with the `@>` containment
--- operator, which only btree-scans as a full sequential filter.
--- tabular_reviews carries a GIN index for exactly this arm
--- (tabular_reviews_shared_with_idx); chats got the column in 20260825_10
--- without one, so give it the sibling index here.
+-- jsonb containment (`shared_with @> '["someone@example.com"]'`) cannot use a
+-- btree at all, so without a GIN index every such probe degrades to a
+-- sequential scan of the whole table. tabular_reviews carries one for exactly
+-- this predicate (tabular_reviews_shared_with_idx); chats got the column in
+-- 20260825_10 without one, so give it the sibling index here.
+--
+-- The RPC above reaches the column through review_access_role(), so the
+-- planner cannot use this index for the list query -- and could not have used
+-- it for the hand-written predicate either, whose project arm is an
+-- unindexable function call in the same OR. What the index does serve is the
+-- direct containment queries: account deletion scrubbing a departing user's
+-- email out of every share list (lib/userDataCleanup.ts) and the audit
+-- lookups, both of which filter on this column alone.
 create index if not exists chats_shared_with_idx
   on public.chats using gin (shared_with);
 

@@ -1748,6 +1748,14 @@ create index if not exists idx_chats_org on public.chats(org_id);
 create index if not exists chats_shared_with_idx
   on public.chats using gin (shared_with);
 
+-- A chat carries exactly the columns review_access_role() takes -- creator,
+-- own share list, containing project, own org -- so the visibility rule is one
+-- call to it rather than a second copy of its four arms. That function is
+-- named for its first caller, not for a restriction: it is the SQL twin of
+-- lib/access.ts's ensureSharedRowAccess, which ensureReviewAccess and
+-- ensureChatAccess both delegate to. Keeping one copy is what stops the list
+-- and the detail route from drifting apart about which chats exist.
+--
 -- p_user_email is deliberately NOT defaulted: the pre-#363 three-argument
 -- signature still exists below as a deploy-window wrapper, and a defaulted
 -- p_user_email would make the old three-key call ambiguous between the two
@@ -1785,26 +1793,17 @@ as $$
     coalesce(c.user_id::text = p_user_id, false) as is_owner
   from public.chats c
   left join public.projects p on p.id = c.project_id
-  where c.user_id::text = p_user_id
-     or (
-       coalesce(p_user_email, '') <> ''
-       and c.user_id::text is distinct from p_user_id
-       and c.shared_with @> jsonb_build_array(lower(p_user_email))
-     )
-     or (
-       c.org_id is not null
-       and c.user_id::text is distinct from p_user_id
-       and exists (
-         select 1 from public.org_members m
-         where m.org_id = c.org_id and m.user_id::text = p_user_id
-       )
-     )
-     or (
-       p.id is not null
-       and public.project_access_role(
-             p.id, p.user_id, p.org_id, p_user_id, p_user_email
-           ) is not null
-     )
+  -- The whole predicate, in one call -- see this function's header comment.
+  -- The join above is for project_name only; the function resolves the
+  -- project itself.
+  where public.review_access_role(
+          c.user_id,
+          c.project_id,
+          c.shared_with,
+          c.org_id,
+          p_user_id,
+          p_user_email
+        ) is not null
   order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null
