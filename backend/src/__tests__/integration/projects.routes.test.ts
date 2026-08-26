@@ -542,6 +542,38 @@ describe("projects.routes", () => {
       });
     });
 
+    // "Resolve" names a lookup, but the RPC behind it creates any folder in
+    // the path that does not exist yet. A viewer's tier is read-only, so the
+    // route has to refuse before it reaches the RPC — not merely return an
+    // empty answer.
+    it("refuses a viewer, who would otherwise create folders by resolving a path", async () => {
+      const captured = captureRpcArgs();
+      checkProjectAccess.mockResolvedValue({
+        ok: true,
+        isCreator: false,
+        orgRole: null,
+        projectRole: "viewer",
+        project: {
+          id: "p1",
+          user_id: "u2",
+          org_id: null,
+          shared_with: ["u1@test.local"],
+        },
+      });
+
+      const res = await request(app)
+        .post("/projects/p1/folder-paths/resolve")
+        .set(...AUTH)
+        .send({
+          segments: ["NDAs"],
+          base_folder_id: null,
+          conflict_resolution: "rename",
+        });
+
+      expect(res.status).toBe(404);
+      expect(captured.name).toBeUndefined();
+    });
+
     it("returns project folder conflicts without replacement permissions", async () => {
       checkProjectAccess.mockResolvedValue({
         ok: true,

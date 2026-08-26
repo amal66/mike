@@ -1398,7 +1398,12 @@ projectsRouter.post(
 
     const db = createServerSupabase();
     const access = await checkProjectAccess(projectId, userId, userEmail, db);
-    if (!access.ok)
+    // This route reads like a lookup, but resolve_project_folder_path INSERTs
+    // a project_subfolders row for every path segment that does not exist
+    // yet. It therefore needs the same docs.organize gate its sibling folder
+    // routes declare; without it a viewer — whose whole tier is read-only —
+    // could POST an arbitrary nested folder tree into someone else's project.
+    if (!access.ok || !can(access.projectRole, "docs.organize"))
       return void res.status(404).json({ detail: "Project not found" });
     if (baseFolderId) {
       const parent = await loadProjectFolder(db, projectId, baseFolderId);
