@@ -12,11 +12,19 @@ type Row = Record<string, unknown>;
 // rows (as Postgres would). Supports the query subset the cleanup uses:
 // select/eq/neq/in/order/limit/delete/update + thenable.
 //
-// `options.selectErrors` makes one table's reads fail, so a caller that
-// ignores a read error can be caught doing it.
+// `options.lastAdminTrigger` additionally simulates the database trigger
+// org_members_protect_last_admin (migration 20260825_02): deleting an
+// organization's last admin raises SQLSTATE 23514, EXCEPT when the org row
+// is already gone or the member's auth.users row is already gone. Seed an
+// `auth_users` table to say which accounts still exist — without the trigger
+// the account-deletion path can only be tested against a mocked cascade,
+// which is precisely the assumption that was wrong.
 function makeDb(
     initial: Record<string, Row[]>,
-    options: { selectErrors?: Record<string, string> } = {},
+    options: {
+        lastAdminTrigger?: boolean;
+        selectErrors?: Record<string, string>;
+    } = {},
 ) {
     const tables: Record<string, Row[]> = {};
     for (const [k, v] of Object.entries(initial)) tables[k] = v.map((r) => ({ ...r }));
@@ -54,6 +62,34 @@ function makeDb(
                     data: null,
                     error: { message: options.selectErrors[table] },
                 });
+            }
+            if (op === "delete" && table === "org_members") {
+                const blocked = matched.find((r) => {
+                    if (r.role !== "admin") return false;
+                    const orgGone = !(tables.organizations ?? []).some(
+                        (o) => o.id === r.org_id,
+                    );
+                    const authGone = !(tables.auth_users ?? []).some(
+                        (u) => u.id === r.user_id,
+                    );
+                    if (orgGone || authGone) return false;
+                    return !(tables.org_members ?? []).some(
+                        (o) =>
+                            o.org_id === r.org_id &&
+                            o.role === "admin" &&
+                            o.user_id !== r.user_id,
+                    );
+                });
+                if (options.lastAdminTrigger && blocked) {
+                    return Promise.resolve({
+                        data: null,
+                        error: {
+                            message:
+                                "An organization must keep at least one admin",
+                            code: "23514",
+                        },
+                    });
+                }
             }
             if (op === "update") {
                 for (const r of matched) Object.assign(r, payload as Row);
@@ -192,9 +228,11 @@ describe("deleteUserOrganizations", () => {
         expect(db._tables.organizations).toHaveLength(0);
     });
 
-    it("keeps a memberless org that still holds the firm's projects", async () => {
+    it("keeps an org that still holds the firm's projects", async () => {
         // Deleting it would SET NULL the org_id on those projects and strand
-        // the content this whole model exists to protect.
+        // the content this whole model exists to protect. The departing
+        // membership row is deliberately NOT deleted here — see the trigger
+        // test below.
         const db = makeDb({
             organizations: [{ id: "o1", name: "Acme" }],
             org_members: [
@@ -204,8 +242,61 @@ describe("deleteUserOrganizations", () => {
         });
         await deleteUserOrganizations(db, "u1");
         expect(db._tables.organizations).toHaveLength(1);
-        expect(db._tables.org_members).toHaveLength(0);
         expect(db._tables.projects).toHaveLength(1);
+    });
+
+    it("leaves the last admin's membership for the auth.users cascade", async () => {
+        // The half-finished-deletion bug. There is no heir and the org keeps
+        // its projects, so nothing can satisfy org_members_protect_last_admin
+        // at this moment: the organizations row is present and the member's
+        // auth.users row is present (the auth user is deleted only AFTER this
+        // cleanup returns). An explicit delete here raises SQLSTATE 23514, and
+        // account deletion 500s with storage already swept and personal rows
+        // already gone.
+        const db = makeDb(
+            {
+                organizations: [{ id: "o1", name: "Acme" }],
+                org_members: [
+                    {
+                        id: "m1",
+                        org_id: "o1",
+                        user_id: "u1",
+                        role: "admin",
+                        created_at: 1,
+                    },
+                ],
+                projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
+                auth_users: [{ id: "u1" }],
+            },
+            { lastAdminTrigger: true },
+        );
+
+        await expect(deleteUserOrganizations(db, "u1")).resolves.toBeUndefined();
+        // Untouched here; the FK (on delete cascade from auth.users) removes
+        // it moments later, and the trigger stands aside for that cascade.
+        expect(db._tables.org_members).toHaveLength(1);
+        expect(db._tables.organizations).toHaveLength(1);
+        expect(db._tables.projects).toHaveLength(1);
+    });
+
+    it("still deletes a membership the trigger has no reason to refuse", async () => {
+        // The other admin is the trigger's own escape: with a co-admin left,
+        // the explicit delete is legal and remains the tidier path.
+        const db = makeDb(
+            {
+                organizations: [{ id: "o1", name: "Acme" }],
+                org_members: [
+                    { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                    { id: "m2", org_id: "o1", user_id: "u2", role: "admin", created_at: 2 },
+                ],
+                auth_users: [{ id: "u1" }, { id: "u2" }],
+            },
+            { lastAdminTrigger: true },
+        );
+        await deleteUserOrganizations(db, "u1");
+        expect((db._tables.org_members as Row[]).map((m) => m.user_id)).toEqual([
+            "u2",
+        ]);
     });
 
     it("refuses to delete an org because a lookup failed", async () => {

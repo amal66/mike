@@ -628,6 +628,28 @@ export async function deleteUserOrganizations(
                         await deleteByIds(db, "organizations", [m.org_id]);
                         continue; // cascade removed the membership row
                     }
+                    // Sole admin, sole member, and the org keeps its projects
+                    // — so neither escape route below applies: there is
+                    // nobody to promote and the organization must survive.
+                    //
+                    // Deleting the membership row HERE is what the
+                    // org_members_protect_last_admin trigger exists to refuse.
+                    // Both of its stand-aside conditions are still false at
+                    // this moment: the organizations row is present (we just
+                    // decided to keep it) and the member's auth.users row is
+                    // present (routes/user.ts deletes the auth user only
+                    // AFTER this cleanup returns). The trigger raises 23514,
+                    // throwIfError turns that into a 500, and the account
+                    // deletion dies half-finished — storage swept, personal
+                    // rows gone, account still there.
+                    //
+                    // So leave the row alone and let the FK do it. org_members
+                    // .user_id is `references auth.users(id) on delete
+                    // cascade`, and the trigger's second escape hatch fires
+                    // exactly for that cascade ("the member's auth row is
+                    // already gone"). The membership disappears moments later
+                    // with nobody having to argue with the invariant.
+                    continue;
                 }
             }
         }
