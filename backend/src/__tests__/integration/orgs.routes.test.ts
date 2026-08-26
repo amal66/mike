@@ -385,6 +385,30 @@ describe("organization invitations", () => {
         expect(res.status).toBe(400);
     });
 
+    // 'owner' is a tier this product removed. Answering a request for it with
+    // a quiet 'member' invitation and a 201 would tell the caller their
+    // choice was honoured when it was replaced, so the retired names get the
+    // same 400 that updateMember and project sharing already give.
+    it("400s a retired role name rather than quietly downgrading it", async () => {
+        for (const role of ["owner", "manager", "editor"]) {
+            const res = await request(app)
+                .post("/orgs/org-1/invitations")
+                .set(...AUTH)
+                .send({ email: "new@hire.example", role });
+            expect(res.status).toBe(400);
+        }
+        expect(tables.org_invitations ?? []).toHaveLength(0);
+    });
+
+    it("still defaults an omitted role to member", async () => {
+        const res = await request(app)
+            .post("/orgs/org-1/invitations")
+            .set(...AUTH)
+            .send({ email: "new@hire.example" });
+        expect(res.status).toBe(201);
+        expect(res.body).toMatchObject({ role: "member" });
+    });
+
     it("shows an admin the invitation roster, and hides it from members", async () => {
         await invite("new@hire.example");
         const admin = await request(app)

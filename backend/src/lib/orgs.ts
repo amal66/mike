@@ -425,6 +425,18 @@ export async function createInvitation(
             detail: "You are already a member of this organization",
         };
 
+    // Omitting the role still means "member" — that is the documented
+    // default. Naming one that does not exist is a different thing, and it
+    // gets the same 400 that updateMember and project sharing already give.
+    // Coercing 'owner' to 'member' behind a 201 would answer a request for a
+    // tier this product deleted by inventing a quieter one, and the caller
+    // would have no way to tell.
+    if (params.role !== undefined && params.role !== null && !isOrgRole(params.role))
+        return {
+            ok: false,
+            kind: "validation",
+            detail: "Role must be admin or member",
+        };
     const role: OrgRole = isOrgRole(params.role) ? params.role : "member";
 
     // Someone who already belongs here needs no invitation. Resolved through
