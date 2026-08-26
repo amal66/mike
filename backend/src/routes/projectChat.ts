@@ -30,7 +30,7 @@ import {
     type ChatMessage,
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
-import { checkProjectAccess } from "../lib/access";
+import { checkProjectAccess, resolveContentOrgId } from "../lib/access";
 import { can } from "../lib/permissions";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import {
@@ -122,6 +122,11 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     let chatCreatorId: string | null = null;
 
     if (chatId) {
+        // Binding check only: the chat must live under the project in the
+        // URL. Whether the caller may WRITE is decided below — project chats
+        // are collaborative, so any member may append to any chat in the
+        // project, and the chat's own creator may always continue theirs.
+        // That is the same verdict ensureChatAccess reaches for GET /chat.
         const { data: existing } = await db
             .from("chats")
             .select("id, title, model, reasoning_level, project_id, user_id")
@@ -204,6 +209,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     }
 
     if (!chatId) {
+        const orgId = await resolveContentOrgId(db, { projectId });
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -211,6 +217,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 project_id: projectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
+                org_id: orgId,
             })
             .select("id, title")
             .single();

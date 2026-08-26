@@ -1110,7 +1110,7 @@ describe("PATCH /chat/:chatId", () => {
 
         expect(res.status).toBe(400);
         expect(res.body.detail).toBe(
-            "title, model, or reasoningLevel is required",
+            "title, model, reasoningLevel or shared_with is required",
         );
     });
 
@@ -1200,23 +1200,85 @@ describe("PATCH /word-chat/:chatId/model", () => {
 // POST /chat with an existing chat_id and POST /chat/:chatId/generate-title
 // are WRITES and must require content.edit, while GET /chat/:chatId stays a
 // read open to viewers.
+//
+// The same stub backs the sharing routes (PATCH/DELETE/people): it records
+// every update/delete with its filters, so a test can prove the write was
+// scoped by chat id alone (no user_id filter) rather than only that it
+// returned 200.
 // ---------------------------------------------------------------------------
 
-function tableQuery(row: Record<string, unknown> | null) {
+type RbacWrite = {
+    table: string;
+    op: "update" | "delete";
+    value?: unknown;
+    filters: { column: string; value: unknown }[];
+};
+const rbacWrites: RbacWrite[] = [];
+const rbacRpcCalls: { fn: string; args: unknown }[] = [];
+
+function tableQuery(
+    seed: Record<string, unknown> | Record<string, unknown>[] | null,
+    table = "unknown",
+) {
+    const rows = Array.isArray(seed) ? seed : seed ? [seed] : [];
     const q: Record<string, unknown> = {};
     const chain = [
-        "select", "insert", "update", "delete", "upsert",
-        "eq", "neq", "in", "is", "or", "lt", "gt", "gte", "lte",
+        "select", "insert", "upsert",
+        "neq", "is", "not", "or", "lt", "gt", "gte", "lte",
         "filter", "order", "limit", "range", "contains",
     ];
     for (const m of chain) q[m] = vi.fn(() => q);
-    q.single = vi.fn(() => Promise.resolve({ data: row, error: null }));
-    q.maybeSingle = vi.fn(() => Promise.resolve({ data: row, error: null }));
+    // A write in flight collects its own filters; before that, eq/in narrow
+    // the seeded rows. Filters naming a column the seed rows don't carry are
+    // ignored, keeping the stub as permissive as the rest of this file.
+    let write: RbacWrite | undefined;
+    const selectFilters: { column: string; match: (v: unknown) => boolean }[] =
+        [];
+    const selected = () =>
+        rows.filter((row) =>
+            selectFilters.every(
+                ({ column, match }) => !(column in row) || match(row[column]),
+            ),
+        );
+    q.update = vi.fn((value: unknown) => {
+        write = { table, op: "update", value, filters: [] };
+        rbacWrites.push(write);
+        return q;
+    });
+    q.delete = vi.fn(() => {
+        write = { table, op: "delete", filters: [] };
+        rbacWrites.push(write);
+        return q;
+    });
+    q.eq = vi.fn((column: string, value: unknown) => {
+        if (write) write.filters.push({ column, value });
+        else
+            selectFilters.push({ column, match: (actual) => actual === value });
+        return q;
+    });
+    q.in = vi.fn((column: string, values: unknown[]) => {
+        if (!write)
+            selectFilters.push({
+                column,
+                match: (actual) => values.includes(actual),
+            });
+        return q;
+    });
+    // An update ... .select().single() echoes the row as it would look after
+    // the write, which is what PATCH /chat/:chatId returns to the client.
+    const first = () =>
+        write?.op === "update"
+            ? { ...(rows[0] ?? {}), ...(write.value as Record<string, unknown>) }
+            : (selected()[0] ?? null);
+    q.single = vi.fn(() => Promise.resolve({ data: first(), error: null }));
+    q.maybeSingle = vi.fn(() =>
+        Promise.resolve({ data: first(), error: null }),
+    );
     q.then = (
         resolve: (v: unknown) => unknown,
         reject?: (e: unknown) => unknown,
     ) =>
-        Promise.resolve({ data: row ? [row] : [], error: null }).then(
+        Promise.resolve({ data: write ? rows : selected(), error: null }).then(
             resolve,
             reject,
         );
@@ -1226,31 +1288,52 @@ function tableQuery(row: Record<string, unknown> | null) {
 function makeRbacDb(
     orgRole: "admin" | "member" | null,
     chatUserId = "colleague-1",
-    grantRole: "admin" | "member" | "viewer" | null = null,
+    overrides: {
+        grantRole?: "admin" | "member" | "viewer" | null;
+        chat?: Record<string, unknown>;
+        profiles?: Record<string, unknown>[];
+    } = {},
 ) {
     return {
         from: vi.fn((table: string) => {
             if (table === "chats")
-                return tableQuery({
-                    id: "chat-1",
-                    title: "Existing chat",
-                    user_id: chatUserId,
-                    project_id: "proj-1",
-                });
+                return tableQuery(
+                    {
+                        id: "chat-1",
+                        title: "Existing chat",
+                        user_id: chatUserId,
+                        project_id: "proj-1",
+                        shared_with: [],
+                        org_id: "org-1",
+                        ...overrides.chat,
+                    },
+                    table,
+                );
             if (table === "projects")
-                return tableQuery({
-                    id: "proj-1",
-                    user_id: "colleague-1",
-                    shared_with: [],
-                    org_id: "org-1",
-                });
+                return tableQuery(
+                    {
+                        id: "proj-1",
+                        user_id: "colleague-1",
+                        shared_with: [],
+                        org_id: "org-1",
+                    },
+                    table,
+                );
             if (table === "org_members")
-                return tableQuery(orgRole ? { role: orgRole } : null);
+                return tableQuery(orgRole ? { role: orgRole } : null, table);
             if (table === "project_access_grants")
-                return tableQuery(grantRole ? { role: grantRole } : null);
-            return tableQuery(null);
+                return tableQuery(
+                    overrides.grantRole ? { role: overrides.grantRole } : null,
+                    table,
+                );
+            if (table === "user_profiles")
+                return tableQuery(overrides.profiles ?? [], table);
+            return tableQuery(null, table);
         }),
-        rpc: vi.fn(() => Promise.resolve({ data: null, error: null })),
+        rpc: vi.fn((fn: string, args: unknown) => {
+            rbacRpcCalls.push({ fn, args });
+            return Promise.resolve({ data: [], error: null });
+        }),
         auth: {
             getUser: () =>
                 Promise.resolve({ data: { user: { id: "u1" } }, error: null }),
@@ -1292,7 +1375,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
 
     it("403s a project viewer POSTing to an existing chat in a colleague's project", async () => {
         mockedCreate.mockImplementation(
-            () => makeRbacDb(null, "colleague-1", "viewer") as never,
+            () => makeRbacDb(null, "colleague-1", { grantRole: "viewer" }) as never,
         );
 
         const res = await request(app)
@@ -1307,7 +1390,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
 
     it("403s a project viewer calling generate-title on a colleague's chat", async () => {
         mockedCreate.mockImplementation(
-            () => makeRbacDb(null, "colleague-1", "viewer") as never,
+            () => makeRbacDb(null, "colleague-1", { grantRole: "viewer" }) as never,
         );
 
         const res = await request(app)
@@ -1319,8 +1402,9 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(res.body).toHaveProperty("detail");
     });
 
-    it("still lets the chat owner POST to their own chat", async () => {
-        // The chat row belongs to the caller (u1): owner role, full access.
+    it("still lets the chat's creator POST to their own chat", async () => {
+        // The chat row belongs to the caller (u1): the creator branch derives
+        // admin, so a project viewer may still continue their own thread.
         mockedCreate.mockImplementation(() => makeRbacDb(null, "u1") as never);
 
         const res = await request(app)
@@ -1333,7 +1417,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(runLLMStream).toHaveBeenCalledTimes(1);
     });
 
-    it("still lets an org admin (manager) POST to a colleague's chat", async () => {
+    it("still lets an org admin POST to a colleague's chat", async () => {
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)
@@ -1345,7 +1429,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(runLLMStream).toHaveBeenCalledTimes(1);
     });
 
-    it("still lets an org admin (manager) generate a title", async () => {
+    it("still lets an org admin generate a title", async () => {
         await seedResolvableModel();
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
@@ -1359,7 +1443,12 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
     });
 
     it("still lets a project viewer GET the chat (reads stay project.view)", async () => {
-        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb(null, "colleague-1", {
+                    grantRole: "viewer",
+                }) as never,
+        );
 
         const res = await request(app)
             .get("/chat/chat-1")
@@ -1367,5 +1456,369 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
 
         expect(res.status).toBe(200);
         expect(res.body.chat).toMatchObject({ id: "chat-1" });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Chat sharing, deletion and the people roster.
+//
+// Same fixture as above, now exercising the routes chats gained with the
+// reviews' permission schema. The ladder under test: title edits are
+// content.edit (member+), the share list is access.manage (admin only), and
+// deleting the chat is container.delete (admin only) — so a member who may
+// rename the chat must not be able to re-share or erase it.
+// ---------------------------------------------------------------------------
+describe("chat sharing, deletion and roster (chat permission schema)", () => {
+    const mockedCreate = vi.mocked(createServerSupabase);
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        rbacWrites.length = 0;
+        rbacRpcCalls.length = 0;
+    });
+
+    afterEach(() => {
+        mockedCreate.mockImplementation(() => mockSupabase() as never);
+    });
+
+    const chatWrites = (op: "update" | "delete") =>
+        rbacWrites.filter((w) => w.table === "chats" && w.op === op);
+
+    it("lets an org admin rename a colleague's chat", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ title: "  Renamed  " });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({ id: "chat-1", title: "Renamed" });
+        const [update] = chatWrites("update");
+        expect(update?.value).toEqual({ title: "Renamed" });
+        // Scoped by chat id ALONE. With the old `.eq("user_id", userId)`
+        // filter still in place this write would match zero rows and the
+        // admin's rename would silently vanish.
+        expect(update?.filters).toEqual([{ column: "id", value: "chat-1" }]);
+    });
+
+    it("403s a project viewer renaming a colleague's chat", async () => {
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb(null, "colleague-1", {
+                    grantRole: "viewer",
+                }) as never,
+        );
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ title: "Renamed" });
+
+        expect(res.status).toBe(403);
+        expect(res.body.detail).toBe(
+            "You do not have permission to modify this chat",
+        );
+        expect(chatWrites("update")).toEqual([]);
+    });
+
+    it("lets an org admin edit the share list, normalized", async () => {
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb("admin", "colleague-1", {
+                    profiles: [
+                        {
+                            user_id: "mate-1",
+                            email: "mate@example.com",
+                            display_name: "Mate",
+                        },
+                    ],
+                }) as never,
+        );
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({
+                shared_with: ["Mate@Example.com", "  mate@example.com  ", ""],
+            });
+
+        expect(res.status).toBe(200);
+        // Lowercased, trimmed, deduped — so SQL containment matching stays
+        // exact-match against the same normalized emails.
+        expect(res.body.shared_with).toEqual(["mate@example.com"]);
+        expect(chatWrites("update")[0]?.value).toEqual({
+            shared_with: ["mate@example.com"],
+        });
+    });
+
+    it("403s a shared member trying to edit the share list", async () => {
+        // u1 reaches this chat only through its own shared_with: member tier.
+        // Members collaborate on content; they must not re-share the chat.
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb(null, "colleague-1", {
+                    chat: { shared_with: ["u1@test.local"] },
+                }) as never,
+        );
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ shared_with: ["mate@example.com"] });
+
+        expect(res.status).toBe(403);
+        expect(res.body.detail).toBe(
+            "Only a project admin can change who has access.",
+        );
+        expect(chatWrites("update")).toEqual([]);
+    });
+
+    it("400s when sharing a chat with yourself", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ shared_with: ["U1@Test.Local"] });
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe("You cannot share a chat with yourself.");
+    });
+
+    it("400s when sharing with an email that has no Mike user", async () => {
+        // No user_profiles rows are seeded, so the email resolves to nobody.
+        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send({ shared_with: ["ghost@example.com"] });
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe(
+            "ghost@example.com does not belong to a Mike user.",
+        );
+        expect(chatWrites("update")).toEqual([]);
+    });
+
+    it("lets the chat's creator delete their chat (204)", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null, "u1") as never);
+
+        const res = await request(app)
+            .delete("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(204);
+        expect(chatWrites("delete")[0]?.filters).toEqual([
+            { column: "id", value: "chat-1" },
+        ]);
+    });
+
+    it("403s an org member deleting a colleague's chat", async () => {
+        // container.delete is the admin rung: a member may write in the chat
+        // and rename it, but erasing a colleague's container is not theirs.
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+
+        const res = await request(app)
+            .delete("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(403);
+        expect(res.body.detail).toBe(
+            "You do not have permission to delete this chat",
+        );
+        expect(chatWrites("delete")).toEqual([]);
+    });
+
+    it("lets an org admin delete a colleague's chat in the org's project", async () => {
+        // The other side of that rung: an org admin inherits project admin,
+        // and someone who could delete the whole project outright is not
+        // meaningfully restrained from deleting one chat inside it.
+        mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
+
+        const res = await request(app)
+            .delete("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(204);
+        expect(chatWrites("delete")[0]?.filters).toEqual([
+            { column: "id", value: "chat-1" },
+        ]);
+    });
+
+    it("404s a delete from someone with no access at all", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null) as never);
+
+        const res = await request(app)
+            .delete("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(404);
+        expect(res.body.detail).toBe("Chat not found");
+        expect(chatWrites("delete")).toEqual([]);
+    });
+
+    it("reports the caller's derived role on GET /chat/:chatId", async () => {
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb(null, "colleague-1", {
+                    grantRole: "viewer",
+                }) as never,
+        );
+
+        const viewer = await request(app)
+            .get("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(viewer.status).toBe(200);
+        expect(viewer.body.access_role).toBe("viewer");
+        expect(viewer.body.is_owner).toBe(false);
+        expect(viewer.body.messages).toEqual([]);
+
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+
+        const member = await request(app)
+            .get("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(member.status).toBe(200);
+        expect(member.body.access_role).toBe("member");
+        expect(member.body.is_owner).toBe(false);
+
+        mockedCreate.mockImplementation(() => makeRbacDb(null, "u1") as never);
+
+        const creator = await request(app)
+            .get("/chat/chat-1")
+            .set("Authorization", "Bearer test");
+
+        expect(creator.status).toBe(200);
+        // "admin" is what the creator branch derives; is_owner stays a
+        // provenance flag, not a fourth role.
+        expect(creator.body.access_role).toBe("admin");
+        expect(creator.body.is_owner).toBe(true);
+    });
+
+    it("returns the creator and shared members from GET /chat/:chatId/people", async () => {
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb("member", "colleague-1", {
+                    chat: { shared_with: ["Mate@Example.com"] },
+                    profiles: [
+                        {
+                            user_id: "colleague-1",
+                            email: "colleague@example.com",
+                            display_name: "Colleague One",
+                        },
+                        {
+                            user_id: "mate-1",
+                            email: "mate@example.com",
+                            display_name: "Mate",
+                        },
+                    ],
+                }) as never,
+        );
+
+        const res = await request(app)
+            .get("/chat/chat-1/people")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(200);
+        expect(res.body.owner).toEqual({
+            user_id: "colleague-1",
+            email: "colleague@example.com",
+            display_name: "Colleague One",
+            role: "admin",
+        });
+        expect(res.body.members).toEqual([
+            { email: "mate@example.com", display_name: "Mate", role: "member" },
+        ]);
+    });
+
+    it("404s the people roster for a caller with no access", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb(null) as never);
+
+        const res = await request(app)
+            .get("/chat/chat-1/people")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(404);
+        expect(res.body.detail).toBe("Chat not found");
+    });
+
+    it("passes the caller's normalized email to get_chats_overview", async () => {
+        // The RPC's predicate mirrors ensureChatAccess, and its shared_with
+        // arm compares against a lowercased email — passing the raw claim
+        // would hide chats shared with a mixed-case address.
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+
+        const res = await request(app)
+            .get("/chat")
+            .set("Authorization", "Bearer test");
+
+        expect(res.status).toBe(200);
+        expect(rbacRpcCalls).toEqual([
+            {
+                fn: "get_chats_overview",
+                args: {
+                    p_user_id: "u1",
+                    p_user_email: "u1@test.local",
+                    p_limit: null,
+                    p_offset: 0,
+                },
+            },
+        ]);
+    });
+
+    describe("a standalone chat shared directly with the caller", () => {
+        // No project at all — access exists only because u1's email is in the
+        // chat's own shared_with. That is member tier: read and write the
+        // content, but never re-share or delete the container.
+        const directShare = () =>
+            makeRbacDb(null, "colleague-1", {
+                chat: {
+                    project_id: null,
+                    org_id: null,
+                    shared_with: ["u1@test.local"],
+                },
+            }) as never;
+
+        it("reads as a member", async () => {
+            mockedCreate.mockImplementation(directShare);
+
+            const res = await request(app)
+                .get("/chat/chat-1")
+                .set("Authorization", "Bearer test");
+
+            expect(res.status).toBe(200);
+            expect(res.body.access_role).toBe("member");
+            expect(res.body.is_owner).toBe(false);
+        });
+
+        it("may generate a title (content.edit)", async () => {
+            mockedCreate.mockImplementation(directShare);
+
+            const res = await request(app)
+                .post("/chat/chat-1/generate-title")
+                .set("Authorization", "Bearer test")
+                .send({ message: "hello there" });
+
+            expect(res.status).toBe(200);
+            expect(res.body.title).toBe("Generated Title");
+        });
+
+        it("may not delete the chat (container.delete)", async () => {
+            mockedCreate.mockImplementation(directShare);
+
+            const res = await request(app)
+                .delete("/chat/chat-1")
+                .set("Authorization", "Bearer test");
+
+            expect(res.status).toBe(403);
+            expect(res.body.detail).toBe(
+                "You do not have permission to delete this chat",
+            );
+            expect(chatWrites("delete")).toEqual([]);
+        });
     });
 });
