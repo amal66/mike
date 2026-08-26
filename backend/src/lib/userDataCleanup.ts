@@ -565,9 +565,24 @@ async function deleteUserExportArtifacts(userId: string) {
     }
 }
 
+/**
+ * Erase one email from every `shared_with` array in a table.
+ *
+ * Deleting an account has to remove the person from OTHER people's rows, not
+ * only delete their own. An email left behind in a colleague's share list is
+ * personal data we were asked to erase, still stored and still displayed —
+ * `GET /chat/:chatId/people` renders it verbatim to everyone who can see the
+ * chat. It is a correctness problem too: an address can be reissued to a
+ * different human, who would inherit access to a thread nobody ever invited
+ * them to.
+ *
+ * Every table carrying a `shared_with` array has to be listed here. Chats
+ * gained the column in the chat-permissions migration and were missed —
+ * which is what this note exists to prevent for whatever gains it next.
+ */
 async function removeEmailFromSharedWith(
     db: Db,
-    table: "projects" | "tabular_reviews",
+    table: "projects" | "tabular_reviews" | "chats",
     email: string | null | undefined,
 ) {
     const normalizedEmail = email?.trim().toLowerCase();
@@ -976,6 +991,11 @@ export async function deleteUserAccountData(
         // shared_with mirror on each affected project).
         removeGrantsForEmail(db, userEmail),
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
+        // Chats carry a share list of their own since the chat-permissions
+        // migrations. A chat the departing user was invited to may outlive
+        // them (their own chats are deleted below, but a colleague's is
+        // not), so the invitation has to be withdrawn explicitly.
+        removeEmailFromSharedWith(db, "chats", userEmail),
         deleteUserExportArtifacts(userId),
     ]);
 

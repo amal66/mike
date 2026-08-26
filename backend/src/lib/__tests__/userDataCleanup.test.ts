@@ -402,8 +402,14 @@ describe("deleteUserAccountData", () => {
                 },
             ],
             chats: [
-                { id: "c1", user_id: "u1" },
-                { id: "c-other", user_id: "u2" },
+                { id: "c1", user_id: "u1", shared_with: [] },
+                // A colleague's chat the departing user was invited to. The
+                // row outlives them, so the invitation must be withdrawn.
+                {
+                    id: "c-other",
+                    user_id: "u2",
+                    shared_with: ["u1@example.com", "keep@example.com"],
+                },
             ],
             tabular_review_chats: [{ id: "rc1", user_id: "u1" }],
             project_subfolders: [{ id: "f1", user_id: "u1" }],
@@ -475,6 +481,15 @@ describe("deleteUserAccountData", () => {
             tables.projects.find((row) => row.id === "p-other")?.shared_with,
         ).toEqual(["keep@example.com"]);
         expect(tables.tabular_reviews[0].shared_with).toEqual([]);
+
+        // The departing email is erased from a surviving colleague's chat
+        // share list, and only that email: the chat itself and everyone else
+        // on it stay. Left behind, it would keep rendering in
+        // GET /chat/:chatId/people and would re-grant access if the address
+        // were ever reissued.
+        expect(
+            tables.chats.find((row) => row.id === "c-other")?.shared_with,
+        ).toEqual(["keep@example.com"]);
 
         // Version files for deleted docs plus orphans under the user's prefix.
         const deletedPaths = deleteFileMock.mock.calls.map(([path]) => path);
@@ -569,6 +584,9 @@ describe("deleteUserAccountData", () => {
             tables.project_access_grants.map((row) => row.id),
         ).toEqual(["g-u1", "g-keep"]);
         expect(ids(tables.workflow_shares)).toEqual(["ws-to", "ws-keep"]);
+        expect(
+            tables.chats.find((row) => row.id === "c-other")?.shared_with,
+        ).toEqual(["u1@example.com", "keep@example.com"]);
         // ...but the user's own data is still deleted.
         expect(ids(tables.documents)).toEqual(["d-other"]);
         expect(tables.workflows.map((row) => row.id)).toEqual(["w-other"]);
