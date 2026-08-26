@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 
+// #383's model-selection describes grew this file past the chat limiter's
+// 30-requests-per-window budget, so the last describe began answering 429
+// before any permission check ran. Hoisted so it precedes app.ts's limiter
+// construction; scoped to tests — production reads its own env.
+vi.hoisted(() => {
+    process.env.RATE_LIMIT_CHAT_MAX = "1000";
+});
+
 // Hoisted mock fn so the vi.mock factory below (which is itself hoisted above
 // the imports) can reference it. Lets each test drive the stream outcome.
 const { runLLMStream, dbInserts, dbUpdates, dbControl } = vi.hoisted(() => ({
@@ -1253,6 +1261,21 @@ function makeRbacDb(
 describe("chat writes are gated on content.edit (org RBAC)", () => {
     const mockedCreate = vi.mocked(createServerSupabase);
 
+    // #383 resolves an effective model before any chat write; the default
+    // settings stub (no last-selected model, gemini-only key) cannot resolve
+    // one, which would fail these permission tests with a 429 that has
+    // nothing to do with permissions. Seed a resolvable selection per test.
+    async function seedResolvableModel() {
+        const userSettings = await import("../../lib/userSettings");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            title_model: null,
+            tabular_model: null,
+            last_selected_chat_model: "gpt-5.6-luna",
+            api_keys: { openai: "test-key" },
+        });
+    }
+
     beforeEach(() => {
         vi.clearAllMocks();
         runLLMStream.mockResolvedValue({
@@ -1323,6 +1346,7 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
     });
 
     it("still lets an org admin (manager) generate a title", async () => {
+        await seedResolvableModel();
         mockedCreate.mockImplementation(() => makeRbacDb("admin") as never);
 
         const res = await request(app)

@@ -363,10 +363,14 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     }
 
     const db = createServerSupabase();
-    const chat = await getAccessibleChat(chatId, userId, userEmail, db);
-    if (!chat || (hasTitle && chat.user_id !== userId)) {
+    // The ladder's getAccessibleChat answers with an access verdict, not a
+    // bare row (main's shape before the ladder). Renaming stays creator-only
+    // at this layer; model/reasoning follow reachability, as on main.
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok || (hasTitle && access.chat.user_id !== userId)) {
         return void res.status(404).json({ detail: "Chat not found" });
     }
+    const chat = access.chat;
 
     let selectedModel: string | undefined;
     const selectedReasoningLevel =
@@ -467,7 +471,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         const settings = await getUserModelSettings(userId, db);
         const resolution = await resolveEffectiveChatModel({
             requested: requestedModel,
-            chatModel: chat.model,
+            chatModel: access.chat.model,
             lastSelectedModel: settings.last_selected_chat_model,
             apiKeys: settings.api_keys,
             userId,
