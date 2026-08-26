@@ -155,3 +155,80 @@ describe("QuoteSelectionPopup", () => {
         ).toContain("top: 160px");
     });
 });
+
+describe("QuoteSelectionPopup — assign action", () => {
+    it("offers only Add to Chat when no assign handler is given", () => {
+        render(<QuoteSelectionPopup selection={selection()} onAdd={vi.fn()} />);
+
+        expect(
+            screen.getByRole("button", { name: "Add to Chat" }),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: "Assign to agent" }),
+        ).not.toBeInTheDocument();
+    });
+
+    it("hands the highlighted text to the assign handler", async () => {
+        const user = userEvent.setup();
+        const onAssign = vi.fn();
+        render(
+            <QuoteSelectionPopup
+                selection={selection()}
+                onAdd={vi.fn()}
+                onAssign={onAssign}
+            />,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "Assign to agent" }),
+        );
+        expect(onAssign).toHaveBeenCalledWith("the indemnity clause");
+    });
+
+    it("disables assigning at the agent cap, with the reason as a tooltip", () => {
+        render(
+            <QuoteSelectionPopup
+                selection={selection()}
+                onAdd={vi.fn()}
+                onAssign={vi.fn()}
+                assignDisabledReason="You can run 6 agents on a response."
+            />,
+        );
+
+        const button = screen.getByRole("button", { name: "Assign to agent" });
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute(
+            "title",
+            "You can run 6 agents on a response.",
+        );
+    });
+
+    it("keeps Enter bound to Add to Chat, the non-destructive action", async () => {
+        const user = userEvent.setup();
+        const onAdd = vi.fn();
+        const onAssign = vi.fn();
+        render(
+            <QuoteSelectionPopup
+                selection={selection()}
+                onAdd={onAdd}
+                onAssign={onAssign}
+            />,
+        );
+
+        await act(async () => {
+            await user.keyboard("{Enter}");
+        });
+
+        expect(onAdd).toHaveBeenCalledWith("the indemnity clause");
+        expect(onAssign).not.toHaveBeenCalled();
+    });
+
+    it("widens the safe area so the second action stays on screen", () => {
+        const withAssign = popupPosition(
+            selection({ left: 980, right: 1000 }).rect,
+            viewport,
+            { width: 272 },
+        );
+        expect(withAssign.left).toBe(1000 - 272 - 8);
+    });
+});
