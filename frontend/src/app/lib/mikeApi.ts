@@ -17,6 +17,12 @@ import {
     type UploadSessionInput,
     type UploadSessionPurpose,
 } from "@/shared/api/uploadSessionClient";
+// The role vocabulary is defined once, next to the capability matrix that
+// gives it meaning, and re-exported here so API consumers do not need two
+// imports to describe one row.
+import type { OrgRole, ProjectRole } from "@/app/lib/permissions";
+
+export type { OrgRole, ProjectRole };
 import type {
     AskInputResponseItem,
     AssistantEvent,
@@ -893,13 +899,36 @@ export async function deleteProject(projectId: string): Promise<void> {
     await apiRequest(`/projects/${projectId}`, { method: "DELETE" });
 }
 
+/**
+ * Someone who can administer a resource, with an address to reach them.
+ * `source` says how they got there: the creator, a direct admin grant, or
+ * being an admin of the owning organization.
+ */
+export interface ProjectContact {
+    user_id: string | null;
+    email: string | null;
+    display_name: string | null;
+    source: "creator" | "grant" | "organization";
+}
+
 export interface ProjectPeople {
+    /**
+     * The creator. Null is legitimate: an organization's project outlives the
+     * account that opened it, and the org's admins administer it from then on.
+     */
     owner: {
         user_id: string;
         email: string | null;
         display_name: string | null;
-    };
-    members: { email: string; display_name: string | null }[];
+        role?: ProjectRole;
+    } | null;
+    /** Direct recipients. Project rosters carry a role; review rosters don't. */
+    members: {
+        email: string;
+        display_name: string | null;
+        role?: ProjectRole;
+    }[];
+    admin_contacts?: ProjectContact[];
 }
 
 export async function getProjectPeople(
@@ -909,24 +938,79 @@ export async function getProjectPeople(
 }
 
 // ---------------------------------------------------------------------------
+// Project access grants
+// ---------------------------------------------------------------------------
+//
+// One row per recipient, each carrying its own project role. This replaces the
+// roleless `shared_with` email array: sharing a matter with outside counsel as
+// a viewer and handing a colleague admin are now different operations, and
+// both work on an organization's project without adding anyone to the org.
+
+export interface ProjectGrant {
+    id: string;
+    project_id: string;
+    email: string;
+    role: ProjectRole;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ProjectAccess {
+    org_id: string | null;
+    /** The caller's own role, so the dialog knows whether to offer controls. */
+    access_role: ProjectRole;
+    grants: ProjectGrant[];
+}
+
+export async function getProjectAccess(
+    projectId: string,
+): Promise<ProjectAccess> {
+    return apiRequest<ProjectAccess>(`/projects/${projectId}/access`);
+}
+
+/** Create or re-role one recipient (the endpoint upserts, so both are POST). */
+export async function grantProjectAccess(
+    projectId: string,
+    email: string,
+    role: ProjectRole,
+): Promise<ProjectGrant> {
+    return apiRequest<ProjectGrant>(`/projects/${projectId}/access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, role }),
+    });
+}
+
+export async function revokeProjectAccess(
+    projectId: string,
+    email: string,
+): Promise<void> {
+    await apiRequest(
+        `/projects/${projectId}/access/${encodeURIComponent(email)}`,
+        { method: "DELETE" },
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Organizations
 // ---------------------------------------------------------------------------
-
-export type OrgRole = "owner" | "admin" | "member";
 
 export interface Org {
     id: string;
     name: string;
-    personal: boolean;
-    created_by: string;
+    created_by: string | null;
     created_at?: string;
+    updated_at?: string;
     /** The caller's role in this org. */
     role: OrgRole;
+    /** Accepted roster size, so a card can say "N members" without a fetch. */
+    member_count?: number;
 }
 
 /**
- * Bare org_members row, as mutation endpoints return it (POST /members
- * responds with the inserted row — no profile enrichment).
+ * Bare org_members row, as mutation endpoints return it (PATCH /members/:id
+ * responds with the updated row — no profile enrichment).
  */
 export interface OrgMemberRow {
     id: string;
@@ -941,26 +1025,38 @@ export interface OrgMember extends OrgMemberRow {
     display_name: string | null;
 }
 
-export interface OrgTeamMember {
-    user_id: string;
-    email: string | null;
-    display_name: string | null;
-}
+/**
+ * An invitation. Membership is only ever created by accepting one of these —
+ * there is no endpoint that drops somebody into an organization full of
+ * confidential material without their consent.
+ *
+ * `status` is reported lazily: a pending row past `expires_at` comes back as
+ * "expired" without anything having written to it.
+ */
+export type OrgInvitationStatus =
+    | "pending"
+    | "accepted"
+    | "declined"
+    | "cancelled"
+    | "expired";
 
-/** Bare team_members row from POST — no profile enrichment. */
-export interface OrgTeamMemberRow {
-    id: string;
-    team_id: string;
-    user_id: string;
-    created_at?: string;
-}
-
-export interface OrgTeam {
+export interface OrgInvitation {
     id: string;
     org_id: string;
-    name: string;
-    created_at?: string;
-    members: OrgTeamMember[];
+    email: string;
+    role: OrgRole;
+    invited_by: string | null;
+    status: OrgInvitationStatus;
+    expires_at: string;
+    created_at: string;
+    accepted_at: string | null;
+    declined_at: string | null;
+    cancelled_at: string | null;
+    /** Admin roster only. */
+    invited_by_email?: string | null;
+    /** Recipient list only — the recipient is not a member yet, so they
+     *  cannot look the organization's name up any other way. */
+    org_name?: string | null;
 }
 
 export async function listOrgs(): Promise<Org[]> {
@@ -977,18 +1073,6 @@ export async function createOrg(name: string): Promise<Org> {
 
 export async function listOrgMembers(orgId: string): Promise<OrgMember[]> {
     return apiRequest<OrgMember[]>(`/orgs/${orgId}/members`);
-}
-
-export async function addOrgMember(
-    orgId: string,
-    email: string,
-    role: OrgRole = "member",
-): Promise<OrgMemberRow> {
-    return apiRequest<OrgMemberRow>(`/orgs/${orgId}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, role }),
-    });
 }
 
 export async function updateOrgMember(
@@ -1012,50 +1096,71 @@ export async function removeOrgMember(
     });
 }
 
-export async function listOrgTeams(orgId: string): Promise<OrgTeam[]> {
-    return apiRequest<OrgTeam[]>(`/orgs/${orgId}/teams`);
+// --- Invitations: the admin's side ---------------------------------------
+
+export async function listOrgInvitations(
+    orgId: string,
+): Promise<OrgInvitation[]> {
+    return apiRequest<OrgInvitation[]>(`/orgs/${orgId}/invitations`);
 }
 
-export async function createOrgTeam(
+export async function createOrgInvitation(
     orgId: string,
-    name: string,
-): Promise<OrgTeam> {
-    return apiRequest<OrgTeam>(`/orgs/${orgId}/teams`, {
+    email: string,
+    role: OrgRole,
+): Promise<OrgInvitation> {
+    return apiRequest<OrgInvitation>(`/orgs/${orgId}/invitations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ email, role }),
     });
 }
 
-export async function deleteOrgTeam(
+export async function cancelOrgInvitation(
     orgId: string,
-    teamId: string,
+    invitationId: string,
 ): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/teams/${teamId}`, { method: "DELETE" });
+    await apiRequest(`/orgs/${orgId}/invitations/${invitationId}`, {
+        method: "DELETE",
+    });
 }
 
-export async function addOrgTeamMember(
+export async function resendOrgInvitation(
     orgId: string,
-    teamId: string,
-    email: string,
-): Promise<OrgTeamMemberRow> {
-    return apiRequest<OrgTeamMemberRow>(
-        `/orgs/${orgId}/teams/${teamId}/members`,
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email }),
-        },
+    invitationId: string,
+): Promise<OrgInvitation> {
+    return apiRequest<OrgInvitation>(
+        `/orgs/${orgId}/invitations/${invitationId}/resend`,
+        { method: "POST" },
     );
 }
 
-export async function removeOrgTeamMember(
-    orgId: string,
-    teamId: string,
-    userId: string,
+// --- Invitations: the recipient's side ------------------------------------
+//
+// These hang off /user, not /orgs: the caller is not a member yet, so an
+// org-scoped route would have to answer "which org?" before it could answer
+// "are you allowed to know?". Matching is by the account's email, which is
+// what lets an invitation sent before signup be claimed once the account
+// exists.
+
+export async function listMyOrgInvitations(): Promise<OrgInvitation[]> {
+    return apiRequest<OrgInvitation[]>("/user/invitations");
+}
+
+export async function acceptOrgInvitation(
+    invitationId: string,
+): Promise<{ org_id: string; role: OrgRole }> {
+    return apiRequest<{ org_id: string; role: OrgRole }>(
+        `/user/invitations/${invitationId}/accept`,
+        { method: "POST" },
+    );
+}
+
+export async function declineOrgInvitation(
+    invitationId: string,
 ): Promise<void> {
-    await apiRequest(`/orgs/${orgId}/teams/${teamId}/members/${userId}`, {
-        method: "DELETE",
+    await apiRequest(`/user/invitations/${invitationId}/decline`, {
+        method: "POST",
     });
 }
 
