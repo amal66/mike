@@ -196,7 +196,7 @@ as $$
     where p.user_id::text = p_user_id
        or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.project_access_grants g
           where g.project_id = p.id and g.email = lower(p_user_email)
@@ -204,7 +204,7 @@ as $$
       )
        or (
         p.org_id is not null
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.org_members m
           where m.org_id = p.org_id and m.user_id::text = p_user_id
@@ -301,7 +301,7 @@ as $$
         p.user_id::text = p_user_id
         or (
           coalesce(p_user_email, '') <> ''
-          and p.user_id::text <> p_user_id
+          and (p.user_id is null or p.user_id::text <> p_user_id)
           and exists (
             select 1 from public.project_access_grants g
             where g.project_id = p.id and g.email = lower(p_user_email)
@@ -309,7 +309,7 @@ as $$
         )
         or (
           p.org_id is not null
-          and p.user_id::text <> p_user_id
+          and (p.user_id is null or p.user_id::text <> p_user_id)
           and exists (
             select 1 from public.org_members m
             where m.org_id = p.org_id and m.user_id::text = p_user_id
@@ -319,7 +319,7 @@ as $$
       and (
         coalesce(p_scope, 'all') = 'all'
         or (p_scope = 'mine' and p.user_id::text = p_user_id)
-        or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+        or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
       )
       and (
         p_search_term is null
@@ -439,7 +439,7 @@ as $$
       p.user_id::text = p_user_id
       or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.project_access_grants g
           where g.project_id = p.id and g.email = lower(p_user_email)
@@ -447,7 +447,7 @@ as $$
       )
       or (
         p.org_id is not null
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.org_members m
           where m.org_id = p.org_id and m.user_id::text = p_user_id
@@ -457,7 +457,7 @@ as $$
     and (
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'mine' and p.user_id::text = p_user_id)
-      or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+      or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
     )
     and (
       p_search_term is null
@@ -510,7 +510,7 @@ as $$
   where p.user_id::text = p_user_id
      or (
        coalesce(p_user_email, '') <> ''
-       and p.user_id::text <> p_user_id
+       and (p.user_id is null or p.user_id::text <> p_user_id)
        and exists (
          select 1 from public.project_access_grants g
          where g.project_id = p.id and g.email = lower(p_user_email)
@@ -518,7 +518,7 @@ as $$
      )
      or (
        p.org_id is not null
-       and p.user_id::text <> p_user_id
+       and (p.user_id is null or p.user_id::text <> p_user_id)
        and exists (
          select 1 from public.org_members m
          where m.org_id = p.org_id and m.user_id::text = p_user_id
@@ -922,7 +922,7 @@ as $$
     where p.user_id::text = p_user_id
        or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.project_access_grants g
           where g.project_id = p.id and g.email = lower(p_user_email)
@@ -930,7 +930,7 @@ as $$
       )
        or (
         p.org_id is not null
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.org_members m
           where m.org_id = p.org_id and m.user_id::text = p_user_id
@@ -975,18 +975,18 @@ as $$
         tr.user_id::text = p_user_id
         or (
           tr.project_id in (select ap.id from accessible_projects ap)
-          and tr.user_id::text <> p_user_id
+          and (tr.user_id is null or tr.user_id::text <> p_user_id)
         )
         or (
           p_project_id is null
           and coalesce(p_user_email, '') <> ''
-          and tr.user_id::text <> p_user_id
+          and (tr.user_id is null or tr.user_id::text <> p_user_id)
           and tr.shared_with @> jsonb_build_array(p_user_email)
         )
         or (
           p_project_id is null
           and tr.org_id is not null
-          and tr.user_id::text <> p_user_id
+          and (tr.user_id is null or tr.user_id::text <> p_user_id)
           and exists (
             select 1 from public.org_members m
             where m.org_id = tr.org_id and m.user_id::text = p_user_id
@@ -1139,7 +1139,7 @@ as $$
     where p.user_id::text = p_user_id
        or (
         coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.project_access_grants g
           where g.project_id = p.id and g.email = lower(p_user_email)
@@ -1147,7 +1147,7 @@ as $$
       )
        or (
         p.org_id is not null
-        and p.user_id::text <> p_user_id
+        and (p.user_id is null or p.user_id::text <> p_user_id)
         and exists (
           select 1 from public.org_members m
           where m.org_id = p.org_id and m.user_id::text = p_user_id
@@ -1191,18 +1191,18 @@ as $$
       tr.user_id::text = p_user_id
       or (
         tr.project_id in (select ap.id from accessible_projects ap)
-        and tr.user_id::text <> p_user_id
+        and (tr.user_id is null or tr.user_id::text <> p_user_id)
       )
       or (
         p_project_id is null
         and coalesce(p_user_email, '') <> ''
-        and tr.user_id::text <> p_user_id
+        and (tr.user_id is null or tr.user_id::text <> p_user_id)
         and tr.shared_with @> jsonb_build_array(p_user_email)
       )
       or (
         p_project_id is null
         and tr.org_id is not null
-        and tr.user_id::text <> p_user_id
+        and (tr.user_id is null or tr.user_id::text <> p_user_id)
         and exists (
           select 1 from public.org_members m
           where m.org_id = tr.org_id and m.user_id::text = p_user_id
@@ -1228,7 +1228,7 @@ as $$
     where p.user_id::text = p_user_id
        or (
          coalesce(p_user_email, '') <> ''
-         and p.user_id::text <> p_user_id
+         and (p.user_id is null or p.user_id::text <> p_user_id)
          and exists (
            select 1 from public.project_access_grants g
            where g.project_id = p.id and g.email = lower(p_user_email)
@@ -1238,7 +1238,7 @@ as $$
          -- Org arm: same predicate as get_projects_overview, so the filter
          -- dropdowns and the list agree on what is visible.
          p.org_id is not null
-         and p.user_id::text <> p_user_id
+         and (p.user_id is null or p.user_id::text <> p_user_id)
          and exists (
            select 1 from public.org_members m
            where m.org_id = p.org_id and m.user_id::text = p_user_id
