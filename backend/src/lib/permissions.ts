@@ -3,60 +3,72 @@
  *
  * Every access decision reduces to: derive the caller's ProjectRole for the
  * container (lib/access.ts), then ask `can(role, capability)` here. Routes
- * never compare roles or re-derive rights from `isOwner` — they declare the
- * capability they need, so the policy lives in exactly one table.
+ * never compare roles or re-derive rights from an ownership flag — they
+ * declare the capability they need, so the policy lives in exactly one table.
  *
  * The ladder (each tier includes everything below it):
  *
  *   role     | granted to
  *   ---------|------------------------------------------------------------
- *   owner    | the row's user_id
- *   manager  | org owner/admin of the row's org
- *   editor   | shared_with email collaborators
- *   viewer   | plain org members (visibility, not ownership)
+ *   viewer   | a direct 'viewer' access grant
+ *   member   | a direct 'member' grant, or an org member of the project's org
+ *   admin    | a direct 'admin' grant (the creator gets one automatically),
+ *            | or an org admin of the project's org
  *
- *   capability       | min role | covers
- *   -----------------|----------|--------------------------------------------
- *   project.view     | viewer   | read docs/chats/reviews, download, watch
- *                    |          | generation streams
- *   content.edit     | editor   | upload documents, push versions, chat,
- *                    |          | accept/reject edits, run extractions
- *   docs.organize    | editor   | rename/move documents, create folders
- *   structure.manage | manager  | rename/move/delete folders, clear review
- *                    |          | cells, edit review columns/document set
- *   members.manage   | manager  | edit shared_with and project metadata
- *   container.delete | owner    | delete the project/review itself
+ *   capability     | min role | covers
+ *   ---------------|----------|----------------------------------------------
+ *   project.view   | viewer   | read docs/chats/reviews, download, watch
+ *                  |          | generation streams
+ *   content.edit   | member   | upload documents, push versions, chat,
+ *                  |          | accept/reject edits, run extractions, reshape
+ *                  |          | a review's columns/document set
+ *   docs.organize  | member   | rename/move documents AND create/rename/move/
+ *                  |          | delete folders
+ *   access.manage  | admin    | project settings, sharing and access grants
+ *   container.delete | admin  | delete the project/review itself
  *
- * The editor/manager split is the load-bearing line (Drive's writer vs.
- * fileOrganizer): content collaboration is broad, structural and destructive
- * power is narrow. `container.delete` stays owner-only so tenant admins can
- * curate content without being able to erase a colleague's container.
+ * There is deliberately no tier between member and admin. An earlier draft of
+ * this module split collaboration into "editor" (content) and "manager"
+ * (structure), which forced every folder rename through an elevated role and
+ * left the product with four project tiers to explain. Legal teams do not
+ * need that distinction: a member who may upload and delete documents is not
+ * meaningfully restrained by being unable to rename the folder holding them.
+ * So `docs.organize` sits at member alongside `content.edit`, and the only
+ * narrow tier is admin — the powers that change WHO can reach the project, or
+ * destroy the container outright.
  */
 
-export type ProjectRole = "owner" | "manager" | "editor" | "viewer";
+export type ProjectRole = "admin" | "member" | "viewer";
+
+/** The role values a direct access grant may carry (the whole ladder). */
+export const PROJECT_ROLES: ProjectRole[] = ["admin", "member", "viewer"];
+
+export function isProjectRole(value: unknown): value is ProjectRole {
+    return (
+        typeof value === "string" &&
+        (PROJECT_ROLES as string[]).includes(value)
+    );
+}
 
 export type Capability =
     | "project.view"
     | "content.edit"
     | "docs.organize"
-    | "structure.manage"
-    | "members.manage"
+    | "access.manage"
     | "container.delete";
 
 const ROLE_RANK: Record<ProjectRole, number> = {
     viewer: 0,
-    editor: 1,
-    manager: 2,
-    owner: 3,
+    member: 1,
+    admin: 2,
 };
 
 const REQUIRED_RANK: Record<Capability, number> = {
     "project.view": ROLE_RANK.viewer,
-    "content.edit": ROLE_RANK.editor,
-    "docs.organize": ROLE_RANK.editor,
-    "structure.manage": ROLE_RANK.manager,
-    "members.manage": ROLE_RANK.manager,
-    "container.delete": ROLE_RANK.owner,
+    "content.edit": ROLE_RANK.member,
+    "docs.organize": ROLE_RANK.member,
+    "access.manage": ROLE_RANK.admin,
+    "container.delete": ROLE_RANK.admin,
 };
 
 /**
