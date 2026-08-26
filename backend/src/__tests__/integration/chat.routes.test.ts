@@ -1188,6 +1188,35 @@ describe("PATCH /word-chat/:chatId/model", () => {
         );
     });
 
+    // Shape validation, not coercion. `String(req.body.title)` accepted every
+    // one of these: `{}` was stored as the literal chat title
+    // "[object Object]", and a non-array shared_with was ignored, so the
+    // caller was told the field they sent was missing.
+    it.each([
+        [{ title: { text: "hi" } }, "title must be a string"],
+        [{ title: 42 }, "title must be a string"],
+        [{ title: true }, "title must be a string"],
+        [
+            { shared_with: "someone@example.com" },
+            "shared_with must be an array of email addresses",
+        ],
+        [
+            { shared_with: { "0": "someone@example.com" } },
+            "shared_with must be an array of email addresses",
+        ],
+        [
+            { shared_with: ["someone@example.com", 42] },
+            "shared_with must be an array of email addresses",
+        ],
+    ])("returns 400 for a malformed body: %j", async (body, detail) => {
+        const res = await request(app)
+            .patch("/chat/chat-1")
+            .set("Authorization", "Bearer test")
+            .send(body);
+
+        expect(res.status).toBe(400);
+        expect(res.body.detail).toBe(detail);
+    });
 });
 
 // ---------------------------------------------------------------------------

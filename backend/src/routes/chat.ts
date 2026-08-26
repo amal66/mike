@@ -396,21 +396,46 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
     const updates: Record<string, unknown> = {};
+    const body =
+        req.body && typeof req.body === "object" && !Array.isArray(req.body)
+            ? (req.body as Record<string, unknown>)
+            : {};
 
-    if (req.body.title != null) {
-        const title = String(req.body.title).trim();
+    // Validate the SHAPE of what arrived instead of coercing it.
+    // `String(req.body.title)` accepts anything: `{}` becomes the literal
+    // title "[object Object]" and `42` becomes "42", so a client bug is
+    // stored as data and discovered later by a human reading a nonsense chat
+    // name. Refusing names the problem while it is still fixable.
+    if (body.title != null) {
+        if (typeof body.title !== "string")
+            return void res
+                .status(400)
+                .json({ detail: "title must be a string" });
+        const title = body.title.trim();
         if (!title)
             return void res.status(400).json({ detail: "title is required" });
         updates.title = title;
     }
-    if (Array.isArray(req.body.shared_with)) {
+    if (body.shared_with != null) {
+        // A non-array `shared_with` used to fall past this block entirely and
+        // land on "title or shared_with is required" — a 400 naming a field
+        // the caller DID send, which sends them looking in the wrong place.
+        if (!Array.isArray(body.shared_with))
+            return void res.status(400).json({
+                detail: "shared_with must be an array of email addresses",
+            });
         // Normalise: lowercase + dedupe + drop empties (same rules as the
         // project share list, so `@>` matching in SQL stays exact-match).
         const normalizedUserEmail = userEmail?.trim().toLowerCase();
         const seen = new Set<string>();
         const cleaned: string[] = [];
-        for (const raw of req.body.shared_with) {
-            if (typeof raw !== "string") continue;
+        for (const raw of body.shared_with) {
+            // A non-string entry used to be dropped in silence: the caller
+            // got 200 and a share list missing a recipient they asked for.
+            if (typeof raw !== "string")
+                return void res.status(400).json({
+                    detail: "shared_with must be an array of email addresses",
+                });
             const e = raw.trim().toLowerCase();
             if (!e || seen.has(e)) continue;
             if (normalizedUserEmail && e === normalizedUserEmail) {
