@@ -43,7 +43,7 @@ import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { PdfView } from "@/app/components/shared/views/PdfView";
 import { SpreadsheetView } from "@/app/components/shared/views/SpreadsheetView";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
-import { OwnerOnlyPopup } from "@/app/components/popups/OwnerOnlyPopup";
+import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
 import { DocxView } from "@/app/components/shared/views/DocxView";
 import { MikeIcon } from "@/app/components/chat/mike-icon";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -1461,15 +1461,17 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                     </div>
                 </div>
             </div>
-            <OwnerOnlyPopup
+            <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
+                contacts={project?.admin_contacts}
                 onClose={() => setOwnerOnlyAction(null)}
             />
-            <OwnerOnlyPopup
+            <PermissionDeniedPopup
                 open={!!editorGateAction}
                 action={editorGateAction ?? undefined}
-                requiredRole="editor"
+                requiredRole="member"
+                contacts={project?.admin_contacts}
                 onClose={() => setEditorGateAction(null)}
             />
             <ConfirmPopup
