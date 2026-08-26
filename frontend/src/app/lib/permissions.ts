@@ -114,6 +114,31 @@ export function roleFrom(row: {
 }
 
 /**
+ * Mirror of the server's `creatorScopedAllowed` (backend/src/lib/access.ts),
+ * the rule for the handful of routes that ask "did you create this row?"
+ * instead of "what role do you hold?" — deleting a document version and
+ * replacing a version's file among them.
+ *
+ *     the row's creator
+ *     — or, ONLY once that account is gone and the creator id is null,
+ *       somebody holding container.delete.
+ *
+ * The second arm exists because deleting an account blanks the creator
+ * column, which would otherwise strand the row forever. It is not a general
+ * admin override: while a creator still exists, an admin does not get to
+ * reach into a colleague's versions. Both halves must be known — an unknown
+ * viewer never satisfies a creator check.
+ */
+export function creatorScopedAllowed(
+    creatorId: string | null | undefined,
+    viewerId: string | null | undefined,
+    hasContainerDelete: boolean,
+): boolean {
+    if (creatorId) return !!viewerId && creatorId === viewerId;
+    return hasContainerDelete;
+}
+
+/**
  * The caller's role on a row that may not have arrived yet.
  *
  * `null` means "not known", which is a third answer alongside the roles

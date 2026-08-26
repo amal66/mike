@@ -7,6 +7,7 @@ import {
     PROJECT_ROLE_DESCRIPTIONS,
     PROJECT_ROLE_LABELS,
     can,
+    creatorScopedAllowed,
     isProjectRole,
     roleFrom,
     roleFromLoaded,
@@ -99,6 +100,29 @@ describe("strongerRole", () => {
         expect(strongerRole(null, "member")).toBe("member");
         expect(strongerRole("member", null)).toBe("member");
         expect(strongerRole(null, null)).toBeNull();
+    });
+});
+
+describe("creatorScopedAllowed", () => {
+    it("lets the creator through and nobody else while they exist", () => {
+        expect(creatorScopedAllowed("u1", "u1", false)).toBe(true);
+        // An admin does NOT get to reach into a colleague's versions. The
+        // client used to claim otherwise — "Only an admin can delete document
+        // versions" — about a rule no admin can satisfy.
+        expect(creatorScopedAllowed("u1", "u2", true)).toBe(false);
+    });
+
+    it("hands the row to container.delete only once the creator is gone", () => {
+        // Deleting an account blanks the creator column; without this arm the
+        // versions would be unreachable forever.
+        expect(creatorScopedAllowed(null, "u2", true)).toBe(true);
+        expect(creatorScopedAllowed(null, "u2", false)).toBe(false);
+        expect(creatorScopedAllowed(undefined, "u2", true)).toBe(true);
+    });
+
+    it("refuses a viewer whose own identity is unknown", () => {
+        expect(creatorScopedAllowed("u1", null, true)).toBe(false);
+        expect(creatorScopedAllowed("u1", undefined, false)).toBe(false);
     });
 });
 

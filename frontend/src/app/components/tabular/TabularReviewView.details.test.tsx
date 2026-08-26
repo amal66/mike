@@ -188,7 +188,7 @@ describe("TabularReviewView details gate", () => {
     });
 
     it("lets an admin move a review whose creator's account is gone", async () => {
-        mockDetail({ access_role: "admin", user_id: null });
+        mockDetail({ access_role: "admin", user_id: null as unknown as string });
         render(<TRView reviewId="r1" />);
 
         await openActionsMenu();

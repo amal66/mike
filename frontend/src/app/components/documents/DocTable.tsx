@@ -46,7 +46,10 @@ import {
 } from "@/app/components/shared/RowActions";
 import { SubfolderSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { useAuth } from "@/app/contexts/AuthContext";
-import type { Capability } from "@/app/lib/permissions";
+import {
+    creatorScopedAllowed,
+    type Capability,
+} from "@/app/lib/permissions";
 import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { UploadOverlay } from "@/app/components/assistant/UploadOverlay";
@@ -558,15 +561,57 @@ export function DocTable({
     }
 
     /**
-     * Version file-replace and delete are owner-only server-side
-     * (documents.ts gates them on access.isOwner, i.e. the document's
-     * creator) — a capability check can't express that, so gate on the row
-     * itself and explain instead of letting the request 403 into a
-     * console.error.
+     * Version file-replace and delete are creator-scoped server-side, not
+     * role-based: `DELETE /single-documents/:id/versions/:versionId` and
+     * `PUT …/versions/:versionId/file` both call
+     * `creatorScopedAllowed(access, doc.user_id)` (backend/src/lib/access.ts),
+     * which is
+     *
+     *     the document's uploader
+     *     — or, ONLY once that account is gone and `user_id` is null,
+     *       somebody holding container.delete on the project.
+     *
+     * The departed-uploader arm exists because deleting an account blanks
+     * `documents.user_id`; while an uploader still exists, "an admin does not
+     * get to reach into a colleague's versions" (that comment is the server's
+     * own). No capability in the matrix expresses this, so it is checked here
+     * against the row, and the refusal says which rule it is.
      */
     function requireDocOwnerForVersions(docId: string, action: string): boolean {
         const doc = documents.find((d) => d.id === docId);
-        if (!doc || !isSharedDocument(doc)) return true;
+        if (!doc) {
+            // Fail closed. This used to `return true` — a document we cannot
+            // find is one we know nothing about, and the one thing we must
+            // not do with an unknown is wave it through.
+            setOwnerOnlyAction({
+                title: "Document unavailable",
+                message:
+                    "That document is not loaded, so its versions cannot be changed. Reload and try again.",
+            });
+            return false;
+        }
+        if (
+            creatorScopedAllowed(
+                doc.user_id,
+                user?.id,
+                allowed("container.delete"),
+            )
+        )
+            return true;
+        if (doc.user_id) {
+            // Not "Only an admin can …", which is what the admin-tier popup
+            // used to claim: no admin can lift this while the uploader's
+            // account exists, so naming that tier sent people to somebody who
+            // could not help. And no "ask …" line, for the same reason.
+            setOwnerOnlyAction({
+                title: "Uploader only",
+                message: `Only the person who uploaded this document can ${action}.`,
+            });
+            return false;
+        }
+        // No uploader on the row: the server does hand these versions to
+        // project admins, so here the admin tier IS the rule and the normal
+        // popup — with its contact line — is the right one.
         setOwnerOnlyAction({ action, requiredRole: "admin" });
         return false;
     }
