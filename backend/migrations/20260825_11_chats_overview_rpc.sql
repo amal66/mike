@@ -183,3 +183,12 @@ $$;
 -- without one, so give it the sibling index here.
 create index if not exists chats_shared_with_idx
   on public.chats using gin (shared_with);
+
+-- Refresh PostgREST's cached schema so the new four-argument overload is
+-- callable immediately. This matters more here than for a column: PostgREST
+-- resolves an RPC against its cache, so a new API instance calling
+-- get_chats_overview with p_user_email would get PGRST202 ("function not
+-- found") for as long as the stale cache survived — the mirror image of the
+-- deploy-window problem the wrapper above solves. NOTIFY is idempotent and a
+-- no-op where nothing is listening.
+notify pgrst, 'reload schema';

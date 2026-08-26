@@ -61,3 +61,13 @@ from public.projects p
 where p.id = c.project_id
   and p.org_id is not null
   and c.org_id is null;
+
+-- PostgREST answers requests from a CACHED copy of the schema; it does not
+-- re-read the catalog per request. Until that cache is refreshed a column
+-- added above does not exist as far as the API is concerned, and a write
+-- naming it fails with PGRST204 ("column not found in schema cache") even
+-- though the column is right there in Postgres. NOTIFY is the documented
+-- refresh signal, it is idempotent, and it is harmless where nothing is
+-- listening (a psql session, a test database), so it costs nothing to make
+-- every deployment self-healing rather than depending on a restart.
+notify pgrst, 'reload schema';
