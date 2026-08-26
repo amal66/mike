@@ -3,7 +3,7 @@
 -- Data migration for the organizations feature: move direct project sharing
 -- into project_access_grants, and normalize the review share lists.
 --
--- Runs after 20260825_02 has created the tables. Both passes are idempotent:
+-- Runs after 20260828_01 has created the tables. Both passes are idempotent:
 -- the grant backfill is an `on conflict do nothing` insert driven by the
 -- current shared_with contents, and the review normalization only writes rows
 -- whose stored value actually differs.

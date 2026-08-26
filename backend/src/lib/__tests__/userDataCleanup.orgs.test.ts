@@ -13,7 +13,7 @@ type Row = Record<string, unknown>;
 // select/eq/neq/in/order/limit/delete/update + thenable.
 //
 // `options.lastAdminTrigger` additionally simulates the database trigger
-// org_members_protect_last_admin (migration 20260825_02): deleting an
+// org_members_protect_last_admin (migration 20260828_01): deleting an
 // organization's last admin raises SQLSTATE 23514, EXCEPT when the org row
 // is already gone or the member's auth.users row is already gone. Seed an
 // `auth_users` table to say which accounts still exist — without the trigger
