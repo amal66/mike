@@ -355,8 +355,13 @@ export default function TabularReviewsPage() {
         const owned = ids.filter((id) => {
             const role = roleById.get(id);
             if (role) return can(role, "container.delete");
+            // Fail closed on rows we could not load. `!user?.id ||` made an
+            // unknown viewer identity pass every creator check, so a signed-in
+            // state that had not settled yet turned select-all-matching into
+            // "delete everything selected". Both halves must be known and
+            // must match; anything else is counted as blocked and reported.
             const ownerId = getReviewOwnerId(id);
-            return !!ownerId && (!user?.id || ownerId === user.id);
+            return !!ownerId && !!user?.id && ownerId === user.id;
         });
         const blocked = ids.length - owned.length;
         setSelectedIds([]);

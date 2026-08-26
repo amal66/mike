@@ -443,8 +443,15 @@ export function ProjectsOverview() {
         const deletable = ids.filter((id) => {
             const role = roleById.get(id);
             if (role) return can(role, "container.delete");
+            // Unloaded row: creator identity is all we have, and it has to
+            // MATCH. `!creatorId ||` treated "we don't know who created this"
+            // as permission to delete it, which is the one answer an unknown
+            // must never produce — select-all-matching is exactly the path
+            // that hands back ids whose rows were never paged in. A row we
+            // cannot vouch for is skipped and counted as blocked, so the user
+            // is told rather than silently having it dropped.
             const creatorId = getProjectOwnerId(id);
-            return !creatorId || creatorId === user?.id;
+            return !!creatorId && !!user?.id && creatorId === user.id;
         });
         const blocked = ids.length - deletable.length;
         setSelectedIds([]);

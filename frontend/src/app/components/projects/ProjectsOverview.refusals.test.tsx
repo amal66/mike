@@ -89,6 +89,34 @@ describe("ProjectsOverview bulk delete", () => {
         }));
     });
 
+    it("skips rows whose creator is unknown instead of deleting them", async () => {
+        // The regression: `!creatorId || creatorId === user?.id` read "we
+        // could not identify this row's creator" as permission to delete it.
+        // Select-all-matching is precisely the path that returns ids whose
+        // rows were never paged in, so this was reachable in normal use.
+        mockHook(
+            [project({ id: "mine", access_role: "admin" })],
+            ["mine", "unknown-row"],
+            { "unknown-row": null },
+        );
+        render(<ProjectsOverview />);
+
+        await bulkDelete();
+
+        await waitFor(() => expect(deleteProject).toHaveBeenCalledTimes(1));
+        expect(deleteProject).toHaveBeenCalledWith("mine");
+        expect(deleteProject).not.toHaveBeenCalledWith("unknown-row");
+    });
+
+    it("still deletes an unloaded row the caller demonstrably created", async () => {
+        mockHook([], ["off-page"], { "off-page": "me" });
+        render(<ProjectsOverview />);
+
+        await bulkDelete();
+
+        await waitFor(() => expect(deleteProject).toHaveBeenCalledWith("off-page"));
+    });
+
     it("names an admin the refused user can ask", async () => {
         // The refusal popup's whole point is the "ask …" line, and the list
         // surfaces used to render it with no contacts at all — so on exactly
