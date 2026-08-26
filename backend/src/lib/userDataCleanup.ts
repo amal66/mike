@@ -1,6 +1,7 @@
 import { createServerSupabase } from "./supabase";
 import { deleteFile, extractedTextKey, listFiles } from "./storage";
 import { enqueueStorageCleanup } from "./dbq/enqueue";
+import { removeGrantsForEmail } from "./projectAccess";
 
 type Db = ReturnType<typeof createServerSupabase>;
 
@@ -47,34 +48,111 @@ async function deleteWhereIn(
     }
 }
 
-async function getOwnedProjectIds(db: Db, userId: string): Promise<string[]> {
+/**
+ * Split the projects a user created into the personal ones (destroyed on
+ * account deletion) and the organization ones (kept, and detached).
+ */
+async function partitionOwnedProjects(
+    db: Db,
+    userId: string,
+): Promise<{ personal: string[]; org: string[] }> {
     const { data, error } = await db
         .from("projects")
-        .select("id")
+        .select("id, org_id")
         .eq("user_id", userId);
     await throwIfError(error, "Failed to load user projects");
-    return uniqueStrings((data ?? []).map((row) => row.id as string | null));
+    const rows = (data ?? []) as { id: string | null; org_id?: string | null }[];
+    return {
+        personal: uniqueStrings(
+            rows.filter((row) => !row.org_id).map((row) => row.id),
+        ),
+        org: uniqueStrings(rows.filter((row) => !!row.org_id).map((row) => row.id)),
+    };
 }
 
+/**
+ * Documents that must go when this account is erased: the ones they uploaded
+ * plus everything sitting in a personal project of theirs — MINUS anything
+ * living in an organization project, which stays with the organization.
+ */
 async function getDocumentIdsForAccountDeletion(
     db: Db,
     userId: string,
-    ownedProjectIds: string[],
+    personalProjectIds: string[],
+    orgProjectIds: string[],
 ): Promise<string[]> {
-    const [ownedDocs, projectDocs] = await Promise.all([
+    const [ownedDocs, projectDocs, orgProjectDocs] = await Promise.all([
         db.from("documents").select("id").eq("user_id", userId),
-        ownedProjectIds.length > 0
-            ? db.from("documents").select("id").in("project_id", ownedProjectIds)
+        personalProjectIds.length > 0
+            ? db
+                  .from("documents")
+                  .select("id")
+                  .in("project_id", personalProjectIds)
+            : Promise.resolve({ data: [], error: null }),
+        orgProjectIds.length > 0
+            ? db.from("documents").select("id").in("project_id", orgProjectIds)
             : Promise.resolve({ data: [], error: null }),
     ]);
 
     await throwIfError(ownedDocs.error, "Failed to load user documents");
     await throwIfError(projectDocs.error, "Failed to load project documents");
+    await throwIfError(
+        orgProjectDocs.error,
+        "Failed to load organization project documents",
+    );
 
+    const keep = new Set(
+        uniqueStrings(
+            ((orgProjectDocs.data ?? []) as { id: string | null }[]).map(
+                (row) => row.id,
+            ),
+        ),
+    );
     return uniqueStrings([
-        ...((ownedDocs.data ?? []) as { id: string | null }[]).map((row) => row.id),
-        ...((projectDocs.data ?? []) as { id: string | null }[]).map((row) => row.id),
-    ]);
+        ...((ownedDocs.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+        ...((projectDocs.data ?? []) as { id: string | null }[]).map(
+            (row) => row.id,
+        ),
+    ]).filter((id) => !keep.has(id));
+}
+
+/**
+ * Re-anchor the content the departing user left inside organization projects.
+ * Their rows survive with `user_id = NULL` — the content belongs to the
+ * organization, and its FKs are ON DELETE SET NULL so the auth.users cascade
+ * that follows this cleanup will not take them.
+ */
+async function detachOrgProjectContent(
+    db: Db,
+    userId: string,
+    orgProjectIds: string[],
+) {
+    if (orgProjectIds.length === 0) return;
+    const tables = [
+        "documents",
+        "chats",
+        "tabular_reviews",
+        "project_subfolders",
+    ] as const;
+    for (const table of tables) {
+        for (const batch of chunks(orgProjectIds)) {
+            const { error } = await (db as any)
+                .from(table)
+                .update({ user_id: null })
+                .eq("user_id", userId)
+                .in("project_id", batch);
+            await throwIfError(error, `Failed to detach ${table}`);
+        }
+    }
+    for (const batch of chunks(orgProjectIds)) {
+        const { error } = await db
+            .from("projects")
+            .update({ user_id: null })
+            .in("id", batch);
+        await throwIfError(error, "Failed to detach organization projects");
+    }
 }
 
 async function collectDocumentVersionPaths(
@@ -213,32 +291,29 @@ async function removeEmailFromSharedWith(
 /**
  * Tear down a user's organization footprint on account deletion.
  *
- *  - Personal orgs (one-per-user) are deleted outright; the ON DELETE CASCADE
- *    on org_members/teams/team_members cleans up their rows.
- *  - For shared orgs the user merely belonged to, their membership row is
- *    removed. If they were the org's sole owner, ownership is handed to the
- *    earliest remaining member so the org isn't stranded ownerless; if no
- *    members remain, the now-empty org is deleted.
- *  - Any team memberships are removed.
+ * An organization is a durable owner in its own right, not an extension of
+ * whoever happened to create it, so this NEVER deletes an org that still has
+ * people or content in it:
  *
- * Without this, deleting a user would orphan their personal organization and
- * its org_members rows (org_id on content uses ON DELETE SET NULL, so the
- * cascade that removes their content does not remove their org).
+ *  - The departing user's membership row is removed.
+ *  - If they were the org's sole admin, the earliest remaining member is
+ *    promoted so the org is never stranded without anyone able to administer
+ *    it. The promotion happens BEFORE the removal, both to avoid a window
+ *    where the org has no admin and because the
+ *    org_members_protect_last_admin trigger would otherwise reject the
+ *    delete outright.
+ *  - An org left with no members at all is deleted only when it also holds no
+ *    projects. An org whose last member leaves but whose matters live on is
+ *    kept: deleting it would take the firm's content with it, which is
+ *    exactly the outcome this model exists to prevent.
+ *  - Any invitations the user sent lose their inviter reference through the
+ *    FK's ON DELETE SET NULL; invitations addressed TO them are cancelled.
  */
-export async function deleteUserOrganizations(db: Db, userId: string) {
-    const { data: personalOrgs, error: personalError } = await db
-        .from("organizations")
-        .select("id")
-        .eq("created_by", userId)
-        .eq("personal", true);
-    await throwIfError(personalError, "Failed to load personal organizations");
-    const personalOrgIds = new Set(
-        uniqueStrings(
-            ((personalOrgs ?? []) as { id: string | null }[]).map((r) => r.id),
-        ),
-    );
-    await deleteByIds(db, "organizations", [...personalOrgIds]);
-
+export async function deleteUserOrganizations(
+    db: Db,
+    userId: string,
+    userEmail?: string | null,
+) {
     const { data: memberships, error: membershipError } = await db
         .from("org_members")
         .select("id, org_id, role")
@@ -250,23 +325,14 @@ export async function deleteUserOrganizations(db: Db, userId: string) {
         org_id: string;
         role: string;
     }[]) {
-        if (personalOrgIds.has(m.org_id)) continue; // already cascade-deleted
-
-        // Sole-owner handoff happens BEFORE the membership row goes away:
-        // promote the earliest other member, or delete the org outright if
-        // nobody else is left (the cascade then removes the membership).
-        // Ordering matters twice over — it never leaves a window where the
-        // org exists ownerless, and the org_members_protect_last_owner
-        // trigger (20260825_08) would reject deleting a sole owner of a
-        // still-existing org.
-        if (m.role === "owner") {
-            const { data: otherOwners } = await db
+        if (m.role === "admin") {
+            const { data: otherAdmins } = await db
                 .from("org_members")
                 .select("id")
                 .eq("org_id", m.org_id)
-                .eq("role", "owner")
+                .eq("role", "admin")
                 .neq("id", m.id);
-            if (((otherOwners ?? []) as unknown[]).length === 0) {
+            if (((otherAdmins ?? []) as unknown[]).length === 0) {
                 const { data: remaining } = await db
                     .from("org_members")
                     .select("id")
@@ -278,15 +344,22 @@ export async function deleteUserOrganizations(db: Db, userId: string) {
                 if (heir) {
                     const { error: promoteError } = await db
                         .from("org_members")
-                        .update({ role: "owner" })
+                        .update({ role: "admin" })
                         .eq("id", heir.id);
                     await throwIfError(
                         promoteError,
-                        "Failed to hand off org ownership",
+                        "Failed to hand off org administration",
                     );
                 } else {
-                    await deleteByIds(db, "organizations", [m.org_id]);
-                    continue; // cascade removed the membership row
+                    const { data: orgProjects } = await db
+                        .from("projects")
+                        .select("id")
+                        .eq("org_id", m.org_id)
+                        .limit(1);
+                    if (((orgProjects ?? []) as unknown[]).length === 0) {
+                        await deleteByIds(db, "organizations", [m.org_id]);
+                        continue; // cascade removed the membership row
+                    }
                 }
             }
         }
@@ -298,11 +371,18 @@ export async function deleteUserOrganizations(db: Db, userId: string) {
         await throwIfError(deleteError, "Failed to remove org membership");
     }
 
-    const { error: teamError } = await db
-        .from("team_members")
-        .delete()
-        .eq("user_id", userId);
-    await throwIfError(teamError, "Failed to remove team memberships");
+    const normalizedEmail = userEmail?.trim().toLowerCase();
+    if (normalizedEmail) {
+        const { error: inviteError } = await db
+            .from("org_invitations")
+            .update({
+                status: "cancelled",
+                cancelled_at: new Date().toISOString(),
+            })
+            .eq("email", normalizedEmail)
+            .eq("status", "pending");
+        await throwIfError(inviteError, "Failed to cancel org invitations");
+    }
 }
 
 export async function deleteAllUserChats(db: Db, userId: string) {
@@ -352,25 +432,14 @@ export async function deleteAllUserTabularReviews(db: Db, userId: string) {
     return reviewIds.length;
 }
 
-export async function deleteUserProjects(
-    db: Db,
-    userId: string,
-    projectIds?: string[],
-) {
-    const requestedProjectIds = projectIds
-        ? uniqueStrings(projectIds)
-        : undefined;
-    if (requestedProjectIds && requestedProjectIds.length === 0) return 0;
-
-    let query = db.from("projects").select("id").eq("user_id", userId);
-    if (requestedProjectIds) query = query.in("id", requestedProjectIds);
-
-    const { data: projects, error: projectsError } = await query;
-    await throwIfError(projectsError, "Failed to load user projects");
-
-    const ownedProjectIds = uniqueStrings(
-        ((projects ?? []) as { id: string | null }[]).map((row) => row.id),
-    );
+/**
+ * Delete projects (and everything inside them) by id, with no ownership
+ * filter. Callers must have authorised the delete themselves — routes do that
+ * through the `container.delete` capability, and an organization project may
+ * have no creator left to scope by anyway.
+ */
+export async function deleteProjectsByIds(db: Db, projectIds: string[]) {
+    const ownedProjectIds = uniqueStrings(projectIds);
     if (ownedProjectIds.length === 0) return 0;
 
     const [projectDocs, projectChats, projectReviews, projectFolders] =
@@ -455,25 +524,88 @@ export async function deleteUserProjects(
     return ownedProjectIds.length;
 }
 
+/**
+ * Remove the projects a user created — but only the personal ones.
+ *
+ * A project that belongs to an organization is the organization's, not the
+ * creator's: the firm's other admins are still administering it and its
+ * matter documents are still live. Those projects are DETACHED instead
+ * (user_id → NULL, which the nullable FK now permits) so they survive their
+ * creator's departure with their contents intact. Only `org_id IS NULL`
+ * projects — the genuinely personal ones — are destroyed.
+ *
+ * The return value counts destroyed projects, so a caller deleting a single
+ * org project sees 0 and can report "nothing was removed" accurately.
+ */
+export async function deleteUserProjects(
+    db: Db,
+    userId: string,
+    projectIds?: string[],
+) {
+    const requestedProjectIds = projectIds
+        ? uniqueStrings(projectIds)
+        : undefined;
+    if (requestedProjectIds && requestedProjectIds.length === 0) return 0;
+
+    let query = db.from("projects").select("id, org_id").eq("user_id", userId);
+    if (requestedProjectIds) query = query.in("id", requestedProjectIds);
+
+    const { data: projects, error: projectsError } = await query;
+    await throwIfError(projectsError, "Failed to load user projects");
+
+    const rows = (projects ?? []) as {
+        id: string | null;
+        org_id?: string | null;
+    }[];
+    const personalProjectIds = uniqueStrings(
+        rows.filter((row) => !row.org_id).map((row) => row.id),
+    );
+    const orgProjectIds = uniqueStrings(
+        rows.filter((row) => !!row.org_id).map((row) => row.id),
+    );
+
+    if (orgProjectIds.length > 0) {
+        for (const batch of chunks(orgProjectIds)) {
+            const { error } = await db
+                .from("projects")
+                .update({ user_id: null })
+                .in("id", batch);
+            await throwIfError(error, "Failed to detach organization projects");
+        }
+    }
+
+    return deleteProjectsByIds(db, personalProjectIds);
+}
+
 export async function deleteUserAccountData(
     db: Db,
     userId: string,
     userEmail?: string | null,
 ) {
-    const ownedProjectIds = await getOwnedProjectIds(db, userId);
+    const { personal: personalProjectIds, org: orgProjectIds } =
+        await partitionOwnedProjects(db, userId);
     const documentIds = await getDocumentIdsForAccountDeletion(
         db,
         userId,
-        ownedProjectIds,
+        personalProjectIds,
+        orgProjectIds,
     );
 
     await Promise.all([
-        removeEmailFromSharedWith(db, "projects", userEmail),
+        // Direct project access is a grant row now, so revoking this person's
+        // access means deleting their grants (which also refreshes the
+        // shared_with mirror on each affected project).
+        removeGrantsForEmail(db, userEmail),
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
         deleteDocumentVersionFiles(db, documentIds),
         deleteUserStoragePrefix(userId),
         deleteUserExportArtifacts(userId),
     ]);
+
+    // Hand the organization's projects (and the content inside them) over to
+    // the organization BEFORE the by-user deletions below run, so those
+    // deletions no longer match the rows we are keeping.
+    await detachOrgProjectContent(db, userId, orgProjectIds);
 
     await deleteByIds(db, "documents", documentIds);
 
@@ -518,6 +650,7 @@ export async function deleteUserAccountData(
     await throwIfError(workflowsError, "Failed to delete workflows");
 
     // Organizations use ON DELETE SET NULL on content (not CASCADE), so the
-    // content deletions above never remove the user's orgs — do that here.
-    await deleteUserOrganizations(db, userId);
+    // content deletions above never touch the user's org memberships — settle
+    // those (and hand off administration where needed) here.
+    await deleteUserOrganizations(db, userId, userEmail);
 }

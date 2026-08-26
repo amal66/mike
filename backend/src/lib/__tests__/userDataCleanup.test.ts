@@ -25,7 +25,7 @@ type Row = Record<string, unknown>;
 /**
  * Stateful Supabase mock: deletes and updates mutate `tables`, so tests can
  * assert on exactly which rows survived a cleanup call. Supports the chains
- * userDataCleanup uses (select/delete/update + eq/in/filter-cs) and can
+ * userDataCleanup uses (select/delete/update + eq/in/order/filter-cs) and can
  * inject a delete error per table to exercise error propagation.
  */
 function makeDb(
@@ -61,6 +61,7 @@ function makeDb(
                     narrow((row) => row[column] === value);
                     return query;
                 },
+                order: () => query,
                 in: (column: string, values: unknown[]) => {
                     narrow((row) => values.includes(row[column]));
                     return query;
@@ -90,8 +91,14 @@ function makeDb(
                         if (message) {
                             result = { data: null, error: { message } };
                         } else {
-                            tables[table] = rowsOf().filter((row) => !predicate(row));
-                            result = { data: null, error: null };
+                            const removed = rowsOf().filter(predicate);
+                            tables[table] = rowsOf().filter(
+                                (row) => !predicate(row),
+                            );
+                            // Supabase returns the deleted rows when the call
+                            // chains .select(); the grant cleanup uses that to
+                            // learn which projects need their mirror rebuilt.
+                            result = { data: removed, error: null };
                         }
                     } else if (mode === "update") {
                         for (const row of rowsOf().filter(predicate)) {
@@ -319,11 +326,28 @@ describe("deleteUserAccountData", () => {
     const fixture = () =>
         makeDb({
             projects: [
-                { id: "p1", user_id: "u1", shared_with: [] },
+                { id: "p1", user_id: "u1", org_id: null, shared_with: [] },
                 {
                     id: "p-other",
                     user_id: "u2",
-                    shared_with: ["u1@example.com", " U1@Example.com ", "keep@example.com"],
+                    org_id: null,
+                    shared_with: ["u1@example.com", "keep@example.com"],
+                },
+            ],
+            // Direct project access is a grant row now; shared_with is the
+            // mirror the cleanup rewrites from it.
+            project_access_grants: [
+                {
+                    id: "g-u1",
+                    project_id: "p-other",
+                    email: "u1@example.com",
+                    role: "member",
+                },
+                {
+                    id: "g-keep",
+                    project_id: "p-other",
+                    email: "keep@example.com",
+                    role: "viewer",
                 },
             ],
             tabular_reviews: [
@@ -420,9 +444,15 @@ describe("deleteUserAccountData", () => {
         // Shares by the user and shares to the user's email are both removed.
         expect(ids(tables.workflow_shares)).toEqual(["ws-keep"]);
 
-        // The email is scrubbed from other users' shared_with lists
-        // (case-insensitively), preserving other collaborators.
-        expect(tables.projects[0].shared_with).toEqual(["keep@example.com"]);
+        // The user's project access grants are revoked, other collaborators'
+        // are preserved, and the shared_with mirror is rebuilt from what is
+        // left rather than edited in place.
+        expect(
+            tables.project_access_grants.map((row) => row.id),
+        ).toEqual(["g-keep"]);
+        expect(
+            tables.projects.find((row) => row.id === "p-other")?.shared_with,
+        ).toEqual(["keep@example.com"]);
         expect(tables.tabular_reviews[0].shared_with).toEqual([]);
 
         // Version files for deleted docs plus orphans under the user's prefix.
@@ -490,12 +520,13 @@ describe("deleteUserAccountData", () => {
         ).rejects.toThrow(/export/i);
     });
 
-    it("skips shared_with scrubbing when no email is known", async () => {
+    it("skips share scrubbing when no email is known", async () => {
         const { db, tables } = fixture();
         await deleteUserAccountData(db, "u1", null);
         // Rows referencing the email by value are left in place...
-        expect(tables.projects.find((row) => row.id === "p-other")?.shared_with)
-            .toContain("u1@example.com");
+        expect(
+            tables.project_access_grants.map((row) => row.id),
+        ).toEqual(["g-u1", "g-keep"]);
         expect(ids(tables.workflow_shares)).toEqual(["ws-to", "ws-keep"]);
         // ...but the user's own data is still deleted.
         expect(ids(tables.documents)).toEqual(["d-other"]);
