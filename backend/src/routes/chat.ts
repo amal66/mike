@@ -662,6 +662,13 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     let chatModel: string | null = null;
     let chatReasoningLevel: string | null = null;
     let resolvedProjectId: string | null = parsedProjectId.value.projectId;
+    // Whether the document-writing tools are offered this turn. A standalone
+    // chat writes into the caller's own library, so it keeps them; a project
+    // chat writes into the PROJECT, and that is a question about the caller's
+    // project role, never about their standing in the thread. See the long
+    // note in routes/projectChat.ts — this is the same partition on the
+    // route that serves standalone and project chats alike.
+    let allowDocumentMutation = true;
 
     if (chatId) {
         const access = await getAccessibleChat(chatId, userId, userEmail, db);
@@ -689,6 +696,19 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         chatTitle = existing.title;
         chatModel = existing.model;
         chatReasoningLevel = existing.reasoning_level;
+        if (existingProjectId) {
+            // The role above may have come from the chat's own share list;
+            // creating documents in the project needs the project's verdict.
+            const projectAccess = await checkProjectAccess(
+                existingProjectId,
+                userId,
+                userEmail,
+                db,
+            );
+            allowDocumentMutation =
+                projectAccess.ok &&
+                can(projectAccess.projectRole, "content.edit");
+        }
     }
 
     const modelSettings = await getUserModelSettings(userId, db);
@@ -930,6 +950,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             userId,
             db,
             write,
+            allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,

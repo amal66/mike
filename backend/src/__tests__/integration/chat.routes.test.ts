@@ -1457,6 +1457,49 @@ describe("chat writes are gated on content.edit (org RBAC)", () => {
         expect(res.status).toBe(200);
         expect(res.body.chat).toMatchObject({ id: "chat-1" });
     });
+
+    // The tools that WRITE documents (edit_document, replicate_document, the
+    // generate_* family) persist into the chat's project, so they are judged
+    // against the caller's PROJECT role — the chat's own share list must not
+    // buy standing in the container. Same partition as
+    // POST /projects/:projectId/chat.
+    const mutationFlag = () =>
+        (runLLMStream.mock.calls[0]?.[0] as { allowDocumentMutation: boolean })
+            .allowDocumentMutation;
+
+    it("withholds document-writing tools from a project viewer on the chat's share list", async () => {
+        mockedCreate.mockImplementation(
+            () =>
+                makeRbacDb(null, "colleague-1", {
+                    grantRole: "viewer",
+                    chat: { shared_with: ["u1@test.local"] },
+                }) as never,
+        );
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        // The share list makes them a member OF THE CHAT, so the message is
+        // accepted…
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
+        // …but they hold only `viewer` on the project the tools write into.
+        expect(mutationFlag()).toBe(false);
+    });
+
+    it("offers them to a project member, unchanged", async () => {
+        mockedCreate.mockImplementation(() => makeRbacDb("member") as never);
+
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(200);
+        expect(mutationFlag()).toBe(true);
+    });
 });
 
 // ---------------------------------------------------------------------------

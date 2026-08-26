@@ -119,6 +119,27 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     if (!projectAccess.ok)
         return void res.status(404).json({ detail: "Project not found" });
 
+    // Two different questions, deliberately answered by two different
+    // derivations:
+    //
+    //   (1) May this caller CONTINUE THIS CONVERSATION? That is standing on
+    //       the chat — `writeRole` below, from ensureChatAccess.
+    //   (2) May this caller MODIFY THIS PROJECT'S DOCUMENTS? That is standing
+    //       on the PROJECT, and nothing about a chat can grant it.
+    //
+    // They come apart exactly where chats gained a share list of their own. A
+    // project VIEWER named on one chat's `shared_with` derives `member` for
+    // that chat, which is what lets them talk in the thread — but the tool
+    // loop runs against `buildProjectDocContext`, which loads EVERY document
+    // in the project with no per-caller filter. Judging the tools on the
+    // chat-derived role would hand that viewer edit_document, replicate_document
+    // and the generate_* family over the whole project through a thread
+    // someone shared with them.
+    const allowDocumentMutation = can(
+        projectAccess.projectRole,
+        "content.edit",
+    );
+
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let chatModel: string | null = null;
@@ -425,6 +446,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             db,
             write,
             extraTools: PROJECT_EXTRA_TOOLS,
+            // Read-only collaborators keep the conversational surface
+            // (read_document, find_in_document, list/fetch_documents, the
+            // workflow and research tools) and lose only the writers.
+            allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,

@@ -549,4 +549,95 @@ describe("POST /projects/:projectId/chat", () => {
         expect(ensureChatAccess).not.toHaveBeenCalled();
         expect(runLLMStream).not.toHaveBeenCalled();
     });
+
+    // -----------------------------------------------------------------------
+    // The tool loop is judged against the PROJECT, not against the chat
+    // -----------------------------------------------------------------------
+    // Continuing a conversation and rewriting the project's documents are two
+    // different permissions. `buildProjectDocContext` loads every document in
+    // the project with no per-caller filter, so handing the chat-derived role
+    // to the tool set would let anyone on one chat's share list edit the whole
+    // project through that thread.
+
+    const mutationFlag = () =>
+        (runLLMStream.mock.calls[0]?.[0] as { allowDocumentMutation: boolean })
+            .allowDocumentMutation;
+
+    it("withholds the document-writing tools from a project viewer who may write in the chat", async () => {
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        // The share list promotes them on the CHAT only.
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "member",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        // They may still talk in the thread…
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
+        // …but the tools that would rewrite the project are not on offer.
+        expect(mutationFlag()).toBe(false);
+    });
+
+    it("withholds them from the chat's own creator when they only view the project", async () => {
+        // The creator branch derives admin ON THE CHAT — a strictly local
+        // standing that must not reach the project's documents either.
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(200);
+        expect(mutationFlag()).toBe(false);
+    });
+
+    it("offers them to a project member, unchanged", async () => {
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: "member",
+            projectRole: "member",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: "member",
+            projectRole: "member",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(200);
+        expect(mutationFlag()).toBe(true);
+    });
 });
