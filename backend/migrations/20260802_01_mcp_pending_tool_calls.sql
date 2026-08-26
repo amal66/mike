@@ -48,3 +48,11 @@ CREATE INDEX IF NOT EXISTS idx_user_mcp_pending_tool_calls_status
   ON public.user_mcp_pending_tool_calls(status, expires_at);
 
 ALTER TABLE public.user_mcp_pending_tool_calls ENABLE ROW LEVEL SECURITY;
+
+-- Enabling RLS with no policies already denies the browser roles every row,
+-- but the table-level grants Supabase hands out by default would still leave
+-- `authenticated` holding SELECT/INSERT/UPDATE/DELETE on this table. Revoke
+-- them so the ledger matches the posture of every other MCP table (see
+-- 20260613_04_user_mcp_connectors.sql) and so an upgraded database ends up
+-- byte-identical to a fresh install from schema.sql.
+REVOKE ALL ON public.user_mcp_pending_tool_calls FROM anon, authenticated;
