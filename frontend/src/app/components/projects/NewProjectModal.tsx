@@ -8,6 +8,7 @@ import {
     addDocumentToProject,
     createProject,
     failedUploadMessage,
+    grantProjectAccess,
     listOrgs,
     uploadProjectDocuments,
 } from "@/app/lib/mikeApi";
@@ -21,9 +22,24 @@ import { FieldLabel, FormTextInput } from "../ui/form-field";
 import { ModalSelect } from "../modals/ModalSelect";
 import { ProjectPracticeField } from "./ProjectPracticeField";
 import { userFacingApiError } from "@/app/lib/userFacingError";
+import {
+    PROJECT_ROLES,
+    PROJECT_ROLE_DESCRIPTIONS,
+    PROJECT_ROLE_LABELS,
+    isProjectRole,
+    type ProjectRole,
+} from "@/app/lib/permissions";
+import { cn } from "@/app/lib/utils";
 import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/shared/ui/LiquidGlassUI";
 
 const PERSONAL_WORKSPACE = "__personal__";
+
+/** Same control as the share dialog's, so the two dialogs match. */
+const ROLE_SELECT_CLASS =
+    "h-6 rounded-full px-2 text-xs text-gray-700 bg-white/70 ring-1 ring-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 disabled:opacity-50";
+
+/** A recipient chosen before the project exists, with the role they'll get. */
+type PendingRecipient = UserLookupResult & { role: ProjectRole };
 
 interface Props {
     open: boolean;
@@ -36,7 +52,8 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     const [name, setName] = useState("");
     const [cmNumber, setCmNumber] = useState("");
     const [practice, setPractice] = useState("");
-    const [sharedUsers, setSharedUsers] = useState<UserLookupResult[]>([]);
+    const [sharedUsers, setSharedUsers] = useState<PendingRecipient[]>([]);
+    const [newRole, setNewRole] = useState<ProjectRole>("member");
     const [orgs, setOrgs] = useState<Org[]>([]);
     const [orgId, setOrgId] = useState<string>(PERSONAL_WORKSPACE);
     const [selectedDocuments, setSelectedDocuments] = useState<Document[]>([]);
@@ -47,9 +64,10 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
     // it until the user has read which files are missing.
     const [pendingProject, setPendingProject] = useState<Project | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    // The project is created before its documents are attached. Remember it so
-    // a retry after an attachment failure reuses the project the user already
-    // has instead of creating a second one.
+    // The project is created before its grants are written and its documents
+    // are attached. Remember it so a retry after either kind of failure
+    // reuses the project the user already has instead of creating a second
+    // one.
     const createdProjectRef = useRef<Project | null>(null);
     const { user } = useAuth();
     const ownEmail = user?.email?.trim().toLowerCase() ?? null;
@@ -110,6 +128,14 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         setLoading(true);
         setError("");
         try {
+            // Create, then grant. `POST /projects` only accepts the roleless
+            // `shared_with` array — every address in it lands at member, and
+            // an address with no Mike account is refused outright with 400
+            // "<email> does not belong to a Mike user." Sending it here would
+            // have thrown away the roles chosen above and rejected exactly
+            // the outside-counsel case the review asked for, so the roles go
+            // through `POST /projects/:id/access` instead, which keys on
+            // email and does not require an existing account.
             const project =
                 createdProjectRef.current ??
                 (await createProject(
@@ -118,11 +144,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                     practice.trim() && practice.trim() !== "Other"
                         ? practice.trim()
                         : undefined,
-                    ownEmail
-                        ? sharedUsers
-                              .map((user) => user.email)
-                              .filter((email) => email !== ownEmail)
-                        : sharedUsers.map((user) => user.email),
+                    undefined,
                     orgId !== PERSONAL_WORKSPACE ? orgId : undefined,
                 ));
             createdProjectRef.current = project;
@@ -179,6 +201,43 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 .filter(Boolean)
                 .join(" ");
 
+
+            // Sequential: these are a handful of addresses, and one refusal
+            // should be reported with its own message rather than lost in a
+            // race. The endpoint upserts, so a retry after a partial failure
+            // is safe.
+            const recipients = sharedUsers.filter(
+                (entry) => !ownEmail || entry.email !== ownEmail,
+            );
+            const grantFailures: { email: string; detail: string }[] = [];
+            for (const entry of recipients) {
+                try {
+                    await grantProjectAccess(
+                        project.id,
+                        entry.email,
+                        entry.role,
+                    );
+                } catch (err: unknown) {
+                    grantFailures.push({
+                        email: entry.email,
+                        detail: userFacingApiError(err, "the request failed"),
+                    });
+                }
+            }
+            if (grantFailures.length > 0) {
+                // The project exists, so say so — and stay open rather than
+                // navigating away from the only place that knows the sharing
+                // did not happen. Pressing Create again retries the grants
+                // against the same project.
+                setError(
+                    `Project created, but access was not granted to ${grantFailures
+                        .map((failure) => failure.email)
+                        .join(", ")}: ${grantFailures[0].detail}`,
+                );
+                setPendingProject({ ...project, document_count: attachedCount });
+                return;
+            }
+
             if (failureMessage) {
                 setError(failureMessage);
                 // Nothing the user attached made it in: stay put so the primary
@@ -203,6 +262,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
         createdProjectRef.current = null;
         setPendingProject(null);
         setStep("details");
+        setNewRole("member");
         setName("");
         setCmNumber("");
         setPractice("");
@@ -246,8 +306,17 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
             {
                 ...user,
                 email: user.email.trim().toLowerCase(),
+                role: newRole,
             },
         ]);
+    }
+
+    function handleChangeShareRole(email: string, role: ProjectRole) {
+        setSharedUsers((prev) =>
+            prev.map((entry) =>
+                entry.email === email ? { ...entry, role } : entry,
+            ),
+        );
     }
 
     function handleRemoveShareUser(email: string) {
@@ -392,18 +461,55 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         )}
 
                         <div className="space-y-2">
-                            <FieldLabel as="p">Share with</FieldLabel>
-                            <AddUserInput
-                                onAdd={handleAddShareUser}
-                                validateEmail={validateShareUser}
-                                placeholder="Add colleagues by email..."
-                            />
+                            <FieldLabel as="p">
+                                Share with
+                            </FieldLabel>
+                            <div className="flex items-start gap-2">
+                                <div className="min-w-0 flex-1">
+                                    <AddUserInput
+                                        onAdd={handleAddShareUser}
+                                        validateEmail={validateShareUser}
+                                        placeholder="Add colleagues by email..."
+                                        // A grant is claimed by email when its
+                                        // recipient signs up, so outside
+                                        // counsel can be invited before they
+                                        // have an account — the same reason
+                                        // the share dialog passes false.
+                                        requireExistingUser={false}
+                                    />
+                                </div>
+                                <select
+                                    aria-label="Role for the new recipient"
+                                    value={newRole}
+                                    onChange={(event) => {
+                                        if (isProjectRole(event.target.value))
+                                            setNewRole(event.target.value);
+                                    }}
+                                    disabled={loading}
+                                    title={PROJECT_ROLE_DESCRIPTIONS[newRole]}
+                                    className={cn(ROLE_SELECT_CLASS, "mt-2 h-8")}
+                                >
+                                    {PROJECT_ROLES.map((role) => (
+                                        <option key={role} value={role}>
+                                            {PROJECT_ROLE_LABELS[role]}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <p className="text-xs text-gray-500">
+                                {PROJECT_ROLE_LABELS[newRole]}:{" "}
+                                {PROJECT_ROLE_DESCRIPTIONS[newRole]}
+                            </p>
                             {sharedUsers.length > 0 && (
                                 <ul className="space-y-1 pt-1">
                                     {sharedUsers.map((entry) => {
                                         const displayName =
                                             entry.display_name?.trim();
-                                        const primary = displayName || "User";
+                                        // An address with no Mike account has
+                                        // no display name yet; showing "User"
+                                        // for it would hide who was invited.
+                                        const primary =
+                                            displayName || entry.email;
                                         const initial = displayName
                                             ?.charAt(0)
                                             .toUpperCase();
@@ -424,12 +530,56 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                                                 <div className="min-w-0 flex-1">
                                                     <p className="truncate text-xs text-gray-800">
                                                         {primary}
-                                                        <span className="text-gray-400">
-                                                            {" "}
-                                                            · {entry.email}
-                                                        </span>
+                                                        {displayName && (
+                                                            <span className="text-gray-400">
+                                                                {" "}
+                                                                · {entry.email}
+                                                            </span>
+                                                        )}
                                                     </p>
                                                 </div>
+                                                <select
+                                                    aria-label={`Role for ${entry.email}`}
+                                                    value={entry.role}
+                                                    onChange={(event) => {
+                                                        if (
+                                                            isProjectRole(
+                                                                event.target
+                                                                    .value,
+                                                            )
+                                                        )
+                                                            handleChangeShareRole(
+                                                                entry.email,
+                                                                event.target
+                                                                    .value,
+                                                            );
+                                                    }}
+                                                    disabled={loading}
+                                                    title={
+                                                        PROJECT_ROLE_DESCRIPTIONS[
+                                                            entry.role
+                                                        ]
+                                                    }
+                                                    className={cn(
+                                                        ROLE_SELECT_CLASS,
+                                                        "shrink-0",
+                                                    )}
+                                                >
+                                                    {PROJECT_ROLES.map(
+                                                        (role) => (
+                                                            <option
+                                                                key={role}
+                                                                value={role}
+                                                            >
+                                                                {
+                                                                    PROJECT_ROLE_LABELS[
+                                                                        role
+                                                                    ]
+                                                                }
+                                                            </option>
+                                                        ),
+                                                    )}
+                                                </select>
                                                 <button
                                                     type="button"
                                                     onClick={() =>
