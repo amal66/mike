@@ -584,20 +584,25 @@ export async function deleteUserOrganizations(
         role: string;
     }[]) {
         if (m.role === "admin") {
-            const { data: otherAdmins } = await db
+            const { data: otherAdmins, error: otherAdminsError } = await db
                 .from("org_members")
                 .select("id")
                 .eq("org_id", m.org_id)
                 .eq("role", "admin")
                 .neq("id", m.id);
+            await throwIfError(otherAdminsError, "Failed to load org admins");
             if (((otherAdmins ?? []) as unknown[]).length === 0) {
-                const { data: remaining } = await db
+                const { data: remaining, error: remainingError } = await db
                     .from("org_members")
                     .select("id")
                     .eq("org_id", m.org_id)
                     .neq("id", m.id)
                     .order("created_at", { ascending: true })
                     .limit(1);
+                await throwIfError(
+                    remainingError,
+                    "Failed to load remaining org members",
+                );
                 const heir = ((remaining ?? []) as { id: string }[])[0];
                 if (heir) {
                     const { error: promoteError } = await db
@@ -609,11 +614,16 @@ export async function deleteUserOrganizations(
                         "Failed to hand off org administration",
                     );
                 } else {
-                    const { data: orgProjects } = await db
-                        .from("projects")
-                        .select("id")
-                        .eq("org_id", m.org_id)
-                        .limit(1);
+                    const { data: orgProjects, error: orgProjectsError } =
+                        await db
+                            .from("projects")
+                            .select("id")
+                            .eq("org_id", m.org_id)
+                            .limit(1);
+                    await throwIfError(
+                        orgProjectsError,
+                        "Failed to load org projects",
+                    );
                     if (((orgProjects ?? []) as unknown[]).length === 0) {
                         await deleteByIds(db, "organizations", [m.org_id]);
                         continue; // cascade removed the membership row

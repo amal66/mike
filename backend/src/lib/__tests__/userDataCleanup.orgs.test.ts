@@ -11,7 +11,13 @@ type Row = Record<string, unknown>;
 // org_members → organizations, so deleting an org also drops its membership
 // rows (as Postgres would). Supports the query subset the cleanup uses:
 // select/eq/neq/in/order/limit/delete/update + thenable.
-function makeDb(initial: Record<string, Row[]>) {
+//
+// `options.selectErrors` makes one table's reads fail, so a caller that
+// ignores a read error can be caught doing it.
+function makeDb(
+    initial: Record<string, Row[]>,
+    options: { selectErrors?: Record<string, string> } = {},
+) {
     const tables: Record<string, Row[]> = {};
     for (const [k, v] of Object.entries(initial)) tables[k] = v.map((r) => ({ ...r }));
 
@@ -37,9 +43,18 @@ function makeDb(initial: Record<string, Row[]>) {
                 }),
             );
 
-        function resolveMany(): Promise<{ data: Row[]; error: null }> {
+        function resolveMany(): Promise<{
+            data: Row[] | null;
+            error: { message: string; code?: string } | null;
+        }> {
             const arr = ensure();
             const matched = matches(arr);
+            if (op === "select" && options.selectErrors?.[table]) {
+                return Promise.resolve({
+                    data: null,
+                    error: { message: options.selectErrors[table] },
+                });
+            }
             if (op === "update") {
                 for (const r of matched) Object.assign(r, payload as Row);
                 return Promise.resolve({ data: matched, error: null });
@@ -100,7 +115,10 @@ function makeDb(initial: Record<string, Row[]>) {
                 return builder;
             },
             then: (
-                resolve: (v: { data: Row[]; error: null }) => unknown,
+                resolve: (v: {
+                    data: Row[] | null;
+                    error: { message: string; code?: string } | null;
+                }) => unknown,
                 reject?: (e: unknown) => unknown,
             ) => resolveMany().then(resolve, reject),
         };
@@ -188,6 +206,28 @@ describe("deleteUserOrganizations", () => {
         expect(db._tables.organizations).toHaveLength(1);
         expect(db._tables.org_members).toHaveLength(0);
         expect(db._tables.projects).toHaveLength(1);
+    });
+
+    it("refuses to delete an org because a lookup failed", async () => {
+        // The three org-shaping reads destructured `data` only, so a transient
+        // error read as "no projects here" — and the difference between "this
+        // org holds nothing" and "the database did not answer" is the
+        // difference between tidying up and deleting a firm's tenant.
+        const db = makeDb(
+            {
+                organizations: [{ id: "o1", name: "Acme" }],
+                org_members: [
+                    { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+                ],
+                projects: [{ id: "p1", org_id: "o1", user_id: "u1" }],
+            },
+            { selectErrors: { projects: "connection reset" } },
+        );
+
+        await expect(deleteUserOrganizations(db, "u1")).rejects.toThrow(
+            /Failed to load org projects/,
+        );
+        expect(db._tables.organizations).toHaveLength(1);
     });
 
     it("cancels invitations still addressed to the departing account", async () => {
