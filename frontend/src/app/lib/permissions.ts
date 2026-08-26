@@ -113,6 +113,34 @@ export function roleFrom(row: {
     return "viewer";
 }
 
+/**
+ * The caller's role on a row that may not have arrived yet.
+ *
+ * `null` means "not known", which is a third answer alongside the roles
+ * themselves — and the one every surface used to skip. Each of them wrote
+ * `row ? roleFrom(row) : "admin"`, so for the whole of the load window the
+ * client believed the caller held the top of the ladder and opened every
+ * gate: a viewer could reach a delete confirmation before the payload came
+ * back, and the server's refusal arrived only afterwards, looking like a bug.
+ *
+ * `can(null, …)` is false for every capability, so passing this straight into
+ * `can` closes the gates while we wait. Surfaces that render an affordance
+ * should disable it on `null` rather than hide it, and should not raise a
+ * refusal popup on `null` either: telling somebody "only an admin can do
+ * this" before we know they are not one is a guess in the other direction.
+ */
+export function roleFromLoaded(
+    row:
+        | {
+              access_role?: ProjectRole | string | null;
+              is_owner?: boolean | null;
+          }
+        | null
+        | undefined,
+): ProjectRole | null {
+    return row ? roleFrom(row) : null;
+}
+
 // ---------------------------------------------------------------------------
 // The words the user reads
 // ---------------------------------------------------------------------------

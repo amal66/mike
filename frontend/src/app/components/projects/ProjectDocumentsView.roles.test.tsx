@@ -28,7 +28,9 @@ vi.mock("@/app/lib/mikeApi", () => ({
     getProjectDirectoryLevel: vi.fn(),
 }));
 
-const role = vi.hoisted(() => ({ current: "member" as ProjectRole }));
+const role = vi.hoisted(() => ({
+    current: "member" as ProjectRole | null,
+}));
 
 vi.mock("./ProjectWorkspace", () => ({
     ProjectSectionToolbar: ({ actions }: { actions?: ReactNode }) => (
@@ -56,7 +58,7 @@ vi.mock("./ProjectWorkspace", () => ({
     }),
 }));
 
-function renderAs(next: ProjectRole) {
+function renderAs(next: ProjectRole | null) {
     role.current = next;
     return render(<ProjectDocumentsView projectId="p1" />);
 }
@@ -81,5 +83,18 @@ describe("ProjectDocumentsView folder affordances", () => {
         renderAs("viewer");
         expect(screen.queryByText("Folder")).not.toBeInTheDocument();
         expect(screen.queryByText("Upload folder")).not.toBeInTheDocument();
+    });
+
+    it("keeps them in place but disabled while the role is unknown", () => {
+        // A null role is "the project row has not arrived", not "admin".
+        // The buttons hold their slot so the toolbar does not reflow when the
+        // answer lands, but they cannot be clicked before it does.
+        renderAs(null);
+        const folder = screen.getByText("Folder").closest("button");
+        const uploadFolder = screen
+            .getByText("Upload folder")
+            .closest("button");
+        expect(folder).toBeDisabled();
+        expect(uploadFolder).toBeDisabled();
     });
 });

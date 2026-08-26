@@ -9,6 +9,7 @@ import {
     can,
     isProjectRole,
     roleFrom,
+    roleFromLoaded,
     strongerRole,
     type Capability,
     type ProjectRole,
@@ -155,6 +156,27 @@ describe("roleFrom", () => {
         expect(roleFrom({ access_role: "toString", is_owner: true })).toBe(
             "admin",
         );
+    });
+
+    it("reports an unloaded row as unknown, not as admin", () => {
+        // Every surface used to spell this `row ? roleFrom(row) : "admin"`,
+        // which handed the top of the ladder to the caller for the whole
+        // load window. Unknown is its own answer and grants nothing.
+        expect(roleFromLoaded(null)).toBeNull();
+        expect(roleFromLoaded(undefined)).toBeNull();
+        for (const capability of [
+            "project.view",
+            "content.edit",
+            "docs.organize",
+            "access.manage",
+            "container.delete",
+        ] as Capability[]) {
+            expect(can(roleFromLoaded(null), capability)).toBe(false);
+        }
+        // A row that has arrived resolves exactly as roleFrom does.
+        expect(roleFromLoaded({ access_role: "member" })).toBe("member");
+        expect(roleFromLoaded({ is_owner: true })).toBe("admin");
+        expect(roleFromLoaded({})).toBe("viewer");
     });
 
     it("accepts every real role", () => {

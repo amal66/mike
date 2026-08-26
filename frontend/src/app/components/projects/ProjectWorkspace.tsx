@@ -44,7 +44,7 @@ import {
     type Capability,
     type ProjectRole,
     can,
-    roleFrom,
+    roleFromLoaded,
 } from "@/app/lib/permissions";
 import { ProjectDetailsModal } from "./ProjectDetailsModal";
 import {
@@ -87,9 +87,18 @@ type ProjectWorkspaceValue = {
         React.SetStateAction<Array<{ label: string; onClick: () => void }>>
     >;
     setOwnerOnlyAction: React.Dispatch<React.SetStateAction<OwnerGate | null>>;
-    /** The caller's role on this project ("admin" until the project loads). */
-    accessRole: ProjectRole;
-    /** Capability check against the caller's role — mirror of the server. */
+    /**
+     * The caller's role on this project, or `null` while the project row is
+     * still in flight — an explicit "not known yet", never a guess. Surfaces
+     * that render an affordance should disable it while this is null rather
+     * than assume either answer.
+     */
+    accessRole: ProjectRole | null;
+    /**
+     * Capability check against the caller's role — mirror of the server.
+     * Answers `false` while the role is unknown, so a gated affordance is
+     * closed until the server has told us it may open.
+     */
     canDo: (capability: Capability) => boolean;
 };
 
@@ -262,13 +271,31 @@ export function ProjectWorkspaceProvider({
         void ensureProjectChats();
     }, [ensureProjectChats]);
 
-    // Role derived from the loaded project; "admin" until it loads, so the
-    // shell does not flash disabled controls at an admin on every navigation.
-    // The server enforces regardless.
-    const accessRole: ProjectRole = project ? roleFrom(project) : "admin";
+    // Role derived from the loaded project. Until it arrives the role is
+    // *unknown* — not "admin", which is what this used to assume so the shell
+    // would not flash disabled controls. Assuming the top of the ladder while
+    // waiting means every gate stands open during the window in which we know
+    // least, and a viewer who clicks Delete in that window gets a confirmation
+    // dialog for an action the server will refuse. Unknown is its own answer:
+    // `canDo` says no, affordances stay disabled, and no refusal popup accuses
+    // the user of lacking a role we have not looked up yet.
+    const accessRole: ProjectRole | null = roleFromLoaded(project);
+    const roleKnown = accessRole !== null;
     const canDo = useCallback(
         (capability: Capability) => can(accessRole, capability),
         [accessRole],
+    );
+    /**
+     * Refuse an action, explaining only when we can. While the role is
+     * unknown the caller is not told "only an admin can do this" — we do not
+     * know that they are not one — the click simply does nothing, because the
+     * control that produced it is disabled anyway.
+     */
+    const denyUnlessLoading = useCallback(
+        (gate: OwnerGate) => {
+            if (roleKnown) setOwnerOnlyAction(gate);
+        },
+        [roleKnown],
     );
 
     const refreshGrants = useCallback(async () => {
@@ -292,8 +319,8 @@ export function ProjectWorkspaceProvider({
     const createChat = useCallback(async () => {
         // Creating a chat in a project is member-tier server-side; without
         // this gate an org viewer's click fails with a silent 404.
-        if (project && !canDo("content.edit")) {
-            setOwnerOnlyAction({
+        if (!canDo("content.edit")) {
+            denyUnlessLoading({
                 action: "start a chat in this project",
                 requiredRole: "member",
             });
@@ -327,8 +354,8 @@ export function ProjectWorkspaceProvider({
         }
     }, [
         canDo,
+        denyUnlessLoading,
         profile?.displayName,
-        project,
         projectId,
         router,
         saveChat,
@@ -339,15 +366,15 @@ export function ProjectWorkspaceProvider({
         // Creating a review is member-tier server-side (POST /tabular-review
         // gates on content.edit) — stop viewers before the modal, not after
         // an unexplained failed submit.
-        if (project && !canDo("content.edit")) {
-            setOwnerOnlyAction({
+        if (!canDo("content.edit")) {
+            denyUnlessLoading({
                 action: "create a tabular review",
                 requiredRole: "member",
             });
             return;
         }
         setNewTRModalOpen(true);
-    }, [canDo, project]);
+    }, [canDo, denyUnlessLoading]);
 
     async function handleCreateReview(
         title: string,
@@ -380,8 +407,8 @@ export function ProjectWorkspaceProvider({
         cmNumber: string;
         practice: string;
     }) {
-        if (project && !canDo("access.manage")) {
-            setOwnerOnlyAction({
+        if (!canDo("access.manage")) {
+            denyUnlessLoading({
                 action: "edit project details",
                 requiredRole: "admin",
             });
@@ -409,8 +436,8 @@ export function ProjectWorkspaceProvider({
     }
 
     function requestProjectDelete() {
-        if (project && !canDo("container.delete")) {
-            setOwnerOnlyAction("delete this project");
+        if (!canDo("container.delete")) {
+            denyUnlessLoading("delete this project");
             return;
         }
         setDeleteProjectStatus("idle");
@@ -496,6 +523,7 @@ export function ProjectWorkspaceProvider({
                     creatingChat={creatingChat}
                     creatingReview={creatingReview}
                     canManageProject={canDo("access.manage")}
+                    roleKnown={roleKnown}
                     onBackToProjects={() => router.push("/projects")}
                     onProjectRoot={openProjectRoot}
                     onOpenDetails={() => setProjectDetailsOpen(true)}

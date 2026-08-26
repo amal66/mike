@@ -53,7 +53,12 @@ import { NoModelsWarningPopup } from "../popups/NoModelsWarningPopup";
 import { HeaderActionsMenu } from "../shared/HeaderActionsMenu";
 import { DocumentUploadMenu } from "../shared/DocumentUploadMenu";
 import { useAuth } from "@/app/contexts/AuthContext";
-import { can, roleFrom } from "@/app/lib/permissions";
+import {
+    can,
+    roleFrom,
+    roleFromLoaded,
+    type ProjectRole,
+} from "@/app/lib/permissions";
 import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
@@ -274,17 +279,26 @@ export function TRView({ reviewId, projectId }: Props) {
         );
     }
 
-    // Role ladder for this review; "admin" until it loads. Reshaping the
-    // review (columns, document set, clearing cells) and running it are both
-    // member-tier server-side now — a member is the normal collaborator, and
-    // splitting "edit content" from "edit structure" only ever produced two
-    // refusals for one job. Deleting the review stays admin.
-    const reviewRole = review ? roleFrom(review) : "admin";
+    // Role ladder for this review, or null while the review is still loading.
+    // It used to read "admin" until the row arrived, which opened every gate
+    // during the one window where nothing is known — a viewer landing on the
+    // page could open the delete confirmation before the payload came back.
+    // Unknown is now its own state: no capability is granted, and no refusal
+    // is shown either, because the affordances are disabled instead.
+    //
+    // Reshaping the review (columns, document set, clearing cells) and running
+    // it are member-tier server-side — a member is the normal collaborator,
+    // and splitting "edit content" from "edit structure" only ever produced
+    // two refusals for one job. Deleting the review stays admin.
+    const reviewRole: ProjectRole | null = roleFromLoaded(review);
+    const roleKnown = reviewRole !== null;
     const canEditContent = can(reviewRole, "content.edit");
 
     function requireContent(action: string): boolean {
         if (canEditContent) return true;
-        setOwnerOnlyAction({ action, requiredRole: "member" });
+        // Silent while the role is unknown: the control is disabled, so a
+        // stray call is a no-op rather than an accusation.
+        if (roleKnown) setOwnerOnlyAction({ action, requiredRole: "member" });
         return false;
     }
 
@@ -1011,8 +1025,8 @@ export function TRView({ reviewId, projectId }: Props) {
     }
 
     function requestReviewDelete() {
-        if (review && !can(reviewRole, "container.delete")) {
-            setOwnerOnlyAction("delete this tabular review");
+        if (!can(reviewRole, "container.delete")) {
+            if (roleKnown) setOwnerOnlyAction("delete this tabular review");
             return;
         }
         setDeleteReviewStatus("idle");
@@ -1197,11 +1211,13 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 label: "Edit details",
                                                 icon: Pencil,
                                                 onSelect: requestReviewDetails,
+                                                disabled: !roleKnown,
                                             },
                                             {
                                                 label: "Apply workflow",
                                                 icon: WandSparkles,
                                                 onSelect: requestWorkflow,
+                                                disabled: !roleKnown,
                                             },
                                             {
                                                 label: "Export",
@@ -1224,6 +1240,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 icon: X,
                                                 onSelect: handleClearAllResults,
                                                 disabled:
+                                                    !roleKnown ||
                                                     rows.length === 0 ||
                                                     cellMutationsBlocked,
                                             },
@@ -1232,6 +1249,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 icon: Trash2,
                                                 onSelect: requestReviewDelete,
                                                 variant: "danger",
+                                                disabled: !roleKnown,
                                             },
                                         ]}
                                     />
@@ -1277,6 +1295,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                                 reviewFolderUploadInputRef.current?.click();
                                             }}
                                             disabled={
+                                                !roleKnown ||
                                                 loading ||
                                                 savingColumnsConfig ||
                                                 uploadingDroppedFilenames.length >

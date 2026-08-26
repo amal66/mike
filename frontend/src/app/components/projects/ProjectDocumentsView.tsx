@@ -59,8 +59,14 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
         setOwnerOnlyAction,
         setDocumentFolderBreadcrumbs,
         setDocumentUploadHeaderAction,
+        accessRole,
         canDo,
     } = workspace;
+    // Null while the project row is in flight. The folder controls keep their
+    // place in the toolbar during that window — removing them would reflow the
+    // header on every navigation — but they are disabled, because until the
+    // role arrives nobody knows whether this caller may organize anything.
+    const roleKnown = accessRole !== null;
     const [createFolderAction, setCreateFolderAction] = useState<
         (() => void) | null
     >(null);
@@ -339,10 +345,12 @@ export function ProjectDocumentsView({ projectId, folderId = null }: Props) {
                     )}
                 </div>
             )}
-            {canDo("docs.organize") && (
+            {(!roleKnown || canDo("docs.organize")) && (
                 <TabPillButton
                     onClick={createFolderAction ?? undefined}
-                    disabled={!createFolderAction || projectLoading}
+                    disabled={
+                        !roleKnown || !createFolderAction || projectLoading
+                    }
                 >
                     <Plus className="h-3.5 w-3.5" />
                     <span className="hidden sm:inline">Folder</span>
