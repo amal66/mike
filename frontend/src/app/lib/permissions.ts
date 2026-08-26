@@ -114,6 +114,21 @@ export function roleFrom(row: {
 }
 
 /**
+ * Capability checker for a collection that has no role model: the personal
+ * library and other standalone surfaces, where every row belongs to the
+ * caller and the only limits are the per-row ownership checks the component
+ * applies anyway.
+ *
+ * It exists so that "no role model applies here" has to be *said*. A
+ * component whose job is gating should not treat a missing checker as
+ * permission — the call site that forgot to thread a real role looks
+ * identical to the one that genuinely has none, and only one of them is
+ * safe. Passing this explicitly makes the difference visible in review and
+ * makes the omission a type error.
+ */
+export const NO_ROLE_MODEL: (capability: Capability) => boolean = () => true;
+
+/**
  * Mirror of the server's `creatorScopedAllowed` (backend/src/lib/access.ts),
  * the rule for the handful of routes that ask "did you create this row?"
  * instead of "what role do you hold?" — deleting a document version and

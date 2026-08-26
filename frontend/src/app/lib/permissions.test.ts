@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+    NO_ROLE_MODEL,
     ORG_ROLES,
     ORG_ROLE_DESCRIPTIONS,
     ORG_ROLE_LABELS,
@@ -100,6 +101,25 @@ describe("strongerRole", () => {
         expect(strongerRole(null, "member")).toBe("member");
         expect(strongerRole("member", null)).toBe("member");
         expect(strongerRole(null, null)).toBeNull();
+    });
+});
+
+describe("NO_ROLE_MODEL", () => {
+    it("allows every capability, for surfaces that genuinely have no role", () => {
+        // DocTable's `canDo` used to be optional and default to allow-all, so
+        // a project surface that forgot to thread its role got a fully open
+        // table and looked exactly like the library, which legitimately has
+        // no role. The prop is required now and the library says so out loud
+        // — this pins that saying so still opens everything it used to.
+        for (const capability of [
+            "project.view",
+            "content.edit",
+            "docs.organize",
+            "access.manage",
+            "container.delete",
+        ] as Capability[]) {
+            expect(NO_ROLE_MODEL(capability)).toBe(true);
+        }
     });
 });
 

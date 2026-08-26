@@ -223,11 +223,12 @@ interface DocTableProps {
     onSelectionActionsChange?: (actions: DocTableSelectionActions | null) => void;
     onOwnerOnlyAction?: Dispatch<SetStateAction<OwnerGate | null>>;
     /**
-     * Role-based capability check for the containing collection. When
-     * omitted (library, standalone docs) every capability is allowed and
-     * only the per-document creator checks apply.
+     * Role-based capability check for the containing collection. Required:
+     * a table whose job here is gating must be told what the caller may do,
+     * and a surface with no role model at all (the personal library) says so
+     * by passing `NO_ROLE_MODEL` rather than by leaving this out.
      */
-    canDo?: (capability: Capability) => boolean;
+    canDo: (capability: Capability) => boolean;
     enableHeaderFilters?: boolean;
     // When provided, folder contents are fetched on demand as folders are
     // expanded (instead of the whole tree being loaded and auto-expanded
@@ -420,8 +421,7 @@ export function DocTable({
     const loadingRef = useRef(loading);
     const renderAddDocumentsModalRef = useRef(renderAddDocumentsModal);
     const setOwnerOnlyAction = useMemo(() => onOwnerOnlyAction ?? (() => {}), [onOwnerOnlyAction]);
-    // Absent canDo (library/standalone contexts) means no role model applies.
-    const allowed = useMemo(() => canDo ?? (() => true), [canDo]);
+    const allowed = canDo;
     /** Guard: false + popup when the caller's role lacks the capability. */
     const requireCapability = useCallback(
         (
