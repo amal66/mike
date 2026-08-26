@@ -899,6 +899,18 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
             }
         }
         updates.project_id = projectIdUpdate;
+        // `tabular_reviews.org_id` is a DENORMALIZED copy of the project's
+        // tenant, stamped at creation and read directly by the SQL visibility
+        // predicates (`tr.org_id is not null and exists (select 1 from
+        // org_members …)`). Moving the review to another project changes
+        // which tenant owns it, so the copy has to be restamped from the
+        // destination — otherwise a review moved out of an org project into a
+        // personal one keeps answering yes to that org arm and stays visible
+        // to every member of an organization it no longer belongs to. Same
+        // helper and argument shape as the create path.
+        updates.org_id = await resolveContentOrgId(db, {
+            projectId: projectIdUpdate ?? null,
+        });
     }
 
     const { data: updatedReview, error: updateError } = await db

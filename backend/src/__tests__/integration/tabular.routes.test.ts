@@ -13,11 +13,13 @@ const {
     checkProjectAccess,
     filterAccessibleDocumentIds,
     getUserModelSettings,
+    resolveContentOrgId,
 } = vi.hoisted(() => ({
     ensureReviewAccess: vi.fn(),
     checkProjectAccess: vi.fn(),
     filterAccessibleDocumentIds: vi.fn(),
     getUserModelSettings: vi.fn(),
+    resolveContentOrgId: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -103,6 +105,9 @@ function makeQuery(table: string) {
         supabaseState.inserts.push({ table, payload });
         return q;
     });
+    // Update payloads are recorded alongside inserts: what a route writes on
+    // a mutation is exactly as much a part of its contract as what it writes
+    // on a create, and a denormalized column can only be checked here.
     q.update = vi.fn((payload: unknown) => {
         supabaseState.updates.push({ table, payload });
         return q;
@@ -161,7 +166,7 @@ vi.mock("../../lib/access", async (importOriginal) => ({
     ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     listAccessibleProjectIds: vi.fn(async () => []),
     getOrgRole: vi.fn(async () => null),
-    resolveContentOrgId: vi.fn(async () => null),
+    resolveContentOrgId: (...args: unknown[]) => resolveContentOrgId(...args),
 }));
 
 vi.mock("../../lib/userSettings", () => ({
@@ -200,6 +205,8 @@ describe("tabular.routes", () => {
             projectRole: "admin",
             project: { id: "p1", user_id: "u1", shared_with: null },
         });
+        // Default: personal content — no tenant to inherit.
+        resolveContentOrgId.mockResolvedValue(null);
         // Default: every requested doc is accessible (identity passthrough).
         filterAccessibleDocumentIds.mockImplementation(
             async (ids: string[]) => ids,
@@ -725,6 +732,97 @@ describe("tabular.routes", () => {
 
             expect(res.status).toBe(403);
             expect(res.body.detail).toBe("Only a review member can change columns");
+        });
+
+        // `tabular_reviews.org_id` is a denormalized copy of the project's
+        // tenant. The SQL visibility predicates read it directly, so a copy
+        // that is not restamped on a move is not a cosmetic inconsistency —
+        // it is who can see the review.
+        const seedMove = (reviewOrgId: string | null) => {
+            supabaseState.tables.tabular_reviews = [
+                {
+                    data: {
+                        id: "r1",
+                        user_id: "u1",
+                        project_id: "p-from",
+                        org_id: reviewOrgId,
+                    },
+                    error: null,
+                },
+                {
+                    data: {
+                        id: "r1",
+                        user_id: "u1",
+                        project_id: "p-to",
+                        document_ids: [],
+                        columns_config: [],
+                    },
+                    error: null,
+                },
+            ];
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isCreator: true,
+                orgRole: null,
+                projectRole: "admin",
+            });
+        };
+        const movePayload = () =>
+            supabaseState.updates.find((u) => u.table === "tabular_reviews")
+                ?.payload as Record<string, unknown> | undefined;
+
+        it("clears org_id when a review moves into a personal project", async () => {
+            // The leak: without restamping, a review carried out of an org
+            // project into somebody's personal project keeps org_id set, and
+            // the org arm of the list predicate keeps returning it to every
+            // member of an organization it no longer belongs to.
+            seedMove("org-1");
+            resolveContentOrgId.mockResolvedValue(null);
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ project_id: "p-to" });
+
+            expect(res.status).toBe(200);
+            expect(movePayload()).toMatchObject({
+                project_id: "p-to",
+                org_id: null,
+            });
+        });
+
+        it("restamps org_id from the destination project", async () => {
+            seedMove(null);
+            resolveContentOrgId.mockResolvedValue("org-2");
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ project_id: "p-to" });
+
+            expect(res.status).toBe(200);
+            expect(movePayload()).toMatchObject({
+                project_id: "p-to",
+                org_id: "org-2",
+            });
+            expect(resolveContentOrgId).toHaveBeenCalledWith(
+                expect.anything(),
+                { projectId: "p-to" },
+            );
+        });
+
+        it("leaves org_id alone when the move is not part of the request", async () => {
+            // Only a move restamps. A rename must not silently re-derive the
+            // tenant, or an unrelated PATCH becomes a permission change.
+            seedMove("org-1");
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ title: "Renamed" });
+
+            expect(res.status).toBe(200);
+            expect(movePayload()).not.toHaveProperty("org_id");
         });
     });
 
