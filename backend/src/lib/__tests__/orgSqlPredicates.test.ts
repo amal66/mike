@@ -47,9 +47,24 @@ describe.each(Object.entries(SOURCES))("%s", (_name, sql) => {
             );
         expect(offenders).toEqual([]);
     });
+
+    it("never offers NULL as an owner-filter option", () => {
+        // `on delete set null` means a project can outlive its creator with
+        // user_id = NULL. Emitting that as a dropdown option produced an entry
+        // whose value is null — and selecting it made the guard
+        // `p_owner_user_id is null or p.user_id::text = p_owner_user_id` true
+        // for every row, so the filter silently disabled itself rather than
+        // narrowing anything.
+        const cte = sql.slice(
+            sql.indexOf("distinct_owners as ("),
+            sql.indexOf("owner_options as ("),
+        );
+        expect(cte).toContain("distinct_owners as (");
+        expect(cte).toMatch(/where\s+vp\.user_id\s+is\s+not\s+null/);
+    });
 });
 
-it("the migration and schema.sql agree on the email predicate", () => {
+it("the migration and schema.sql agree on both predicates", () => {
     // A fresh install and an upgraded deployment must converge; CI's
     // schema-drift job checks this against a real database, and this catches
     // the common half of it (editing one file and forgetting the other)
@@ -62,6 +77,9 @@ it("the migration and schema.sql agree on the email predicate", () => {
         bareContainment: (
             sql.match(/shared_with @> jsonb_build_array\(p_user_email\)/g) ?? []
         ).length,
+        ownersExcludeNull: /distinct vp\.user_id\s+from visible_projects vp\s+where vp\.user_id is not null/.test(
+            sql,
+        ),
     });
     const migration = shape(
         SOURCES["migrations/20260825_04_org_rpcs.sql"],

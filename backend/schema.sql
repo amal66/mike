@@ -2717,8 +2717,14 @@ as $$
        )
   ),
   distinct_owners as (
+    -- NULL is not an owner. A project whose creator's account was deleted
+    -- carries user_id = NULL (on delete set null), and emitting it here put
+    -- an option with value null in the owner dropdown -- selecting which made
+    -- `p_owner_user_id is null or ...` true for EVERY row, so the filter
+    -- silently turned itself off instead of filtering.
     select distinct vp.user_id
     from visible_projects vp
+    where vp.user_id is not null
   ),
   owner_options as (
     select
