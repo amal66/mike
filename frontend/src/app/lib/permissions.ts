@@ -45,12 +45,31 @@ const REQUIRED_RANK: Record<Capability, number> = {
     "container.delete": ROLE_RANK.admin,
 };
 
+/**
+ * Whether a value is one of the three project roles.
+ *
+ * Membership is tested against the `PROJECT_ROLES` array, not with `in
+ * ROLE_RANK`, because `in` walks the prototype chain: `"toString" in
+ * ROLE_RANK` is true, as are `"constructor"`, `"valueOf"` and every other
+ * `Object.prototype` key. These values arrive from API payloads and from
+ * `<select>` elements, so a role-shaped string from either source could
+ * previously pass the guard and be handed on as a `ProjectRole`. The backend
+ * already checks with `PROJECT_ROLES.includes` (backend/src/lib/
+ * permissions.ts); this is the same test.
+ */
+export function isProjectRole(value: unknown): value is ProjectRole {
+    return (
+        typeof value === "string" &&
+        (PROJECT_ROLES as string[]).includes(value)
+    );
+}
+
 /** Fail closed: an absent/unknown role can do nothing. */
 export function can(
     role: ProjectRole | null | undefined,
     capability: Capability,
 ): boolean {
-    if (!role || !(role in ROLE_RANK)) return false;
+    if (!isProjectRole(role)) return false;
     return ROLE_RANK[role] >= REQUIRED_RANK[capability];
 }
 
@@ -59,13 +78,9 @@ export function strongerRole(
     a: ProjectRole | null | undefined,
     b: ProjectRole | null | undefined,
 ): ProjectRole | null {
-    if (!a || !(a in ROLE_RANK)) return b && b in ROLE_RANK ? b : null;
-    if (!b || !(b in ROLE_RANK)) return a;
+    if (!isProjectRole(a)) return isProjectRole(b) ? b : null;
+    if (!isProjectRole(b)) return a;
     return ROLE_RANK[a] >= ROLE_RANK[b] ? a : b;
-}
-
-export function isProjectRole(value: unknown): value is ProjectRole {
-    return typeof value === "string" && value in ROLE_RANK;
 }
 
 export function isOrgRole(value: unknown): value is OrgRole {

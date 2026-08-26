@@ -7,6 +7,7 @@ import {
     PROJECT_ROLE_DESCRIPTIONS,
     PROJECT_ROLE_LABELS,
     can,
+    isProjectRole,
     roleFrom,
     strongerRole,
     type Capability,
@@ -131,5 +132,35 @@ describe("roleFrom", () => {
             "member",
         );
         expect(roleFrom({ access_role: "owner" })).toBe("viewer");
+    });
+
+    it("rejects Object.prototype keys as roles", () => {
+        // The role guard used `value in ROLE_RANK`, and `in` walks the
+        // prototype chain, so "toString"/"constructor"/"valueOf" all passed
+        // and were handed on as if they were real roles. Every one of these
+        // must fall through to the fail-closed branch.
+        for (const key of [
+            "toString",
+            "constructor",
+            "valueOf",
+            "hasOwnProperty",
+            "__proto__",
+        ]) {
+            expect(isProjectRole(key)).toBe(false);
+            expect(roleFrom({ access_role: key })).toBe("viewer");
+            expect(can(key as ProjectRole, "project.view")).toBe(false);
+            expect(strongerRole(key as ProjectRole, null)).toBeNull();
+        }
+        // is_owner still decides when access_role is junk rather than absent.
+        expect(roleFrom({ access_role: "toString", is_owner: true })).toBe(
+            "admin",
+        );
+    });
+
+    it("accepts every real role", () => {
+        for (const role of PROJECT_ROLES) expect(isProjectRole(role)).toBe(true);
+        expect(isProjectRole(null)).toBe(false);
+        expect(isProjectRole(undefined)).toBe(false);
+        expect(isProjectRole(1)).toBe(false);
     });
 });
