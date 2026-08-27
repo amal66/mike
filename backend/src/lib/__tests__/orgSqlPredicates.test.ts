@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 // ---------------------------------------------------------------------------
 // Static checks on the org RPCs' SQL.
 //
-// The visibility predicates in 20260828_03 are the SQL twins of lib/access.ts,
+// The visibility predicates in 20260831_03 are the SQL twins of lib/access.ts,
 // and the mistakes below are invisible in review because the wrong version
 // and the right version differ by one word. Exercising them
 // properly needs a live Postgres (npm run test:stack), which does not run in
@@ -16,8 +16,8 @@ import { resolve } from "node:path";
 
 const ROOT = resolve(__dirname, "../../..");
 const SOURCES = {
-    "migrations/20260828_03_org_rpcs.sql": readFileSync(
-        resolve(ROOT, "migrations/20260828_03_org_rpcs.sql"),
+    "migrations/20260831_03_org_rpcs.sql": readFileSync(
+        resolve(ROOT, "migrations/20260831_03_org_rpcs.sql"),
         "utf8",
     ),
     "schema.sql": readFileSync(resolve(ROOT, "schema.sql"), "utf8"),
@@ -104,7 +104,7 @@ it("the migration and schema.sql agree on both predicates", () => {
         ),
     });
     const migration = shape(
-        SOURCES["migrations/20260828_03_org_rpcs.sql"],
+        SOURCES["migrations/20260831_03_org_rpcs.sql"],
     );
     expect(migration.bareContainment).toBe(0);
     expect(migration.loweredContainment).toBeGreaterThan(0);
