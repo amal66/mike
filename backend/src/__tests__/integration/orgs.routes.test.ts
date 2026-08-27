@@ -146,6 +146,13 @@ function query(table: string) {
             filters.push({ type: "eq", col, val });
             return builder;
         },
+        // `.not(col, "is", null)` — the only negation the routes use.
+        not: (col: string, operator: string, val: unknown) => {
+            if (operator === "is" && val === null) {
+                filters.push({ type: "neq", col, val: null });
+            }
+            return builder;
+        },
         neq: (col: string, val: unknown) => {
             filters.push({ type: "neq", col, val });
             return builder;
@@ -600,7 +607,33 @@ describe("project access grants over HTTP", () => {
         );
     });
 
-    it("lists grants for anyone who can see the project", async () => {
+    it("lists grants for whoever may manage them", async () => {
+        await request(app)
+            .post("/projects/proj-1/access")
+            .set(...AUTH)
+            .send({ email: "counsel@outside.example", role: "viewer" });
+
+        const res = await request(app)
+            .get("/projects/proj-1/access")
+            .set(...AUTH);
+        expect(res.status).toBe(200);
+        expect(res.body).toMatchObject({
+            org_id: "org-1",
+            access_role: "admin",
+        });
+        expect(res.body.grants).toEqual([
+            expect.objectContaining({
+                email: "counsel@outside.example",
+                role: "viewer",
+            }),
+        ]);
+    });
+
+    it("keeps the grant roster away from non-admins", async () => {
+        // The grant list is the management surface: each row names a
+        // recipient, a role and a grantor. Serving it at mere reachability
+        // let a single read-only grant — the outside-counsel tier —
+        // enumerate the whole team on a matter.
         await request(app)
             .post("/projects/proj-1/access")
             .set(...AUTH)
@@ -610,17 +643,50 @@ describe("project access grants over HTTP", () => {
         const res = await request(app)
             .get("/projects/proj-1/access")
             .set(...AUTH);
-        expect(res.status).toBe(200);
-        expect(res.body).toMatchObject({
-            org_id: "org-1",
-            access_role: "member",
-        });
-        expect(res.body.grants).toEqual([
+        expect(res.status).toBe(403);
+        expect(res.body.detail).toBe(
+            "Only a project admin can change who has access.",
+        );
+        expect(res.body.grants).toBeUndefined();
+    });
+
+    it("shows the roster to members, and only contacts to a viewer", async () => {
+        // /people is tiered by role: member and above see the collaborator
+        // list — "who else is on this matter?" is part of working in it — but
+        // a viewer, the outside-counsel tier, gets the creator and the admin
+        // contacts (the people a refusal popup tells them to ask) and no
+        // roster. Serving every collaborator's email and role at mere
+        // reachability let one read-only grant enumerate the firm's team.
+        await request(app)
+            .post("/projects/proj-1/access")
+            .set(...AUTH)
+            .send({ email: "counsel@outside.example", role: "viewer" });
+
+        as("member-1", "member@firm.example");
+        const memberView = await request(app)
+            .get("/projects/proj-1/people")
+            .set(...AUTH);
+        expect(memberView.status).toBe(200);
+        expect(memberView.body.members).toEqual([
             expect.objectContaining({
                 email: "counsel@outside.example",
                 role: "viewer",
             }),
         ]);
+
+        as("counsel-1", "counsel@outside.example");
+        const viewerView = await request(app)
+            .get("/projects/proj-1/people")
+            .set(...AUTH);
+        expect(viewerView.status).toBe(200);
+        expect(viewerView.body.members).toEqual([]);
+        // The redaction must not take away the person to ask.
+        expect(viewerView.body.owner).toMatchObject({ user_id: "admin-1" });
+        expect(viewerView.body.admin_contacts).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ email: "admin@firm.example" }),
+            ]),
+        );
     });
 
     it("revokes a grant, and 404s one that was never there", async () => {

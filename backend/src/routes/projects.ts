@@ -436,11 +436,21 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
   // Roleless `shared_with` at create time becomes member-level grants — the
   // grant table is the authority, the column is its mirror.
   if (cleanedSharedWith.length > 0) {
-    await replaceGrantsFromEmails(db, {
+    const granted = await replaceGrantsFromEmails(db, {
       projectId: (data as { id: string }).id,
       emails: cleanedSharedWith,
       createdBy: userId,
     });
+    // The project exists either way — a 500 here would invite a retry that
+    // creates a duplicate. Legacy-path only (the revised modal grants
+    // per-recipient itself and retries just the grants), so log loudly and
+    // let the caller see an unshared project rather than no project.
+    if (!granted.ok) {
+      console.error("[projects] created but sharing failed", {
+        projectId: (data as { id: string }).id,
+        message: granted.detail,
+      });
+    }
   }
   res.status(201).json({ ...data, documents: [] });
 });
@@ -743,8 +753,17 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
   const { projectId } = req.params;
   const db = createServerSupabase();
 
-  // Roster is visible to anyone who can see the project — including org
-  // members, who previously got a 404 here despite full read access.
+  // The page is visible to anyone who can see the project — including org
+  // members, who previously got a 404 here despite full read access. WHO
+  // appears on it is tiered by role, because the roster is client data:
+  //
+  //   * member and above see the collaborator list — they work in this
+  //     project and "who else is on this matter?" is part of working in it;
+  //   * a viewer — the outside-counsel tier, someone deliberately given the
+  //     least standing — gets the creator and the admin contacts (the people
+  //     a refusal popup tells them to ask) and nothing more. Serving them
+  //     every collaborator's email and role let a single read-only grant
+  //     enumerate the firm's whole team on a matter.
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
@@ -767,12 +786,17 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
         role: "admin" as const,
       }
     : null;
-  const grants = await listProjectGrants(db, projectId);
-  const members = grants.map((grant) => ({
-    email: grant.email,
-    display_name: userByEmail.get(grant.email)?.display_name ?? null,
-    role: grant.role,
-  }));
+  let members: { email: string; display_name: string | null; role: string }[] =
+    [];
+  if (can(access.projectRole, "content.edit")) {
+    const listed = await listProjectGrants(db, projectId);
+    if (!listed.ok) return void sendInternalError(res, listed.detail);
+    members = listed.grants.map((grant) => ({
+      email: grant.email,
+      display_name: userByEmail.get(grant.email)?.display_name ?? null,
+      role: grant.role,
+    }));
+  }
 
   res.json({ owner, members, admin_contacts: await listProjectAdminContacts(db, project) });
 });
@@ -786,7 +810,12 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
 // organization projects, which is what lets a firm share one matter with
 // outside counsel without giving them the run of the organization.
 
-// GET /projects/:projectId/access — the grant list (any member may read it).
+// GET /projects/:projectId/access — the grant list, for whoever may manage
+// it. This is the management surface: each row carries who granted it and
+// when, and its one consumer is the People modal's role pickers, which only
+// render at admin. Serving it at mere reachability let any viewer — the
+// outside-counsel tier — enumerate every recipient, role and grantor on the
+// matter.
 projectsRouter.get("/:projectId/access", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
@@ -796,11 +825,16 @@ projectsRouter.get("/:projectId/access", requireAuth, async (req, res) => {
   const access = await checkProjectAccess(projectId, userId, userEmail, db);
   if (!access.ok)
     return void res.status(404).json({ detail: "Project not found" });
-  const grants = await listProjectGrants(db, projectId);
+  if (!can(access.projectRole, "access.manage"))
+    return void res
+      .status(403)
+      .json({ detail: "Only a project admin can change who has access." });
+  const listed = await listProjectGrants(db, projectId);
+  if (!listed.ok) return void sendInternalError(res, listed.detail);
   res.json({
     org_id: access.project.org_id ?? null,
     access_role: access.projectRole,
-    grants,
+    grants: listed.grants,
   });
 });
 
@@ -845,7 +879,8 @@ projectsRouter.post("/:projectId/access", requireAuth, async (req, res) => {
   if (!result.ok) {
     if (result.kind === "validation")
       return void res.status(400).json({ detail: result.detail });
-    return void res.status(500).json({ detail: result.detail });
+    // result.detail is a raw driver message here — log it, never send it.
+    return void sendInternalError(res, result.detail);
   }
   res.status(201).json(result.grant);
 });
@@ -872,7 +907,7 @@ projectsRouter.delete(
       projectId,
       email: decodeURIComponent(req.params.email),
     });
-    if (!result.ok) return void res.status(500).json({ detail: result.detail });
+    if (!result.ok) return void sendInternalError(res, result.detail);
     if (!result.removed)
       return void res.status(404).json({ detail: "Access grant not found" });
     res.status(204).send();
@@ -947,8 +982,7 @@ projectsRouter.patch("/:projectId", requireAuth, async (req, res) => {
       emails: sharedWithUpdate,
       createdBy: userId,
     });
-    if (!replaced.ok)
-      return void res.status(500).json({ detail: replaced.detail });
+    if (!replaced.ok) return void sendInternalError(res, replaced.detail);
   }
 
   const { data, error } = await db
@@ -1113,12 +1147,13 @@ projectsRouter.post(
 
     if (doc.project_id === null) {
       // Standalone → assign project_id (and inherit the project's org).
-      const targetOrgId = await resolveContentOrgId(db, { projectId });
+      const targetOrg = await resolveContentOrgId(db, { projectId });
+      if (!targetOrg.ok) return void sendInternalError(res, targetOrg.detail);
       const { data: updated, error } = await db
         .from("documents")
         .update({
           project_id: projectId,
-          org_id: targetOrgId,
+          org_id: targetOrg.orgId,
           library_folder_id: null,
           updated_at: new Date().toISOString(),
         })
@@ -1166,14 +1201,15 @@ projectsRouter.post(
           .json({ detail: "Failed to read source document bytes" });
       }
 
-      const copyOrgId = await resolveContentOrgId(db, { projectId });
+      const copyOrg = await resolveContentOrgId(db, { projectId });
+      if (!copyOrg.ok) return void sendInternalError(res, copyOrg.detail);
       const { data: copy, error } = await db
         .from("documents")
         .insert({
           project_id: projectId,
           user_id: userId,
           status: doc.status,
-          org_id: copyOrgId,
+          org_id: copyOrg.orgId,
         })
         .select("*")
         .single();

@@ -12,10 +12,16 @@ import {
 
 type Row = Record<string, unknown>;
 
-function makeDb(tables: Record<string, Row[]>) {
+function makeDb(
+    tables: Record<string, Row[]>,
+    options: { selectErrors?: Record<string, string> } = {},
+) {
     return {
         from(table: string) {
             let rows = [...(tables[table] ?? [])];
+            const failure = options.selectErrors?.[table]
+                ? { message: options.selectErrors[table] }
+                : null;
             const query = {
                 select: () => query,
                 order: () => query,
@@ -47,16 +53,26 @@ function makeDb(tables: Record<string, Row[]>) {
                     });
                     return query;
                 },
-                single: async () => ({ data: rows[0] ?? null, error: null }),
-                maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
+                single: async () =>
+                    failure
+                        ? { data: null, error: failure }
+                        : { data: rows[0] ?? null, error: null },
+                maybeSingle: async () =>
+                    failure
+                        ? { data: null, error: failure }
+                        : { data: rows[0] ?? null, error: null },
                 then: (
-                    resolve: (value: { data: Row[]; error: null }) => unknown,
+                    resolve: (value: {
+                        data: Row[] | null;
+                        error: { message: string } | null;
+                    }) => unknown,
                     reject?: (reason: unknown) => unknown,
                 ) =>
-                    Promise.resolve({ data: rows, error: null }).then(
-                        resolve,
-                        reject,
-                    ),
+                    Promise.resolve(
+                        failure
+                            ? { data: null, error: failure }
+                            : { data: rows, error: null },
+                    ).then(resolve, reject),
             };
             return query;
         },
@@ -427,17 +443,31 @@ describe("content org resolution", () => {
     it("inherits the project's organization for content inside it", async () => {
         await expect(
             resolveContentOrgId(db, { projectId: "org-project" }),
-        ).resolves.toBe("org-1");
+        ).resolves.toEqual({ ok: true, orgId: "org-1" });
     });
 
     it("leaves content with no organization when there is none to inherit", async () => {
         // No hidden personal org to fall back on: org_id IS NULL *is* personal.
         await expect(
             resolveContentOrgId(db, { projectId: "personal-project" }),
-        ).resolves.toBeNull();
+        ).resolves.toEqual({ ok: true, orgId: null });
         await expect(
             resolveContentOrgId(db, { projectId: null }),
-        ).resolves.toBeNull();
+        ).resolves.toEqual({ ok: true, orgId: null });
+    });
+
+    it("refuses to answer when the lookup fails, instead of guessing personal", async () => {
+        // ok:false and orgId:null must be distinguishable: null is the
+        // encoding of personal content, and personal content is what account
+        // deletion destroys. A failed read that presented as null filed a
+        // firm's upload as its uploader's private property.
+        const failing = makeDb(
+            { projects: [] },
+            { selectErrors: { projects: "connection reset" } },
+        );
+        await expect(
+            resolveContentOrgId(failing, { projectId: "org-project" }),
+        ).resolves.toMatchObject({ ok: false });
     });
 });
 

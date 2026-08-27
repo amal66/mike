@@ -148,18 +148,35 @@ export async function getProjectGrantRole(
  * inside a project inherits that project's org; everything else is personal
  * (org_id null). There is no personal organization to fall back to — an
  * absent org IS the personal case.
+ *
+ * Result-shaped because "the lookup failed" and "this is personal" must
+ * never share a value. `null` is not a safe default here: it is the very
+ * encoding of personal content, and personal content is what account
+ * deletion destroys. A swallowed error at this seam filed a firm's upload
+ * as its uploader's private property — invisible to org inheritance today,
+ * destroyed with the uploader's account later. Callers refuse the request
+ * instead of guessing the tenant.
  */
 export async function resolveContentOrgId(
     db: Db,
     params: { projectId?: string | null },
-): Promise<string | null> {
-    if (!params.projectId) return null;
-    const { data } = await db
+): Promise<{ ok: true; orgId: string | null } | { ok: false; detail: string }> {
+    if (!params.projectId) return { ok: true, orgId: null };
+    const { data, error } = await db
         .from("projects")
         .select("org_id")
         .eq("id", params.projectId)
         .maybeSingle();
-    return (data as { org_id?: string | null } | null)?.org_id ?? null;
+    if (error)
+        return {
+            ok: false,
+            detail:
+                error.message ?? "Failed to resolve the project's organization",
+        };
+    return {
+        ok: true,
+        orgId: (data as { org_id?: string | null } | null)?.org_id ?? null,
+    };
 }
 
 type ProjectRow = {

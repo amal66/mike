@@ -510,9 +510,11 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
     const grouping = normalizeGrouping(document_grouping);
     // Tenant assignment: inherit the project's org when project-scoped.
     // A standalone review is personal, which is simply org_id null.
-    const orgId = await resolveContentOrgId(db, {
+    const resolvedOrg = await resolveContentOrgId(db, {
         projectId: project_id ?? null,
     });
+    if (!resolvedOrg.ok)
+        return void sendInternalError(res, resolvedOrg.detail);
     const { data: review, error } = await db
         .from("tabular_reviews")
         .insert({
@@ -524,7 +526,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             project_id: project_id ?? null,
             workflow_id: workflow_id ?? null,
             document_grouping: grouping,
-            org_id: orgId,
+            org_id: resolvedOrg.orgId,
         })
         .select("*")
         .single();
@@ -908,9 +910,12 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         // personal one keeps answering yes to that org arm and stays visible
         // to every member of an organization it no longer belongs to. Same
         // helper and argument shape as the create path.
-        updates.org_id = await resolveContentOrgId(db, {
+        const movedOrg = await resolveContentOrgId(db, {
             projectId: projectIdUpdate ?? null,
         });
+        if (!movedOrg.ok)
+            return void sendInternalError(res, movedOrg.detail);
+        updates.org_id = movedOrg.orgId;
     }
 
     const { data: updatedReview, error: updateError } = await db

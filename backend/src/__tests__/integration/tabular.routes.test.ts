@@ -206,7 +206,7 @@ describe("tabular.routes", () => {
             project: { id: "p1", user_id: "u1", shared_with: null },
         });
         // Default: personal content — no tenant to inherit.
-        resolveContentOrgId.mockResolvedValue(null);
+        resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
         // Default: every requested doc is accessible (identity passthrough).
         filterAccessibleDocumentIds.mockImplementation(
             async (ids: string[]) => ids,
@@ -777,7 +777,7 @@ describe("tabular.routes", () => {
             // the org arm of the list predicate keeps returning it to every
             // member of an organization it no longer belongs to.
             seedMove("org-1");
-            resolveContentOrgId.mockResolvedValue(null);
+            resolveContentOrgId.mockResolvedValue({ ok: true, orgId: null });
 
             const res = await request(app)
                 .patch("/tabular-review/r1")
@@ -791,9 +791,30 @@ describe("tabular.routes", () => {
             });
         });
 
+        it("refuses the move when the tenant lookup fails, instead of guessing", async () => {
+            // ok:false must never collapse into "personal": org_id null is
+            // the encoding of personal content, and a mis-stamped review
+            // either leaks to an org it left or hides from the org that owns
+            // it — and personal content is what account deletion destroys.
+            seedMove("org-1");
+            resolveContentOrgId.mockResolvedValue({
+                ok: false,
+                detail: "connection reset",
+            });
+
+            const res = await request(app)
+                .patch("/tabular-review/r1")
+                .set(...AUTH)
+                .send({ project_id: "p-to" });
+
+            expect(res.status).toBe(500);
+            expect(res.body.detail).not.toContain("connection reset");
+            expect(movePayload()).toBeUndefined();
+        });
+
         it("restamps org_id from the destination project", async () => {
             seedMove(null);
-            resolveContentOrgId.mockResolvedValue("org-2");
+            resolveContentOrgId.mockResolvedValue({ ok: true, orgId: "org-2" });
 
             const res = await request(app)
                 .patch("/tabular-review/r1")

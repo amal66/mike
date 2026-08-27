@@ -39,16 +39,34 @@ export type ProjectGrant = {
     updated_at: string;
 };
 
+export type GrantListResult =
+    | { ok: true; grants: ProjectGrant[] }
+    | { ok: false; detail: string };
+
+/**
+ * Result-shaped on purpose: a failed read and an empty grant table are
+ * different answers, and collapsing them was actively dangerous. This
+ * module's callers turn "no grants" into real actions — rewriting the
+ * shared_with mirror and computing which grants to revoke — so a read
+ * failure that presented as `[]` silently blanked the mirror and made
+ * revocation a success-shaped no-op. Every caller now has to say what a
+ * failed read means for ITS operation.
+ */
 export async function listProjectGrants(
     db: Db,
     projectId: string,
-): Promise<ProjectGrant[]> {
-    const { data } = await db
+): Promise<GrantListResult> {
+    const { data, error } = await db
         .from("project_access_grants")
         .select("*")
         .eq("project_id", projectId)
         .order("created_at", { ascending: true });
-    return (data ?? []) as ProjectGrant[];
+    if (error)
+        return {
+            ok: false,
+            detail: error.message ?? "Failed to load access grants",
+        };
+    return { ok: true, grants: (data ?? []) as ProjectGrant[] };
 }
 
 /**
@@ -68,9 +86,19 @@ export async function listProjectGrants(
 export async function syncSharedWithMirror(
     db: Db,
     projectId: string,
-): Promise<string[]> {
-    const grants = await listProjectGrants(db, projectId);
-    const emails = grants.map((g) => g.email);
+): Promise<string[] | null> {
+    const listed = await listProjectGrants(db, projectId);
+    if (!listed.ok) {
+        // A failed READ must leave the mirror alone. Writing what we
+        // "loaded" here meant a transient query failure rewrote the
+        // collaborator list to [] — stale is recoverable, wiped is not.
+        console.error(
+            "[project-access] grants unreadable; mirror left as-is",
+            { projectId, message: listed.detail },
+        );
+        return null;
+    }
+    const emails = listed.grants.map((g) => g.email);
     const { error } = await db
         .from("projects")
         .update({ shared_with: emails })
@@ -186,7 +214,13 @@ export async function replaceGrantsFromEmails(
         const email = normalizeEmail(raw);
         if (email) wanted.add(email);
     }
-    const existing = await listProjectGrants(db, params.projectId);
+    // Revocation is computed by DIFFING against the existing grants, so this
+    // read must fail closed: pretending "no grants exist" on a failed read
+    // meant there was nothing to diff away — the caller was told their
+    // revocation succeeded while nobody lost access.
+    const listed = await listProjectGrants(db, params.projectId);
+    if (!listed.ok) return { ok: false, detail: listed.detail };
+    const existing = listed.grants;
     const existingByEmail = new Map(existing.map((g) => [g.email, g]));
 
     const removals = existing
@@ -215,8 +249,11 @@ export async function replaceGrantsFromEmails(
         if (error) return { ok: false, detail: error.message };
     }
 
+    // The mirror re-read is authoritative when it works; when it does not,
+    // the final grant set is `wanted` by construction (kept ∪ added, with
+    // everything else just deleted), so the caller still gets the truth.
     const emails = await syncSharedWithMirror(db, params.projectId);
-    return { ok: true, emails };
+    return { ok: true, emails: emails ?? [...wanted] };
 }
 
 export type ProjectContact = {
@@ -255,8 +292,18 @@ export async function listProjectAdminContacts(
     const profileIds: string[] = [];
     if (project.user_id) profileIds.push(project.user_id);
 
-    const grants = await listProjectGrants(db, project.id);
-    const adminGrantEmails = grants
+    // Contacts are enrichment for refusal popups, not an authorization
+    // input, so a failed grants read degrades this one source rather than
+    // failing the project load — the creator and org-admin contacts below
+    // are still built. Logged because a popup with no name is a dead end.
+    const listed = await listProjectGrants(db, project.id);
+    if (!listed.ok) {
+        console.error("[project-access] grants unreadable for contacts", {
+            projectId: project.id,
+            message: listed.detail,
+        });
+    }
+    const adminGrantEmails = (listed.ok ? listed.grants : [])
         .filter((g) => g.role === "admin")
         .map((g) => g.email);
 
@@ -344,18 +391,29 @@ export async function listProjectAdminContacts(
     return contacts;
 }
 
-/** Drop every grant addressed to one person (account deletion). */
+/**
+ * Drop every grant addressed to one person (account deletion).
+ *
+ * Throws on failure: the caller is the account-deletion sequence, which
+ * already propagates errors into an honest 500 so the deletion can be
+ * retried. Swallowing this delete meant an account could be erased while
+ * its grants stayed live — access held by an address whose person is gone.
+ */
 export async function removeGrantsForEmail(
     db: Db,
     email: string | null | undefined,
 ): Promise<void> {
     const normalized = normalizeEmail(email);
     if (!normalized) return;
-    const { data } = await db
+    const { data, error } = await db
         .from("project_access_grants")
         .delete()
         .eq("email", normalized)
         .select("project_id");
+    if (error)
+        throw new Error(
+            `Failed to revoke access grants: ${error.message ?? "unknown error"}`,
+        );
     const projectIds = [
         ...new Set(
             ((data ?? []) as { project_id?: string | null }[])

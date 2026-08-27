@@ -14,7 +14,13 @@ type Row = Record<string, unknown>;
 // Stateful fake supporting the subset projectAccess.ts uses, including
 // `upsert(..., { onConflict })` — the grant table's whole point is that
 // re-sharing with a different role is an update, not a conflict.
-function makeDb(initial: Record<string, Row[]>) {
+function makeDb(
+    initial: Record<string, Row[]>,
+    options: {
+        selectErrors?: Record<string, string>;
+        deleteErrors?: Record<string, string>;
+    } = {},
+) {
     const tables: Record<string, Row[]> = {};
     for (const [k, v] of Object.entries(initial)) {
         tables[k] = v.map((r) => ({ ...r }));
@@ -40,8 +46,23 @@ function makeDb(initial: Record<string, Row[]>) {
                 ),
             );
 
-        function resolveMany(): Promise<{ data: Row[]; error: null }> {
+        function resolveMany(): Promise<{
+            data: Row[] | null;
+            error: { message: string } | null;
+        }> {
             const arr = ensure();
+            if (op === "select" && options.selectErrors?.[table]) {
+                return Promise.resolve({
+                    data: null,
+                    error: { message: options.selectErrors[table] },
+                });
+            }
+            if (op === "delete" && options.deleteErrors?.[table]) {
+                return Promise.resolve({
+                    data: null,
+                    error: { message: options.deleteErrors[table] },
+                });
+            }
             if (op === "insert" || op === "upsert") {
                 const rows = Array.isArray(payload)
                     ? payload
@@ -116,15 +137,18 @@ function makeDb(initial: Record<string, Row[]>) {
                 return builder;
             },
             single: async () => {
-                const { data } = await resolveMany();
-                return { data: data[0] ?? null, error: null };
+                const { data, error } = await resolveMany();
+                return { data: data?.[0] ?? null, error };
             },
             maybeSingle: async () => {
-                const { data } = await resolveMany();
-                return { data: data[0] ?? null, error: null };
+                const { data, error } = await resolveMany();
+                return { data: data?.[0] ?? null, error };
             },
             then: (
-                resolve: (v: { data: Row[]; error: null }) => unknown,
+                resolve: (v: {
+                    data: Row[] | null;
+                    error: { message: string } | null;
+                }) => unknown,
                 reject?: (e: unknown) => unknown,
             ) => resolveMany().then(resolve, reject),
         };
@@ -145,6 +169,13 @@ const seed = () =>
         ],
         org_members: [],
     });
+
+
+async function grantsOf(db: unknown, projectId: string) {
+    const listed = await listProjectGrants(db as never, projectId);
+    if (!listed.ok) throw new Error(listed.detail);
+    return listed.grants;
+}
 
 describe("project access grants", () => {
     it("creates a grant with the requested role and normalizes the email", async () => {
@@ -178,7 +209,7 @@ describe("project access grants", () => {
             createdBy: "creator",
         });
         expect(promoted.ok).toBe(true);
-        const grants = await listProjectGrants(db, "p1");
+        const grants = await grantsOf(db, "p1");
         expect(grants).toHaveLength(1);
         expect(grants[0].role).toBe("admin");
     });
@@ -257,7 +288,7 @@ describe("project access grants", () => {
             emails: ["keeper@x.example", " NEW@x.example "],
             createdBy: "creator",
         });
-        const grants = await listProjectGrants(db, "p1");
+        const grants = await grantsOf(db, "p1");
         expect(
             Object.fromEntries(grants.map((g) => [g.email, g.role])),
         ).toEqual({
@@ -280,7 +311,7 @@ describe("project access grants", () => {
             emails: ["b@x.example"],
             createdBy: "creator",
         });
-        expect((await listProjectGrants(db, "p1")).map((g) => g.email)).toEqual([
+        expect((await grantsOf(db, "p1")).map((g) => g.email)).toEqual([
             "b@x.example",
         ]);
     });
@@ -293,7 +324,7 @@ describe("project access grants", () => {
             createdBy: "creator",
         });
         await removeGrantsForEmail(db, " Gone@X.example ");
-        expect((await listProjectGrants(db, "p1")).map((g) => g.email)).toEqual([
+        expect((await grantsOf(db, "p1")).map((g) => g.email)).toEqual([
             "stays@x.example",
         ]);
         expect((db._tables.projects as Row[])[0].shared_with).toEqual([
@@ -460,5 +491,79 @@ describe("syncSharedWithMirror", () => {
         await syncSharedWithMirror(db, "p1");
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();
+    });
+});
+
+describe("a failed grants read fails closed", () => {
+    // The old shape returned [] on a read failure. [] is not a neutral
+    // answer in this module: the mirror sync writes it over shared_with,
+    // and the legacy revocation path diffs against it — so a transient
+    // query failure wiped the visible collaborator list and turned
+    // "remove this person" into a success-shaped no-op.
+    const failingRead = () =>
+        makeDb(
+            {
+                projects: [
+                    {
+                        id: "p1",
+                        user_id: "creator",
+                        org_id: null,
+                        shared_with: ["outside@counsel.test"],
+                    },
+                ],
+                project_access_grants: [],
+            },
+            { selectErrors: { project_access_grants: "connection reset" } },
+        );
+
+    it("reports the failure instead of an empty grant list", async () => {
+        await expect(listProjectGrants(failingRead(), "p1")).resolves.toEqual({
+            ok: false,
+            detail: "connection reset",
+        });
+    });
+
+    it("leaves the shared_with mirror untouched", async () => {
+        const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+        const db = failingRead();
+        await expect(syncSharedWithMirror(db, "p1")).resolves.toBeNull();
+        // Stale is recoverable; wiped is not. The column keeps its value.
+        expect(db._tables.projects[0].shared_with).toEqual([
+            "outside@counsel.test",
+        ]);
+        spy.mockRestore();
+    });
+
+    it("refuses a roleless replace rather than revoking nobody", async () => {
+        // An empty "existing" set meant zero removals were computed, and the
+        // caller was told their revocation succeeded while nobody lost
+        // access. The operation must fail so the caller can retry it.
+        const result = await replaceGrantsFromEmails(failingRead(), {
+            projectId: "p1",
+            emails: [],
+            createdBy: "creator",
+        });
+        expect(result).toEqual({ ok: false, detail: "connection reset" });
+    });
+
+    it("account deletion refuses to report success over live grants", async () => {
+        const db = makeDb(
+            {
+                project_access_grants: [
+                    {
+                        id: "g1",
+                        project_id: "p1",
+                        email: "leaver@firm.example",
+                        role: "member",
+                    },
+                ],
+            },
+            { deleteErrors: { project_access_grants: "connection reset" } },
+        );
+        await expect(
+            removeGrantsForEmail(db, "leaver@firm.example"),
+        ).rejects.toThrow(/Failed to revoke access grants/);
+        // The grant is still there for the retry to find.
+        expect(db._tables.project_access_grants).toHaveLength(1);
     });
 });
