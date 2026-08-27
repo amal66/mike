@@ -103,7 +103,7 @@ vi.mock("../../lib/access", () => ({
     ensureChatAccess: (...args: unknown[]) => ensureChatAccess(...args),
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
-    resolveContentOrgId: vi.fn(async () => null),
+    resolveContentOrgId: vi.fn(async () => ({ ok: true, orgId: null })),
 }));
 
 import { app } from "../../app";

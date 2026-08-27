@@ -188,10 +188,15 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
     // Tenant stamping, like every other content create: a project chat
     // inherits the project's org; a standalone chat is personal (org_id
     // null) and stays private until its own shared_with names someone.
-    const orgId = await resolveContentOrgId(db, { projectId });
+    const resolvedOrg = await resolveContentOrgId(db, { projectId });
+    if (!resolvedOrg.ok) return void sendInternalError(res, resolvedOrg.detail);
     const { data, error } = await db
         .from("chats")
-        .insert({ user_id: userId, project_id: projectId ?? null, org_id: orgId })
+        .insert({
+            user_id: userId,
+            project_id: projectId ?? null,
+            org_id: resolvedOrg.orgId,
+        })
         .select("id")
         .single();
 
@@ -795,9 +800,11 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 .status(projectAccess.status)
                 .json({ detail: projectAccess.detail });
 
-        const orgId = await resolveContentOrgId(db, {
+        const resolvedOrg = await resolveContentOrgId(db, {
             projectId: resolvedProjectId,
         });
+        if (!resolvedOrg.ok)
+            return void sendInternalError(res, resolvedOrg.detail);
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -805,7 +812,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 project_id: resolvedProjectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
-                org_id: orgId,
+                org_id: resolvedOrg.orgId,
             })
             .select("id, title")
             .single();

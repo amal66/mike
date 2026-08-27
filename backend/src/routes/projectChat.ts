@@ -248,7 +248,12 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     }
 
     if (!chatId) {
-        const orgId = await resolveContentOrgId(db, { projectId });
+        const resolvedOrg = await resolveContentOrgId(db, { projectId });
+        if (!resolvedOrg.ok) {
+            return void res
+                .status(500)
+                .json({ detail: "Failed to create chat" });
+        }
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -256,7 +261,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 project_id: projectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
-                org_id: orgId,
+                org_id: resolvedOrg.orgId,
             })
             .select("id, title")
             .single();
