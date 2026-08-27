@@ -346,6 +346,18 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
     }
 }
 
+// Storage bytes and the rows that point at them must die in a strict
+// order: rows first, bytes second. These two halves used to be one
+// function that ran BEFORE any row was deleted, which put the whole
+// cleanup in the wrong order — none of it is transactional, so a failure
+// after the files were gone left a live account (or a live project) full
+// of documents whose every version 404s. Failing the other way round is
+// recoverable: rows gone, bytes still there, and the bytes are exactly
+// what the claim-filtered orphan sweep exists to reclaim.
+//
+// The paths must still be COLLECTED before the rows go —
+// document_versions cascades away with its documents row, taking the
+// only record of what to delete with it.
 async function collectDocumentVersionPaths(
     db: Db,
     documentIds: string[],
@@ -385,9 +397,12 @@ async function collectDocumentVersionPaths(
     return [...paths];
 }
 
-async function deleteDocumentVersionFiles(db: Db, documentIds: string[]) {
-    const paths = await collectDocumentVersionPaths(db, documentIds);
-    await Promise.all(paths.map((path) => deleteFile(path)));
+// Best-effort by design: the rows are already gone by the time this runs,
+// so a failed removal must not abort the surrounding cleanup — it would
+// strand the caller in a worse state (rows half-deleted, account kept)
+// than the orphaned bytes it was trying to avoid.
+async function deleteStorageFiles(paths: string[]) {
+    await Promise.all(paths.map((path) => deleteFile(path).catch(() => {})));
 }
 
 /**
@@ -837,6 +852,7 @@ export async function deleteProjectsByIds(db: Db, projectIds: string[]) {
     await deleteByIds(db, "documents", documentIds);
     await deleteByIds(db, "project_subfolders", folderIds);
     await deleteByIds(db, "projects", ownedProjectIds);
+    // Only now, with every row that pointed at them gone, do the bytes go.
 
     await enqueueStorageCleanup(db, storagePaths);
 
@@ -917,13 +933,20 @@ export async function deleteUserAccountData(
         orgProjectIds,
     );
 
+    // Collected up front — the version rows cascade away with their
+    // documents below, taking the only record of these paths with them —
+    // but not DELETED until every row is gone; see deleteStorageFiles.
+    const doomedVersionPaths = await collectDocumentVersionPaths(
+        db,
+        documentIds,
+    );
+
     await Promise.all([
         // Direct project access is a grant row now, so revoking this person's
         // access means deleting their grants (which also refreshes the
         // shared_with mirror on each affected project).
         removeGrantsForEmail(db, userEmail),
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
-        deleteDocumentVersionFiles(db, documentIds),
         deleteUserExportArtifacts(userId),
     ]);
 
@@ -973,6 +996,13 @@ export async function deleteUserAccountData(
         .delete()
         .eq("user_id", userId);
     await throwIfError(workflowsError, "Failed to delete workflows");
+
+    // Every doomed row is gone; now the bytes they pointed at may follow.
+    // Doing this earlier — before the row deletions — meant any failure in
+    // between left a live account whose documents all 404. In this order a
+    // failure leaves orphaned bytes instead, and the claim-filtered sweep
+    // below reclaims those in the same request.
+    await deleteStorageFiles(doomedVersionPaths);
 
     // Only now — with every doomed row actually gone — is it safe to ask the
     // database which objects under this user's storage prefixes are orphans.

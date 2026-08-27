@@ -223,7 +223,7 @@ describe("deleteAllUserTabularReviews", () => {
 // ---------------------------------------------------------------------------
 
 describe("deleteUserProjects", () => {
-    const fixture = () =>
+    const fixture = (options: { deleteErrors?: Record<string, string> } = {}) =>
         makeDb({
             projects: [
                 { id: "p1", user_id: "u1" },
@@ -277,7 +277,7 @@ describe("deleteUserProjects", () => {
                 { id: "f1", project_id: "p1" },
                 { id: "f-other", project_id: "p-other" },
             ],
-        });
+        }, options);
 
     it("cascades project contents and storage files for owned projects", async () => {
         const { db, tables } = fixture();
@@ -325,6 +325,18 @@ describe("deleteUserProjects", () => {
         expect(tables.projects).toHaveLength(3);
         expect(deleteFileMock).not.toHaveBeenCalled();
     });
+
+    it("leaves storage untouched when a row deletion fails mid-cascade", async () => {
+        // Same ordering contract as account deletion: bytes go last, so a
+        // failed cascade leaves rows AND bytes for the retry instead of
+        // surviving documents whose versions all 404.
+        const { db } = fixture({
+            deleteErrors: { documents: "connection reset" },
+        });
+
+        await expect(deleteUserProjects(db, "u1")).rejects.toThrow();
+        expect(deleteFileMock).not.toHaveBeenCalled();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -332,7 +344,7 @@ describe("deleteUserProjects", () => {
 // ---------------------------------------------------------------------------
 
 describe("deleteUserAccountData", () => {
-    const fixture = () =>
+    const fixture = (options: { deleteErrors?: Record<string, string> } = {}) =>
         makeDb({
             projects: [
                 { id: "p1", user_id: "u1", org_id: null, shared_with: [] },
@@ -421,7 +433,7 @@ describe("deleteUserAccountData", () => {
                 { id: "a2", user_id: "u1" },
                 { id: "a-other", user_id: "u2" },
             ],
-        });
+        }, options);
 
     it("removes the user's rows, files, and share references everywhere", async () => {
         const { db, tables } = fixture();
@@ -527,6 +539,26 @@ describe("deleteUserAccountData", () => {
         await expect(
             deleteUserAccountData(db, "u1", "u1@example.com"),
         ).rejects.toThrow(/export/i);
+    });
+
+    it("keeps every storage byte until the last doomed row is gone", async () => {
+        // Nothing here is transactional. If any row deletion fails, the
+        // request 500s and the account survives — so the bytes must still
+        // be there for the retry. Files deleted BEFORE the rows meant a
+        // mid-sequence failure left a live account whose every document
+        // 404s. A failure injected into one of the by-user deletions must
+        // now abort the cleanup with storage untouched.
+        const { db, tables } = fixture({
+            deleteErrors: { chats: "connection reset" },
+        });
+
+        await expect(
+            deleteUserAccountData(db, "u1", "u1@example.com"),
+        ).rejects.toThrow(/Failed to delete account data/);
+
+        expect(deleteFileMock).not.toHaveBeenCalled();
+        // The account's chats are still there for the retry to find.
+        expect(ids(tables.chats)).toContain("c1");
     });
 
     it("skips share scrubbing when no email is known", async () => {
