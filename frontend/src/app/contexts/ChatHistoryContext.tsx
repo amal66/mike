@@ -197,8 +197,13 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             if (currentChatId === chatId) setCurrentChatId(null);
             try {
                 await deleteChat(chatId);
-            } catch {
+            } catch (error) {
+                // Optimistic removal must not become a silent success: put
+                // the row back and let the caller tell the user why. The old
+                // bare catch here was the client-side twin of the
+                // filter-scoped 204 this stack removes on the server.
                 void loadChats();
+                throw error;
             }
         },
         [currentChatId, loadChats],

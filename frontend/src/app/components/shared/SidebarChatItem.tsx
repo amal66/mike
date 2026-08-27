@@ -11,8 +11,10 @@ import {
     LiquidDropdownItem,
 } from "@/app/components/ui/liquid-dropdown";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useAuth } from "@/app/contexts/AuthContext";
 import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
+import { WarningPopup } from "@/app/components/popups/WarningPopup";
+import { can, roleFrom } from "@/app/lib/permissions";
+import { userFacingApiError } from "@/app/lib/userFacingError";
 import type { Chat } from "@/app/components/shared/types";
 import { ChatSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { cn } from "@/app/lib/utils";
@@ -31,16 +33,22 @@ interface Props {
 
 export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props) {
     const { renameChat, deleteChat } = useChatHistoryContext();
-    const { user } = useAuth();
     const [isRenaming, setIsRenaming] = useState(false);
     const [editTitle, setEditTitle] = useState(chat.title ?? "");
-    const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
+    const [gate, setGate] = useState<{
+        action: string;
+        requiredRole: "admin" | "member";
+    } | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
     const editInputRef = useRef<HTMLInputElement>(null);
-    // The sidebar shows collaborator chats from projects the user can reach,
-    // but PATCH/DELETE /chats/:id both filter on `.eq("user_id", userId)`
-    // (backend/src/routes/chat.ts) — creator-only, with no role path at all.
-    // So this is a row-ownership check, not a rung on the project ladder.
-    const isChatOwner = !!user?.id && chat.user_id === user.id;
+    // Chats joined the project role ladder: rename is content collaboration
+    // (member+, the tier the server's PATCH asks for) and delete sits at the
+    // top (the creator — is_owner ⇒ admin via roleFrom — or a project
+    // admin). The overview RPC serves is_owner on every row; roleFrom fails
+    // closed to viewer when it serves nothing.
+    const role = roleFrom(chat);
+    const canRename = can(role, "content.edit");
+    const canDelete = can(role, "container.delete");
 
     useEffect(() => {
         if (isRenaming) editInputRef.current?.focus();
@@ -134,8 +142,11 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                         <LiquidDropdownContent align="end" className="z-101">
                             <LiquidDropdownItem
                                 onClick={() => {
-                                    if (!isChatOwner) {
-                                        setOwnerOnlyAction("rename it");
+                                    if (!canRename) {
+                                        setGate({
+                                            action: "rename this chat",
+                                            requiredRole: "member",
+                                        });
                                         return;
                                     }
                                     setEditTitle(chat.title ?? "");
@@ -147,11 +158,21 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                             </LiquidDropdownItem>
                             <LiquidDropdownItem
                                 onClick={() => {
-                                    if (!isChatOwner) {
-                                        setOwnerOnlyAction("delete it");
+                                    if (!canDelete) {
+                                        setGate({
+                                            action: "delete this chat",
+                                            requiredRole: "admin",
+                                        });
                                         return;
                                     }
-                                    void deleteChat(chat.id);
+                                    deleteChat(chat.id).catch((error) => {
+                                        setDeleteError(
+                                            userFacingApiError(
+                                                error,
+                                                "The chat could not be deleted. Please try again.",
+                                            ),
+                                        );
+                                    });
                                 }}
                                 className="text-red-600 focus:text-red-600"
                             >
@@ -163,20 +184,16 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                 </>
             )}
             <PermissionDeniedPopup
-                open={!!ownerOnlyAction}
-                title="Chat creator only"
-                // Spelled out rather than left to the role-based default,
-                // which would have claimed "Only an admin can rename this
-                // chat." No admin can: the server asks who created the row,
-                // not what role the asker holds. For the same reason there is
-                // no "ask …" line here — there is nobody to ask, because
-                // nobody can grant this.
-                message={
-                    ownerOnlyAction
-                        ? `Only the person who started this chat can ${ownerOnlyAction}.`
-                        : undefined
-                }
-                onClose={() => setOwnerOnlyAction(null)}
+                open={!!gate}
+                action={gate?.action}
+                requiredRole={gate?.requiredRole}
+                onClose={() => setGate(null)}
+            />
+            <WarningPopup
+                open={!!deleteError}
+                title="Chat not deleted"
+                message={deleteError}
+                onClose={() => setDeleteError(null)}
             />
         </div>
     );
