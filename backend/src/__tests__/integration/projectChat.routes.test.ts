@@ -363,6 +363,64 @@ describe("POST /projects/:projectId/chat", () => {
         expect(systemPromptExtra).not.toContain("spoofed attachment name");
     });
 
+    it("refuses a viewer's message to a colleague's chat before any write lands", async () => {
+        // A project viewer names a colleague's existing chat. The 403 is not
+        // enough on its own: the route also resolves and persists the chat's
+        // model before answering, and that UPDATE used to run ahead of the
+        // permission verdict — so the refused caller had already changed the
+        // model on a thread they may not write to. The verdict must come
+        // first; nothing may be written on a refused request.
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        const updatedTables: string[] = [];
+        const db = mockSupabase();
+        (db.from as ReturnType<typeof vi.fn>).mockImplementation(
+            (table: string) => {
+                const q = makeQuery();
+                // The existing chat belongs to another user in the project.
+                (q.maybeSingle as ReturnType<typeof vi.fn>).mockImplementation(
+                    () =>
+                        Promise.resolve({
+                            data: {
+                                id: "chat-1",
+                                title: "Colleague's thread",
+                                model: "stale-model",
+                                reasoning_level: null,
+                                project_id: "p1",
+                                user_id: "u2",
+                            },
+                            error: null,
+                        }),
+                );
+                (q.update as ReturnType<typeof vi.fn>).mockImplementation(
+                    () => {
+                        updatedTables.push(table);
+                        return q;
+                    },
+                );
+                return q;
+            },
+        );
+        vi.mocked(createServerSupabase).mockReturnValueOnce(db as never);
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(403);
+        expect(res.body.detail).toBe(
+            "You do not have permission to write in this project.",
+        );
+        expect(updatedTables).toEqual([]);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
     it("surfaces a stream failure as an in-stream error event, not an HTTP error", async () => {
         runLLMStream.mockRejectedValue(new Error("upstream LLM failure"));
 

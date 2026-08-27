@@ -139,6 +139,28 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         }
     }
 
+    // Writing to a project chat needs `content.edit` — EXCEPT that a chat's
+    // own creator may always continue their thread, exactly as POST /chat
+    // allows (lib/access.ts derives "admin" for a row's creator there).
+    //
+    // The two routes used to disagree: this one gated purely on the project
+    // role, so a project viewer who had started a chat got a 404 when they
+    // sent the next message. The client, which gates on
+    // `canEditContent || chatOwnerId === user.id`, rendered the message
+    // locally and then lost it — the server had persisted nothing. Keeping
+    // both ladders identical is what stops that class of silent data loss.
+    //
+    // The gate must sit here, BEFORE model resolution: the model/reasoning
+    // persistence below is a real UPDATE on the chats row, and running it
+    // ahead of this verdict let a project viewer permanently change the
+    // model on a colleague's chat and then collect a 403 for the same
+    // request.
+    const isOwnChat = !!chatCreatorId && chatCreatorId === userId;
+    if (!isOwnChat && !can(projectAccess.projectRole, "content.edit"))
+        return void res.status(403).json({
+            detail: "You do not have permission to write in this project.",
+        });
+
     const modelSettings = await getUserModelSettings(userId, db);
     const modelResolution = await resolveEffectiveChatModel({
         requested: model,
@@ -180,22 +202,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 .json({ detail: "Failed to save chat model" });
         }
     }
-
-    // Writing to a project chat needs `content.edit` — EXCEPT that a chat's
-    // own creator may always continue their thread, exactly as POST /chat
-    // allows (lib/access.ts derives "admin" for a row's creator there).
-    //
-    // The two routes used to disagree: this one gated purely on the project
-    // role, so a project viewer who had started a chat got a 404 when they
-    // sent the next message. The client, which gates on
-    // `canEditContent || chatOwnerId === user.id`, rendered the message
-    // locally and then lost it — the server had persisted nothing. Keeping
-    // both ladders identical is what stops that class of silent data loss.
-    const isOwnChat = !!chatCreatorId && chatCreatorId === userId;
-    if (!isOwnChat && !can(projectAccess.projectRole, "content.edit"))
-        return void res.status(403).json({
-            detail: "You do not have permission to write in this project.",
-        });
 
     if (!chatId) {
         const { data: newChat, error } = await db
