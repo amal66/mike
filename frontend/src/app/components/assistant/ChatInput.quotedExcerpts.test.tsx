@@ -25,10 +25,20 @@ vi.mock("@/app/lib/modelAvailability", () => ({
 }));
 
 // Keep the real module's constants — useSelectedModel imports
-// DEFAULT_MODEL_ID/ALLOWED_MODEL_IDS from it — but drop the widget.
+// ALLOWED_MODEL_IDS from it — but drop the widget.
 vi.mock("./ModelToggle", async (importOriginal) => ({
     ...(await importOriginal<typeof import("./ModelToggle")>()),
     ModelToggle: () => null,
+}));
+
+// There is no default model any more: an unselected composer refuses to send
+// before it reaches the excerpt fold. These cases are about the excerpt
+// plumbing, not model selection, so pin a resolvable selection the way the
+// sibling composer suites do.
+vi.mock("@/app/hooks/useSelectedModel", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/app/hooks/useSelectedModel")>()),
+    useSelectedModel: () => ["claude-sonnet-4-6", vi.fn()],
+    useSelectedReasoning: () => ["high", vi.fn()],
 }));
 vi.mock("./AddDocButton", () => ({ AddDocButton: () => null }));
 vi.mock("./UploadOverlay", () => ({ UploadOverlay: () => null }));
