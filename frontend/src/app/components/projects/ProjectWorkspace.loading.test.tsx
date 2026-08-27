@@ -149,6 +149,46 @@ describe("ProjectWorkspace while the project is still loading", () => {
         expect(screen.getByText("Delete project?")).toBeInTheDocument();
     });
 
+    it("forgets the previous project's role the moment the id changes", async () => {
+        // The provider lives in the [id] layout, which the App Router keeps
+        // mounted across dynamic-param navigation. Navigating from a project
+        // you administer to one you can only view used to keep the OLD row —
+        // role "admin", roleKnown true — live for the whole fetch window:
+        // nothing disabled, nothing suppressed, and Delete confirmable
+        // against the NEW project's id. The initial-mount window below is not
+        // enough; the role must return to unknown every time the id changes.
+        vi.mocked(getProject).mockResolvedValueOnce(ADMIN_PROJECT);
+        const { rerender } = render(
+            <ProjectWorkspaceProvider projectId="p1">
+                <Probe />
+            </ProjectWorkspaceProvider>,
+        );
+        await waitFor(() =>
+            expect(screen.getByTestId("role")).toHaveTextContent("admin"),
+        );
+
+        // The next project's row never arrives in this test — the whole
+        // point is what the window before it arrives looks like.
+        vi.mocked(getProject).mockReturnValue(new Promise(() => {}));
+        rerender(
+            <ProjectWorkspaceProvider projectId="p2">
+                <Probe />
+            </ProjectWorkspaceProvider>,
+        );
+
+        await waitFor(() =>
+            expect(screen.getByTestId("role")).toHaveTextContent("null"),
+        );
+        expect(screen.getByTestId("can-delete")).toHaveTextContent("false");
+        expect(screen.getByTestId("role-known")).toHaveTextContent("false");
+
+        fireEvent.click(screen.getByText("delete project"));
+        expect(screen.queryByText("Delete project?")).not.toBeInTheDocument();
+        expect(
+            screen.queryByText(/Only an admin can/),
+        ).not.toBeInTheDocument();
+    });
+
     it("refuses, and names an admin, once the row says viewer", async () => {
         vi.mocked(getProject).mockResolvedValue({
             ...ADMIN_PROJECT,

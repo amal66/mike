@@ -217,6 +217,17 @@ export function ProjectWorkspaceProvider({
     const projectChatsPromiseRef = useRef<Promise<Chat[]> | null>(null);
 
     useEffect(() => {
+        // A new projectId is a new answer to "who am I here?". This provider
+        // lives in the [id] layout, which the App Router keeps mounted across
+        // dynamic-param navigation — so without this reset the PREVIOUS
+        // project's row, and therefore its role, stays live for the whole
+        // fetch window. An admin of project A navigating into project B they
+        // can only view kept admin affordances (Delete included) until B's
+        // row arrived: `roleKnown` was true, so nothing was disabled and
+        // `denyUnlessLoading` never suppressed a thing. Unknown-while-loading
+        // only protects anyone if loading actually starts from unknown.
+        setProject(null);
+        setFolders([]);
         setProjectChats(null);
         setProjectChatsLoading(false);
         setDocumentFolderBreadcrumbs([]);
