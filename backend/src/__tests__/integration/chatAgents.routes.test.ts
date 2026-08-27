@@ -178,7 +178,9 @@ vi.mock("../../lib/userSettings", () => ({
         legal_research_us: false,
         title_model: "test-model",
         tabular_model: "test-model",
-        api_keys: {},
+        // A chat turn resolves no model without a usable key for it, so the
+        // streaming route needs one here to reach the behaviour under test.
+        api_keys: { gemini: "test-key" },
         personalisation: {
             displayName: "",
             organisation: "",
@@ -642,10 +644,13 @@ describe("PATCH /chat/:chatId/proposals/:proposalId", () => {
 });
 
 describe("POST /chat — propose_edit gating", () => {
+    // The model is explicit because a turn that names none is refused before
+    // any gating happens. These cases are about propose_edit, not selection.
     const send = (chatId: string) =>
         auth(request(app).post("/chat")).send({
             chat_id: chatId,
             messages: [{ role: "user", content: "go" }],
+            model: "gemini-3-flash-preview",
         });
 
     it("offers propose_edit and the agent role prompt inside an agent", async () => {
