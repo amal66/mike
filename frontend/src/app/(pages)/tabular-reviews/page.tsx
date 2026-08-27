@@ -135,6 +135,7 @@ export default function TabularReviewsPage() {
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<{
         reviewId: string;
         action: string;
+        requiredRole: "admin" | "member";
     } | null>(null);
     const [contactsByReviewId, setContactsByReviewId] = useState<
         Record<string, AccessContact[]>
@@ -280,8 +281,12 @@ export default function TabularReviewsPage() {
      * ask. The roster is fetched once per review and cached, so repeated
      * refusals on the same row cost nothing.
      */
-    function refuse(reviewId: string, action: string) {
-        setOwnerOnlyAction({ reviewId, action });
+    function refuse(
+        reviewId: string,
+        action: string,
+        requiredRole: "admin" | "member" = "admin",
+    ) {
+        setOwnerOnlyAction({ reviewId, action, requiredRole });
         if (contactsByReviewId[reviewId]) return;
         void getTabularReviewPeople(reviewId)
             .then((people) => {
@@ -298,11 +303,12 @@ export default function TabularReviewsPage() {
     }
 
     function requestReviewDetails(review: TabularReview) {
-        // The overview RPC now returns each row's merged access_role, so a
-        // project admin acting on a colleague's review is recognised here
-        // instead of being refused for not having created it.
-        if (!can(roleFrom(review), "access.manage")) {
-            refuse(review.id, "edit tabular review details");
+        // The overview RPC now returns each row's merged access_role. Details
+        // editing is member-tier — the server's PATCH asks for content.edit —
+        // so the refusal must say "member", not "admin" (the review page and
+        // this list previously disagreed about the same action).
+        if (!can(roleFrom(review), "content.edit")) {
+            refuse(review.id, "edit tabular review details", "member");
             return;
         }
         setDetailsReview(review);
@@ -313,8 +319,8 @@ export default function TabularReviewsPage() {
         projectId?: string | null;
     }) {
         if (!detailsReview) return;
-        if (!can(roleFrom(detailsReview), "access.manage")) {
-            refuse(detailsReview.id, "edit tabular review details");
+        if (!can(roleFrom(detailsReview), "content.edit")) {
+            refuse(detailsReview.id, "edit tabular review details", "member");
             return;
         }
         const updated = await updateTabularReview(detailsReview.id, {
@@ -833,7 +839,7 @@ export default function TabularReviewsPage() {
                 projects={projects}
                 canEdit={
                     !!detailsReview &&
-                    can(roleFrom(detailsReview), "access.manage")
+                    can(roleFrom(detailsReview), "content.edit")
                 }
                 onClose={() => setDetailsReview(null)}
                 onSave={handleDetailsSave}
@@ -842,6 +848,7 @@ export default function TabularReviewsPage() {
             <PermissionDeniedPopup
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction?.action}
+                requiredRole={ownerOnlyAction?.requiredRole}
                 contacts={
                     ownerOnlyAction
                         ? contactsByReviewId[ownerOnlyAction.reviewId]

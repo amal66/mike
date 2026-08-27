@@ -291,9 +291,10 @@ export function RowActions(props: Props) {
                 type="button"
                 aria-label="Open row actions"
                 onClick={handleToggle}
+                aria-label="Row actions"
                 className={`flex items-center justify-center w-6 h-6 rounded text-gray-700 hover:text-gray-900 transition-colors leading-none ${LIQUID_GLASS_HOVER_CLASS}`}
             >
-                <span className="tracking-widest text-xs">···</span>
+                <span aria-hidden className="tracking-widest text-xs">···</span>
             </button>
 
             {open &&

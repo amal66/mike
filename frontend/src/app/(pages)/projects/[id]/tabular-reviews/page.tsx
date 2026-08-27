@@ -113,10 +113,14 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
     const effectiveLoading = loading && !previewEmptyStates;
 
     function handleOpenDetails(review: TabularReview) {
-        // Each row carries its own merged access_role now, so a project admin
-        // is no longer refused on a review a colleague created.
-        if (!can(roleFrom(review), "access.manage")) {
-            setOwnerOnlyAction("edit tabular review details");
+        // Each row carries its own merged access_role now. Details editing is
+        // member-tier — the server's PATCH asks for content.edit — so the
+        // list must refuse with the member sentence the review page uses.
+        if (!can(roleFrom(review), "content.edit")) {
+            setOwnerOnlyAction({
+                action: "edit tabular review details",
+                requiredRole: "member",
+            });
             return;
         }
         setDetailsReview(review);
@@ -127,8 +131,11 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
         projectId?: string | null;
     }) {
         if (!detailsReview) return;
-        if (!can(roleFrom(detailsReview), "access.manage")) {
-            setOwnerOnlyAction("edit tabular review details");
+        if (!can(roleFrom(detailsReview), "content.edit")) {
+            setOwnerOnlyAction({
+                action: "edit tabular review details",
+                requiredRole: "member",
+            });
             return;
         }
         const updated = await updateTabularReview(detailsReview.id, {
@@ -282,7 +289,7 @@ export default function ProjectTabularReviewsPage({ params }: Props) {
                 projects={project ? [project] : []}
                 canEdit={
                     !!detailsReview &&
-                    can(roleFrom(detailsReview), "access.manage")
+                    can(roleFrom(detailsReview), "content.edit")
                 }
                 lockProject
                 onClose={() => setDetailsReview(null)}

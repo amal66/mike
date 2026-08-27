@@ -3,6 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { Loader2 } from "lucide-react";
 import { can, roleFrom } from "@/app/lib/permissions";
+import type { OwnerGate } from "@/app/components/projects/ProjectWorkspace";
 import {
     RowActionMenuItems,
     RowActions,
@@ -76,7 +77,7 @@ export function ProjectReviewsTable({
     onOpenDetails: (review: TabularReview) => void;
     onDeleteReview: (review: TabularReview) => Promise<void> | void;
     onDeleteSelectedReviews: () => Promise<void> | void;
-    onOwnerOnlyAction: (action: string) => void;
+    onOwnerOnlyAction: (gate: OwnerGate) => void;
     setSelectedReviewIds: Dispatch<SetStateAction<string[]>>;
     onToggleAll: () => void;
     selectingAll?: boolean;
@@ -312,11 +313,15 @@ export function ProjectReviewsTable({
                                                                         roleFrom(
                                                                             review,
                                                                         ),
-                                                                        "access.manage",
+                                                                        "content.edit",
                                                                     )
                                                                 ) {
                                                                     onOwnerOnlyAction(
-                                                                        "edit tabular review details",
+                                                                        {
+                                                                            action: "edit tabular review details",
+                                                                            requiredRole:
+                                                                                "member",
+                                                                        },
                                                                     );
                                                                     return;
                                                                 }
@@ -394,12 +399,13 @@ export function ProjectReviewsTable({
                                             if (
                                                 !can(
                                                     roleFrom(review),
-                                                    "access.manage",
+                                                    "content.edit",
                                                 )
                                             ) {
-                                                onOwnerOnlyAction(
-                                                    "edit tabular review details",
-                                                );
+                                                onOwnerOnlyAction({
+                                                    action: "edit tabular review details",
+                                                    requiredRole: "member",
+                                                });
                                                 return;
                                             }
                                             onOpenDetails(review);
