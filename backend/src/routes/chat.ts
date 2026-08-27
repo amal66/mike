@@ -64,7 +64,7 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 type AccessibleChat = {
     id: string;
     title: string | null;
-    // Nullable since 20260828_01: content in an organization project outlives
+    // Nullable since 20260831_01: content in an organization project outlives
     // the account that created it (the FK is ON DELETE SET NULL).
     user_id: string | null;
     project_id: string | null;

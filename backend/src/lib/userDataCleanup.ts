@@ -991,7 +991,7 @@ export async function deleteUserAccountData(
         // shared_with mirror on each affected project).
         removeGrantsForEmail(db, userEmail),
         removeEmailFromSharedWith(db, "tabular_reviews", userEmail),
-        // Chats carry a share list of their own since 20260828_04. A chat the
+        // Chats carry a share list of their own since 20260831_04. A chat the
         // departing user was invited to may outlive them (their own chats are
         // deleted below, but a colleague's is not), so the invitation has to
         // be withdrawn explicitly.

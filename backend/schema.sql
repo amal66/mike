@@ -1759,7 +1759,7 @@ create index if not exists chats_shared_with_idx
 -- p_user_email is deliberately NOT defaulted: the pre-#363 three-argument
 -- signature still exists below as a deploy-window wrapper, and a defaulted
 -- p_user_email would make the old three-key call ambiguous between the two
--- (postgres 42725 / PostgREST PGRST203). See 20260828_05's header.
+-- (postgres 42725 / PostgREST PGRST203). See 20260831_05's header.
 create or replace function public.get_chats_overview(
   p_user_id text,
   p_user_email text,
@@ -1827,8 +1827,8 @@ $$;
 -- Deploy-window shim: the pre-#363 three-argument signature, kept so that API
 -- instances still running the old code survive the gap between "migration
 -- applied" and "last old pod replaced". Passing p_user_email => null replays
--- the old predicate exactly (see 20260828_05's header for the branch-by-branch
--- argument). Drop this together with 20260828_05's copy in a follow-up
+-- the old predicate exactly (see 20260831_05's header for the branch-by-branch
+-- argument). Drop this together with 20260831_05's copy in a follow-up
 -- migration once the rollout is complete.
 create or replace function public.get_chats_overview(
   p_user_id text,

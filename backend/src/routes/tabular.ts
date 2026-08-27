@@ -1874,7 +1874,7 @@ async function ensureReviewChatWriteAccess(
     //
     // `creatorScopedAllowed` rather than a bare `chat.user_id !== userId`,
     // because `tabular_review_chats.user_id` is ON DELETE SET NULL since
-    // 20260828_01: once the author's account is deleted the column is NULL
+    // 20260831_01: once the author's account is deleted the column is NULL
     // and "only the creator may act" means NOBODY may act — the thread is
     // stranded inside a review the organization still owns, which is the
     // opposite of what detaching the row was for. When the creator is gone

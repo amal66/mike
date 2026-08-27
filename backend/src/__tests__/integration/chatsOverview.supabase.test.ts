@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 //     SUPABASE_TEST_URL, SUPABASE_TEST_SERVICE_ROLE_KEY
 // or use scripts/test-stack.sh which reads them from `supabase status`.
 //
-// What this pins: 20260828_05 changed get_chats_overview's signature, and
+// What this pins: 20260831_05 changed get_chats_overview's signature, and
 // migrations land BEFORE the code that needs them. During the rollout, API
 // instances still running pre-#363 code keep calling the OLD three-argument
 // shape, so the migration keeps that signature alive as a wrapper that
@@ -129,7 +129,7 @@ maybeDescribe("get_chats_overview — deploy-window overload pair", () => {
         if (projects.error) throw projects.error;
 
         // Direct project sharing is a role-carrying grant row since
-        // 20260828_01; projects.shared_with is no longer the access source,
+        // 20260831_01; projects.shared_with is no longer the access source,
         // so seeding it would prove nothing.
         const grants = await admin.from("project_access_grants").insert([
             {
@@ -144,7 +144,7 @@ maybeDescribe("get_chats_overview — deploy-window overload pair", () => {
         // Chats with no project carry org_id null — there is no personal
         // organization to park them in. Stamping the fixtures the way
         // resolveContentOrgId stamps real rows is what makes the "the chat's
-        // own org branch can never add a row" claim in 20260828_05's header
+        // own org branch can never add a row" claim in 20260831_05's header
         // testable rather than merely asserted.
         const chatRows = await admin.from("chats").insert([
             {
