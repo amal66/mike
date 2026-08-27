@@ -362,6 +362,40 @@ async function resolveWorkflowAccess(
   return null;
 }
 
+// Creator-scoped workflow operations — share and delete — follow the same
+// heir rule as the rest of the ladder (`creatorScopedAllowed` in
+// lib/access.ts): the creator acts freely, and once the creator's account
+// is gone — `workflows.user_id` is one of the columns account deletion
+// detaches to NULL — an admin of the owning organization inherits the
+// operation. Without the heir clause a detached org workflow was
+// permanently frozen: every creator-scoped route filtered on
+// `eq("user_id", userId)`, which no caller can ever satisfy against NULL,
+// so the firm's own workflow could be edited by everyone (the org arm
+// above) but shared or deleted by no one.
+//
+// A living creator keeps exclusive hold, exactly as before; org admins do
+// not out-rank a present creator here.
+async function resolveCreatorScopedWorkflow(
+  workflowId: string,
+  userId: string,
+  db: Db,
+): Promise<WorkflowRecord | null> {
+  const { data: workflow } = await db
+    .from("workflows")
+    .select("*")
+    .eq("id", workflowId)
+    .maybeSingle();
+  if (!workflow) return null;
+  const record = workflow as WorkflowRecord;
+  const creatorId = (record as { user_id?: string | null }).user_id ?? null;
+  if (creatorId === userId) return record;
+  if (creatorId) return null;
+  const orgId = (record as { org_id?: string | null }).org_id ?? null;
+  if (!orgId) return null;
+  const role = await getOrgRole(userId, orgId, db);
+  return role === "admin" ? record : null;
+}
+
 function toOpenSourceSubmissionSummary(
   row: OpenSourceSubmissionRow,
 ): OpenSourceSubmissionSummary {
@@ -771,11 +805,18 @@ workflowsRouter.delete(
       );
     }
 
+    const workflow = await resolveCreatorScopedWorkflow(workflowId, userId, db);
+    if (!workflow)
+      return void res.status(404).json({ detail: "Workflow not found" });
+
+    // Asset files are collected by workflow, not by creator: on a detached
+    // workflow their user_id is NULL too, and scoping the cleanup to the
+    // caller would orphan the storage objects the row delete is about to
+    // strand.
     const { data: assets } = await db
       .from("documents")
       .select("id")
-      .eq("workflow_id", workflowId)
-      .eq("user_id", userId);
+      .eq("workflow_id", workflowId);
     const assetIds = (assets ?? []).map((asset) => asset.id as string);
     const { data: assetVersions } = assetIds.length
       ? await db
@@ -787,7 +828,6 @@ workflowsRouter.delete(
       .from("workflows")
       .delete()
       .eq("id", workflowId)
-      .eq("user_id", userId)
       .select("id");
     if (error) return void sendInternalError(res, error);
     if ((deleted ?? []).length > 0) {
@@ -1360,12 +1400,7 @@ workflowsRouter.get(
     const { workflowId } = req.params;
     const db = createServerSupabase();
 
-    const { data: wf } = await db
-      .from("workflows")
-      .select("id")
-      .eq("id", workflowId)
-      .eq("user_id", userId)
-      .single();
+    const wf = await resolveCreatorScopedWorkflow(workflowId, userId, db);
     if (!wf)
       return void res
         .status(404)
@@ -1391,12 +1426,7 @@ workflowsRouter.delete(
     const { workflowId, shareId } = req.params;
     const db = createServerSupabase();
 
-    const { data: wf } = await db
-      .from("workflows")
-      .select("id")
-      .eq("id", workflowId)
-      .eq("user_id", userId)
-      .single();
+    const wf = await resolveCreatorScopedWorkflow(workflowId, userId, db);
     if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
 
     await db
@@ -1449,13 +1479,8 @@ workflowsRouter.post(
       });
     }
 
-    // Verify ownership
-    const { data: wf } = await db
-      .from("workflows")
-      .select("id")
-      .eq("id", workflowId)
-      .eq("user_id", userId)
-      .single();
+    // Creator, or an org admin inheriting a detached workflow.
+    const wf = await resolveCreatorScopedWorkflow(workflowId, userId, db);
     if (!wf)
       return void res
         .status(404)

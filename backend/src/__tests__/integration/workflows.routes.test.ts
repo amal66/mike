@@ -508,4 +508,108 @@ describe("workflows.routes", () => {
       expect(res.status).toBe(404);
     });
   });
+
+  describe("creator-scoped operations on a detached workflow", () => {
+    // `workflows.user_id` is one of the columns account deletion detaches
+    // to NULL. Share and delete are creator-scoped, so without an heir
+    // clause a detached org workflow would be frozen forever: editable by
+    // the whole org, deletable and shareable by nobody. These tests pin
+    // the heir rule — an admin of the owning org inherits the operation,
+    // and only once the creator is actually gone.
+    const detached = {
+      id: "w-orphan",
+      user_id: null,
+      org_id: "org-1",
+      title: "Orphaned firm playbook",
+    };
+
+    function captureWorkflowQueries() {
+      const queries: { table: string; q: Record<string, unknown> }[] = [];
+      vi.mocked(createServerSupabase).mockImplementationOnce(() => {
+        const db = mockSupabase();
+        const originalFrom = db.from;
+        db.from = vi.fn((table: string) => {
+          const q = originalFrom(table);
+          queries.push({ table, q: q as Record<string, unknown> });
+          return q;
+        });
+        return db as unknown as ReturnType<typeof createServerSupabase>;
+      });
+      return queries;
+    }
+
+    it("lets an org admin delete a workflow whose creator's account is gone", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      supabaseState.tables.workflow_reference_documents = {
+        data: [],
+        error: null,
+      };
+      getOrgRole.mockResolvedValue("admin");
+      const queries = captureWorkflowQueries();
+
+      const res = await request(app)
+        .delete("/workflows/w-orphan")
+        .set(...AUTH);
+
+      expect(res.status).toBe(204);
+      expect(getOrgRole).toHaveBeenCalledWith("u1", "org-1", expect.anything());
+      // The delete must be keyed by id alone: nothing can match a NULL
+      // creator, so any user_id filter would turn this into a silent no-op.
+      for (const { table, q } of queries) {
+        if (table !== "workflows") continue;
+        const eq = q.eq as ReturnType<typeof vi.fn>;
+        const columns = eq.mock.calls.map((c) => c[0]);
+        expect(columns).not.toContain("user_id");
+      }
+    });
+
+    it("does not extend the heir rule to org members", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      getOrgRole.mockResolvedValue("member");
+
+      const res = await request(app)
+        .delete("/workflows/w-orphan")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
+    });
+
+    it("keeps a living creator's workflow out of org admins' reach", async () => {
+      supabaseState.tables.workflows = {
+        data: { ...detached, user_id: "someone-else" },
+        error: null,
+      };
+      getOrgRole.mockResolvedValue("admin");
+
+      const res = await request(app)
+        .delete("/workflows/w-orphan")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
+    });
+
+    it("applies the same heir rule to the sharing surface", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      supabaseState.tables.workflow_shares = { data: [], error: null };
+      getOrgRole.mockResolvedValue("admin");
+
+      const res = await request(app)
+        .get("/workflows/w-orphan/shares")
+        .set(...AUTH);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it("keeps the sharing surface closed to org members", async () => {
+      supabaseState.tables.workflows = { data: detached, error: null };
+      getOrgRole.mockResolvedValue("member");
+
+      const res = await request(app)
+        .get("/workflows/w-orphan/shares")
+        .set(...AUTH);
+
+      expect(res.status).toBe(404);
+    });
+  });
 });
