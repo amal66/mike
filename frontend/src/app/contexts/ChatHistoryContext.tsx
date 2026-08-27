@@ -159,6 +159,16 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
                     user_id: user?.id ?? "",
                     title: null,
                     created_at: now,
+                    // The optimistic row must say what the server would say.
+                    // The overview RPC serves is_owner + access_role on every
+                    // row, and the sidebar's gates read them via roleFrom(),
+                    // which fails closed to viewer when both are absent — so
+                    // without this stamp the creator was refused rename and
+                    // delete on their own brand-new thread until a reload.
+                    // The caller IS the creator here, and a chat's creator
+                    // derives admin standing on their row by definition.
+                    is_owner: true,
+                    access_role: "admin",
                 };
                 setChats((prev) => [newChat, ...(prev ?? [])]);
                 return id;
