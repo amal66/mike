@@ -726,10 +726,12 @@ export function TRView({ reviewId, projectId }: Props) {
 
     async function handleReviewModelChange(model: string) {
         if (!review) return;
-        if (review.is_owner === false) {
-            setOwnerOnlyAction("change the tabular review model");
-            return;
-        }
+        // The server gates `model` in the same content.edit arm as the
+        // title and document set, so this gate must too. The old bare
+        // `is_owner === false` check was the file's last leftover of the
+        // ownership model: it refused org admins and members a change the
+        // server accepts, and mislabelled the refusal admin-tier.
+        if (!requireContent("change the tabular review model")) return;
         const updated = await updateTabularReview(reviewId, { model });
         setReview((current) =>
             current ? { ...current, model: updated.model } : current,

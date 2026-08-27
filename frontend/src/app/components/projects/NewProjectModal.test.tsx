@@ -100,6 +100,23 @@ describe("NewProjectModal sharing", () => {
         expect(onCreated).toHaveBeenCalled();
     });
 
+    it("hands the list a row that says the creator is its admin", async () => {
+        // POST /projects returns a bare row with no role fields, and the
+        // list's fail-closed roleFrom() reads that as viewer — so the
+        // creator had no row menu, no Edit details and no Delete on the
+        // project they just made until a refetch. The optimistic row must
+        // say what the server will serve for it on every future load.
+        const user = userEvent.setup();
+        const onCreated = renderModal();
+        await user.type(screen.getByPlaceholderText("Add project name"), "P");
+        await submit(user);
+
+        await waitFor(() => expect(onCreated).toHaveBeenCalled());
+        expect(onCreated).toHaveBeenCalledWith(
+            expect.objectContaining({ is_owner: true, access_role: "admin" }),
+        );
+    });
+
     it("never writes the roleless shared_with array", async () => {
         const user = userEvent.setup({ delay: null });
         renderModal();

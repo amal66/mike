@@ -358,8 +358,14 @@ export function ProjectWorkspaceProvider({
     }, [projectId]);
 
     useEffect(() => {
-        if (peopleModalOpen && grants === null) void refreshGrants();
-    }, [peopleModalOpen, grants, refreshGrants]);
+        // The grant list is the management surface and the server now only
+        // serves it at access.manage — the People modal's role pickers, its
+        // one consumer, render only at that tier anyway. Below admin the
+        // modal shows the /people roster, so there is nothing to fetch and
+        // no point collecting a 403 on every open.
+        if (peopleModalOpen && grants === null && canDo("access.manage"))
+            void refreshGrants();
+    }, [peopleModalOpen, grants, refreshGrants, canDo]);
 
     const createChat = useCallback(async () => {
         // Creating a chat in a project is member-tier server-side; without

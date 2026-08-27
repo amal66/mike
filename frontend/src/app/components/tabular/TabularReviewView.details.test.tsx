@@ -35,6 +35,15 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
 vi.mock("@/app/contexts/SidebarContext", () => ({
     useSidebar: () => ({ setSidebarOpen: vi.fn() }),
 }));
+vi.mock("../assistant/ModelToggle", () => ({
+    ModelToggle: ({
+        onChange,
+    }: {
+        onChange: (model: string) => void;
+    }) => (
+        <button onClick={() => onChange("model-next")}>change model</button>
+    ),
+}));
 vi.mock("./TRTable", () => ({ TRTable: () => <div /> }));
 vi.mock("./TRSidePanel", () => ({ TRSidePanel: () => null }));
 vi.mock("./TRChatPanel", () => ({ TRChatPanel: () => null }));
@@ -203,5 +212,41 @@ describe("TabularReviewView details gate", () => {
                 project_id: "p9",
             }),
         );
+    });
+
+    it("lets an org admin change the model of a review they did not create", async () => {
+        // The server gates `model` in the same content.edit arm as the title.
+        // The old gate was bare `is_owner === false` — the file's last
+        // leftover of the ownership model — which refused admins and members
+        // a change the server accepts, with admin-tier popup copy.
+        mockDetail({ access_role: "admin", is_owner: false });
+        render(<TRView reviewId="r1" />);
+
+        await waitFor(() =>
+            expect(screen.getByText("change model")).toBeInTheDocument(),
+        );
+        fireEvent.click(screen.getByText("change model"));
+
+        await waitFor(() =>
+            expect(updateTabularReview).toHaveBeenCalledWith("r1", {
+                model: "model-next",
+            }),
+        );
+    });
+
+    it("refuses a viewer's model change with the member tier", async () => {
+        mockDetail({ access_role: "viewer", is_owner: false });
+        render(<TRView reviewId="r1" />);
+
+        await waitFor(() =>
+            expect(screen.getByText("change model")).toBeInTheDocument(),
+        );
+        fireEvent.click(screen.getByText("change model"));
+
+        expect(
+            await screen.findByText(/Only a member can change the tabular review model/,
+            ),
+        ).toBeInTheDocument();
+        expect(updateTabularReview).not.toHaveBeenCalled();
     });
 });

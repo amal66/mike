@@ -236,9 +236,27 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         .map((failure) => failure.email)
                         .join(", ")}: ${grantFailures[0].detail}`,
                 );
-                setPendingProject({ ...project, document_count: attachedCount });
+                setPendingProject({
+                    ...project,
+                    is_owner: true,
+                    access_role: "admin" as const,
+                    document_count: attachedCount,
+                });
                 return;
             }
+
+            // POST /projects returns a bare row with no role fields, and
+            // the list's fail-closed roleFrom() reads "no role fields" as
+            // viewer — so the creator had no row menu, no Edit details and no
+            // Delete on the project they just made until a refetch. This
+            // row's standing is not unknown: the caller IS the creator, and a
+            // creator derives admin by definition. Same stamp the optimistic
+            // chat row gets in ChatHistoryContext, for the same reason.
+            const stamped = {
+                ...project,
+                is_owner: true,
+                access_role: "admin" as const,
+            };
 
             if (failureMessage) {
                 setError(failureMessage);
@@ -248,11 +266,11 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                 if (attachedCount === 0 && requestedCount > 0) return;
                 // Partial success: the project is real, so let the user read
                 // which files are missing before the modal hands it over.
-                setPendingProject({ ...project, document_count: attachedCount });
+                setPendingProject({ ...stamped, document_count: attachedCount });
                 return;
             }
 
-            finishCreation({ ...project, document_count: attachedCount });
+            finishCreation({ ...stamped, document_count: attachedCount });
         } catch (err: unknown) {
             setError(userFacingApiError(err, "Failed to create project"));
         } finally {
