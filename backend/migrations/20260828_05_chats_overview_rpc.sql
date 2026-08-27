@@ -101,8 +101,9 @@
 --     instances writing chats during the deploy window do not know the column
 --     at all and also leave it null.
 --
---   The wrapper also drops the new is_owner column, so an old instance's
---   `res.json(data)` returns the same six fields it always did.
+--   The wrapper also drops the new is_owner and access_role columns, so an
+--   old instance's `res.json(data)` returns the same six fields it always
+--   did.
 
 create or replace function public.get_chats_overview(
   p_user_id text,
@@ -118,7 +119,8 @@ returns table (
   model text,
   created_at timestamptz,
   project_name text,
-  is_owner boolean
+  is_owner boolean,
+  access_role text
 )
 language sql
 stable
@@ -134,20 +136,31 @@ as $$
     -- Provenance ("I started this thread"), not a role: the ladder itself is
     -- lib/permissions.ts, and the creator branch of ensureChatAccess is what
     -- turns this into admin standing.
-    coalesce(c.user_id::text = p_user_id, false) as is_owner
+    coalesce(c.user_id::text = p_user_id, false) as is_owner,
+    -- The SAME verdict the predicate below filters on, served to the caller.
+    -- Serving only is_owner was not enough: the client's roleFrom() falls
+    -- back to "member" for any non-owned row it has no access_role for, so
+    -- the global sidebar offered viewers a rename the server refuses and
+    -- told admins they may not delete what the server would happily delete.
+    -- One evaluation, one truth: the lateral computes the role once and both
+    -- the column and the WHERE read it.
+    verdict.role as access_role
   from public.chats c
   left join public.projects p on p.id = c.project_id
+  cross join lateral (
+    select public.review_access_role(
+             c.user_id,
+             c.project_id,
+             c.shared_with,
+             c.org_id,
+             p_user_id,
+             p_user_email
+           ) as role
+  ) verdict
   -- The whole predicate, in one call -- see this function's header comment.
   -- The join above is for project_name only; the function resolves the
   -- project itself.
-  where public.review_access_role(
-          c.user_id,
-          c.project_id,
-          c.shared_with,
-          c.org_id,
-          p_user_id,
-          p_user_email
-        ) is not null
+  where verdict.role is not null
   order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null

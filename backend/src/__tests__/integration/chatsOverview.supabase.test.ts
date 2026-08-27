@@ -270,6 +270,21 @@ maybeDescribe("get_chats_overview — deploy-window overload pair", () => {
             (r) => r.id === chats.mine,
         );
         expect(row?.is_owner).toBe(true);
+
+        // Every row must also SAY what the caller may do with it. is_owner
+        // alone was not enough: the client's roleFrom() falls back to
+        // "member" for any non-owned row without an access_role, so the
+        // sidebar offered viewers renames the server refuses and refused
+        // admins deletes the server accepts. The role served here is the
+        // same verdict the WHERE clause filtered on — one branch each:
+        const roleOf = (id: string) =>
+            (current.data as Record<string, unknown>[]).find((r) => r.id === id)
+                ?.access_role;
+        expect(roleOf(chats.mine)).toBe("admin"); // chat creator
+        expect(roleOf(chats.inMyProject)).toBe("admin"); // project creator
+        expect(roleOf(chats.inSharedOrgProject)).toBe("member"); // org member
+        expect(roleOf(chats.inGrantedProject)).toBe("member"); // grant role
+        expect(roleOf(chats.sharedDirectly)).toBe("member"); // chat share list
     });
 
     it("keeps the wrapper's paging identical to the new function's", async () => {

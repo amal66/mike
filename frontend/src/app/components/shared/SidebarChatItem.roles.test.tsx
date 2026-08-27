@@ -91,6 +91,45 @@ describe("SidebarChatItem role gates", () => {
         ).toBeInTheDocument();
     });
 
+    it("lets a project admin delete a colleague's chat", async () => {
+        // The exact shape the overview RPC serves an org/project admin for a
+        // thread they did not start: is_owner false, access_role "admin".
+        // Before the RPC served access_role, this row fell back to "member"
+        // and the admin was refused a delete the server accepts — the
+        // headline widening, unreachable from the sidebar.
+        render(
+            <SidebarChatItem
+                chat={chat({ is_owner: false, access_role: "admin" })}
+                isActive
+                onSelect={vi.fn()}
+            />,
+        );
+        openMenu();
+        fireEvent.click(await screen.findByText("Delete"));
+
+        expect(deleteChat).toHaveBeenCalledWith("chat-1");
+    });
+
+    it("fails closed to viewer when a row carries no role fields at all", async () => {
+        // A row with neither is_owner nor access_role has told us nothing;
+        // offering member-tier affordances on it is how the sidebar ended up
+        // offering renames the server refuses. Nothing may be offered.
+        render(
+            <SidebarChatItem
+                chat={chat({})}
+                isActive
+                onSelect={vi.fn()}
+            />,
+        );
+        openMenu();
+        fireEvent.click(await screen.findByText("Rename"));
+
+        expect(renameChat).not.toHaveBeenCalled();
+        expect(
+            await screen.findByText(/only a member/i),
+        ).toBeInTheDocument();
+    });
+
     it("surfaces a failed delete instead of swallowing it", async () => {
         deleteChat.mockRejectedValue(new Error("boom"));
         render(

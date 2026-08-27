@@ -44,8 +44,10 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
     // Chats joined the project role ladder: rename is content collaboration
     // (member+, the tier the server's PATCH asks for) and delete sits at the
     // top (the creator — is_owner ⇒ admin via roleFrom — or a project
-    // admin). The overview RPC serves is_owner on every row; roleFrom fails
-    // closed to viewer when it serves nothing.
+    // admin). The overview RPC serves BOTH is_owner and access_role on every
+    // row — the same verdict its own visibility predicate filtered on — so
+    // this gate reflects what the server would actually answer; roleFrom
+    // fails closed to viewer when a row carries neither field.
     const role = roleFrom(chat);
     const canRename = can(role, "content.edit");
     const canDelete = can(role, "container.delete");
