@@ -72,6 +72,9 @@ interface ServerMessage {
 }
 interface ServerChatDetailOut {
     chat: Chat;
+    /** The caller's standing on this chat, served alongside the row. */
+    is_owner?: boolean;
+    access_role?: "admin" | "member" | "viewer";
     messages: ServerMessage[];
 }
 
@@ -1826,7 +1829,18 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
             events,
         };
     });
-    return { chat: raw.chat, messages };
+    return {
+        // Fold the caller's served standing into the row so consumers gate
+        // with roleFrom(chat) exactly as list surfaces do. Dropping these
+        // fields is how the global chat page ended up handing a project
+        // viewer a fully writable composer whose sends 403.
+        chat: {
+            ...raw.chat,
+            is_owner: raw.is_owner,
+            access_role: raw.access_role,
+        },
+        messages,
+    };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {

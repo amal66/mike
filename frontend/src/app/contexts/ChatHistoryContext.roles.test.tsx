@@ -7,15 +7,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // saveChat prepends is built by hand, and a bare row locked the creator out
 // of renaming and deleting their own brand-new thread until a reload.
 
-const { createChat, listChats } = vi.hoisted(() => ({
+const { createChat, listChats, renameChatApi } = vi.hoisted(() => ({
     createChat: vi.fn(),
     listChats: vi.fn(),
+    renameChatApi: vi.fn(),
 }));
 
 vi.mock("@/app/lib/mikeApi", () => ({
     createChat: (...args: unknown[]) => createChat(...args),
     listChats: (...args: unknown[]) => listChats(...args),
-    renameChat: vi.fn(async () => undefined),
+    renameChat: (...args: unknown[]) => renameChatApi(...args),
     deleteChat: vi.fn(async () => undefined),
 }));
 // One stable user object: the provider reloads the chat list whenever the
@@ -33,11 +34,20 @@ import {
 import { roleFrom } from "@/app/lib/permissions";
 
 function Probe() {
-    const { chats, saveChat } = useChatHistoryContext();
+    const { chats, saveChat, renameChat } = useChatHistoryContext();
     const optimistic = chats?.find((c) => c.id === "chat-9");
     return (
         <div>
             <button onClick={() => void saveChat()}>save</button>
+            <button
+                onClick={() => {
+                    renameChat("chat-9", "New title").catch(() => {
+                        document.title = "rename-rejected";
+                    });
+                }}
+            >
+                rename
+            </button>
             <span data-testid="loaded">{String(chats !== null)}</span>
             <span data-testid="role">
                 {optimistic ? roleFrom(optimistic) : "absent"}
@@ -53,6 +63,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     createChat.mockResolvedValue({ id: "chat-9" });
     listChats.mockResolvedValue([]);
+    renameChatApi.mockResolvedValue(undefined);
 });
 
 describe("saveChat's optimistic row", () => {
@@ -74,5 +85,31 @@ describe("saveChat's optimistic row", () => {
             expect(screen.getByTestId("role")).toHaveTextContent("admin"),
         );
         expect(screen.getByTestId("is-owner")).toHaveTextContent("true");
+    });
+
+    it("rethrows a refused rename so the row can say why", async () => {
+        // The old bare catch made a refused rename a silent success from the
+        // caller's point of view: title changed on screen, then quietly
+        // reverted on reload. The context restores the list AND rethrows.
+        renameChatApi.mockRejectedValue(new Error("403"));
+        render(
+            <ChatHistoryProvider>
+                <Probe />
+            </ChatHistoryProvider>,
+        );
+        await waitFor(() =>
+            expect(screen.getByTestId("loaded")).toHaveTextContent("true"),
+        );
+        fireEvent.click(screen.getByText("save"));
+        await waitFor(() =>
+            expect(screen.getByTestId("role")).toHaveTextContent("admin"),
+        );
+
+        const callsBefore = listChats.mock.calls.length;
+        fireEvent.click(screen.getByText("rename"));
+
+        await waitFor(() => expect(document.title).toBe("rename-rejected"));
+        // The reload that snaps the optimistic title back still happens.
+        expect(listChats.mock.calls.length).toBeGreaterThan(callsBefore);
     });
 });

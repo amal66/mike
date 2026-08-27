@@ -186,8 +186,14 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             );
             try {
                 await renameChat(chatId, title);
-            } catch {
+            } catch (error) {
+                // Same contract as delete below: the optimistic write must
+                // not become a silent success. The old bare catch let a
+                // refused rename show the new title and then quietly revert
+                // it on reload — the caller rethrows so the row's UI can say
+                // why the title snapped back.
                 void loadChats();
+                throw error;
             }
         },
         [loadChats],

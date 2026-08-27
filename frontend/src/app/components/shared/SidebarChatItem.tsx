@@ -40,6 +40,7 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
         requiredRole: "admin" | "member";
     } | null>(null);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [renameError, setRenameError] = useState<string | null>(null);
     const editInputRef = useRef<HTMLInputElement>(null);
     // Chats joined the project role ladder: rename is content collaboration
     // (member+, the tier the server's PATCH asks for) and delete sits at the
@@ -58,8 +59,21 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
 
     const handleRenameSave = async () => {
         const trimmed = editTitle.trim();
-        if (trimmed) await renameChat(chat.id, trimmed);
         setIsRenaming(false);
+        if (!trimmed) return;
+        try {
+            await renameChat(chat.id, trimmed);
+        } catch (error) {
+            // The context put the old title back; without this the user
+            // watches their edit silently revert — the rename twin of the
+            // surfaced delete failure below.
+            setRenameError(
+                userFacingApiError(
+                    error,
+                    "The chat could not be renamed. Please try again.",
+                ),
+            );
+        }
     };
 
     const handleRenameCancel = () => {
@@ -196,6 +210,12 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                 title="Chat not deleted"
                 message={deleteError}
                 onClose={() => setDeleteError(null)}
+            />
+            <WarningPopup
+                open={!!renameError}
+                title="Chat not renamed"
+                message={renameError}
+                onClose={() => setRenameError(null)}
             />
         </div>
     );

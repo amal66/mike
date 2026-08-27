@@ -50,6 +50,12 @@ interface Props {
         },
     ) => Promise<string | null>;
     cancel: () => void;
+    /**
+     * Whether the caller may write in this chat. The server serves the
+     * standing on GET /chat/:id; surfaces that know it must pass it, so a
+     * read-only caller gets the disabled composer instead of a 403 on send.
+     */
+    canSend?: boolean;
 }
 
 const ASSISTANT_PANEL_TRANSITION_MS = 500;
@@ -73,6 +79,7 @@ export function ChatView({
     isResponseLoading,
     handleChat,
     cancel,
+    canSend,
 }: Props) {
     const [tabs, setTabs] = useState<AssistantSidePanelTab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -839,6 +846,7 @@ export function ChatView({
                             ) : (
                                 <ChatInput
                                     ref={chatInputRef}
+                                    canSend={canSend}
                                     onSubmit={handleChat}
                                     onCancel={cancel}
                                     isLoading={isResponseLoading}

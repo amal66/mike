@@ -130,6 +130,29 @@ describe("SidebarChatItem role gates", () => {
         ).toBeInTheDocument();
     });
 
+    it("surfaces a failed rename instead of a silent revert", async () => {
+        // The context reloads the list on failure, snapping the title back.
+        // Without a popup the user just watches their edit undo itself —
+        // the rename twin of the surfaced delete failure below.
+        renameChat.mockRejectedValue(new Error("boom"));
+        render(
+            <SidebarChatItem
+                chat={chat({ is_owner: true })}
+                isActive
+                onSelect={vi.fn()}
+            />,
+        );
+        openMenu();
+        fireEvent.click(await screen.findByText("Rename"));
+        const input = screen.getByRole("textbox");
+        fireEvent.change(input, { target: { value: "New title" } });
+        fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(
+            await screen.findByText(/could not be renamed/i),
+        ).toBeInTheDocument();
+    });
+
     it("surfaces a failed delete instead of swallowing it", async () => {
         deleteChat.mockRejectedValue(new Error("boom"));
         render(
