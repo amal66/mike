@@ -228,6 +228,30 @@ describe("deleteUserOrganizations", () => {
         expect(db._tables.organizations).toHaveLength(0);
     });
 
+    it("keeps a projectless org that still owns workflows", async () => {
+        // Workflows (and documents, and tabular reviews) are filed under an
+        // org independently of any project, and the cleanup detaches them —
+        // user_id → NULL, kept for the firm — a few steps before this
+        // decision. Judging "the org owns nothing" on projects alone deleted
+        // the org anyway; its ON DELETE SET NULL FK then blanked org_id on
+        // the just-detached workflows, leaving rows with no creator and no
+        // org: invisible to every list, reachable by no access branch,
+        // deletable by nobody.
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "u1", role: "admin", created_at: 1 },
+            ],
+            projects: [],
+            workflows: [{ id: "w1", org_id: "o1", user_id: null }],
+        });
+        await deleteUserOrganizations(db, "u1");
+        expect(db._tables.organizations).toHaveLength(1);
+        expect(db._tables.workflows).toEqual([
+            { id: "w1", org_id: "o1", user_id: null },
+        ]);
+    });
+
     it("keeps an org that still holds the firm's projects", async () => {
         // Deleting it would SET NULL the org_id on those projects and strand
         // the content this whole model exists to protect. The departing

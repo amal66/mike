@@ -79,6 +79,19 @@ const PROJECT_CONTENT_TABLES = [
 ] as const;
 
 /**
+ * Every table with its own `org_id` column — the full inventory of what an
+ * organization can directly own. An org may only be deleted when a probe of
+ * ALL of these comes back empty; anything less fires the ON DELETE SET NULL
+ * foreign keys on rows the org still owned.
+ */
+const ORG_CONTENT_TABLES = [
+    "projects",
+    "documents",
+    "workflows",
+    "tabular_reviews",
+] as const;
+
+/**
  * Every organization-owned project this user left content in — including
  * projects somebody else created.
  *
@@ -614,21 +627,37 @@ export async function deleteUserOrganizations(
                         "Failed to hand off org administration",
                     );
                 } else {
-                    const { data: orgProjects, error: orgProjectsError } =
-                        await db
-                            .from("projects")
+                    // "The org owns nothing" must be judged against every
+                    // table that carries its own org_id — documents,
+                    // workflows and tabular reviews are filed under an org
+                    // independently of any project, and this very cleanup
+                    // detaches (keeps) them a few steps earlier. Probing
+                    // projects alone deleted an org that still owned
+                    // detached workflows; the ON DELETE SET NULL FK then
+                    // blanked their org_id, leaving rows with no creator
+                    // and no org — reachable by no access branch, listed
+                    // nowhere, deletable by nothing.
+                    let orgOwnsContent = false;
+                    for (const table of ORG_CONTENT_TABLES) {
+                        const { data: rows, error: rowsError } = await db
+                            .from(table)
                             .select("id")
                             .eq("org_id", m.org_id)
                             .limit(1);
-                    await throwIfError(
-                        orgProjectsError,
-                        "Failed to load org projects",
-                    );
-                    if (((orgProjects ?? []) as unknown[]).length === 0) {
+                        await throwIfError(
+                            rowsError,
+                            `Failed to load org ${table}`,
+                        );
+                        if (((rows ?? []) as unknown[]).length > 0) {
+                            orgOwnsContent = true;
+                            break;
+                        }
+                    }
+                    if (!orgOwnsContent) {
                         await deleteByIds(db, "organizations", [m.org_id]);
                         continue; // cascade removed the membership row
                     }
-                    // Sole admin, sole member, and the org keeps its projects
+                    // Sole admin, sole member, and the org keeps its content
                     // — so neither escape route below applies: there is
                     // nobody to promote and the organization must survive.
                     //
