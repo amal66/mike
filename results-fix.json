@@ -1,0 +1,115 @@
+{
+  "toolResultPosts": [
+    {
+      "t": 1787942887157,
+      "body": {
+        "tool_call_id": "ba1d398e-a712-48f3-ac0f-600dfdd64b1a",
+        "result": {
+          "document": "\nAll notices must be sent in writing."
+        }
+      }
+    },
+    {
+      "t": 1787942906191,
+      "body": {
+        "tool_call_id": "63171713-e60e-424c-be11-33fcefb79570",
+        "result": {
+          "document": "\nThe party shall provide notice.\nThe party shall provide notice."
+        }
+      }
+    },
+    {
+      "t": 1787942918712,
+      "body": {
+        "tool_call_id": "506d989e-d1e4-4a7a-97b2-f70b10dd7136",
+        "result": {
+          "edits": [
+            {
+              "index": 0,
+              "status": "proposed",
+              "matches": 2
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "netLog": [
+    "18:31:44 200 GET /api/user/profile",
+    "18:31:44 200 GET /api/user/profile",
+    "18:31:44 200 GET /api/word-chat?document_id=aa5b154b-f18c-4b74-9fc5-b2c4be38f0cd&limit=11&offset=0",
+    "18:31:44 200 GET /api/user/profile",
+    "18:31:44 200 GET /api/user/profile",
+    "18:31:50 200 GET /api/user/profile",
+    "18:31:50 200 GET /api/user/profile",
+    "18:31:54 200 POST /api/word-chat",
+    "18:48:07 204 POST /api/word-chat/tool-result",
+    "18:48:16 200 GET /api/word-chat?document_id=1a998121-178c-41ae-b1d6-bebfa92f09e9&limit=11&offset=0",
+    "18:48:22 200 POST /api/word-chat",
+    "18:48:26 204 POST /api/word-chat/tool-result",
+    "18:48:29 200 GET /api/word-chat?document_id=1a998121-178c-41ae-b1d6-bebfa92f09e9&limit=11&offset=0",
+    "18:48:34 200 POST /api/word-chat",
+    "18:48:38 200 PUT /api/word-chat/messages/fa414fa4-1f42-45e1-a976-2376c7a922e6/edits/1000?document_id=1a998121-178c-41ae-b1d6-bebfa92f09e9",
+    "18:48:38 204 POST /api/word-chat/tool-result",
+    "18:48:41 200 GET /api/word-chat?document_id=1a998121-178c-41ae-b1d6-bebfa92f09e9&limit=11&offset=0"
+  ],
+  "scenario1": {
+    "cards": [],
+    "truth": {
+      "bodyText": "\rAll notices must be sent in writing.",
+      "revisions": []
+    },
+    "toolResultPosts": 1,
+    "ambiguousSeen": false,
+    "assistantTail": "Fix the spelling mistake in the first sentence as a tracked change.\n\nCompleted in 3 steps\n\nI read the active document, and it currently consists of a single sentence:\n\n\"All notices must be sent in writing.\"\n\nI don't see a spelling mistake in this sentence — all words appear correctly spelled. Could you point out which word you believe is misspelled, or confirm whether there's additional document content I should be looking at? I don't want to make an unnecessary change without knowing exactly what needs correcting.\n\nReview"
+  },
+  "scenario2": {
+    "cards": [],
+    "toolResultPosts": 1,
+    "assistantTail": "Fix the spelling mistake in the first sentence as a tracked change.\n\nCompleted in 3 steps\n\nI read the active document, and it currently consists of a single sentence:\n\n\"All notices must be sent in writing.\"\n\nI don't see a spelling mistake in this sentence — all words appear correctly spelled. Could you point out which word you believe is misspelled, or confirm whether there's additional document content I should be looking at? I don't want to make an unnecessary change without knowing exactly what needs correcting.\n\nChange 'shall provide notice' to 'must provide written notice'.\n\nCompleted in 2 steps\n\nThe document currently contains the phrase \"shall provide notice\" twice, in two identical sentences (\"The party shall provide notice.\"). Since the phrase appears more than once, I need clarification before making the change.\n\nWould you like me to:\n\nUpdate both occurrences to \"must provide written notice\", or\nUpdate only one — and if so, the first or the second occurrence?\nReview"
+  },
+  "scenario2b": {
+    "cards": [
+      {
+        "status": "ready",
+        "text": "1Replace 'shall provide notice' with 'must provide written notice' per user requestmust provide written notice shall provide noticeApplyView"
+      }
+    ],
+    "truth": {
+      "bodyText": "\rThe party shall provide notice.\rThe party shall provide notice.",
+      "revisions": []
+    },
+    "toolResultPosts": 2,
+    "assistantTail": " single sentence:\n\n\"All notices must be sent in writing.\"\n\nI don't see a spelling mistake in this sentence — all words appear correctly spelled. Could you point out which word you believe is misspelled, or confirm whether there's additional document content I should be looking at? I don't want to make an unnecessary change without knowing exactly what needs correcting.\n\nChange 'shall provide notice' to 'must provide written notice'.\n\nCompleted in 2 steps\n\nThe document currently contains the phrase \"shall provide notice\" twice, in two identical sentences (\"The party shall provide notice.\"). Since the phrase appears more than once, I need clarification before making the change.\n\nWould you like me to:\n\nUpdate both occurrences to \"must provide written notice\", or\nUpdate only one — and if so, the first or the second occurrence?\n\nBoth occurrences, please.\n\n1\n\nReplace 'shall provide notice' with 'must provide written notice' per user request\n\nmust provide written notice shall provide notice\nApply\nView\n\nBoth occurrences of \"shall provide notice\" have been updated to \"must provide written notice\" as a tracked change, now ready for your review in Word (Review tab or the add-in card).\n\nReview"
+  },
+  "scenario3": {
+    "applyButtons": 1,
+    "truthAfterApply": {
+      "bodyText": "\rThe party shall provide noticemust provide written notice.\rThe party shall provide noticemust provide written notice.",
+      "revisions": [
+        {
+          "type": "Deleted",
+          "text": "shall provide notice"
+        },
+        {
+          "type": "Added",
+          "text": "must provide written notice"
+        },
+        {
+          "type": "Deleted",
+          "text": "shall provide notice"
+        },
+        {
+          "type": "Added",
+          "text": "must provide written notice"
+        }
+      ]
+    },
+    "cardsAfterApply": [
+      {
+        "status": "pending",
+        "text": "1Replace 'shall provide notice' with 'must provide written notice' per user requestmust provide written notice shall provide noticeAcceptRejectView"
+      }
+    ]
+  }
+}
