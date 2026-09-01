@@ -30,6 +30,7 @@ function renderTable(row: TabularReview, handlers: {
             selectedReviewIds={[]}
             creatingReview={false}
             onCreateReview={vi.fn()}
+            onDeleteSelectedReviews={vi.fn()}
             onOpenReview={vi.fn()}
             onOpenDetails={handlers.onOpenDetails}
             onDeleteReview={vi.fn()}

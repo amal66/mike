@@ -236,12 +236,8 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                         .map((failure) => failure.email)
                         .join(", ")}: ${grantFailures[0].detail}`,
                 );
-                setPendingProject({
-                    ...project,
-                    is_owner: true,
-                    access_role: "admin" as const,
-                    document_count: attachedCount,
-                });
+                // Stay open on THIS dialog: createdProjectRef holds the
+                // project, so pressing Create again retries only the grants.
                 return;
             }
 

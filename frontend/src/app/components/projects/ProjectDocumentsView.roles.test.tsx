@@ -53,6 +53,7 @@ vi.mock("./ProjectWorkspace", () => ({
         setOwnerOnlyAction: vi.fn(),
         setDocumentFolderBreadcrumbs: vi.fn(),
         setAddDocumentsHeaderAction: vi.fn(),
+        setDocumentUploadHeaderAction: vi.fn(),
         accessRole: role.current,
         canDo: (capability: Capability) => can(role.current, capability),
     }),
@@ -69,20 +70,19 @@ describe("ProjectDocumentsView folder affordances", () => {
         // folders. This used to sit behind the removed manager tier, so a
         // member saw no Folder button at all.
         renderAs("member");
+        // Folder upload moved into the document table's upload menu on main;
+        // the toolbar's remaining folder affordance is the create button.
         expect(screen.getByText("Folder")).toBeInTheDocument();
-        expect(screen.getByText("Upload folder")).toBeInTheDocument();
     });
 
     it("offers folder operations to admins", () => {
         renderAs("admin");
         expect(screen.getByText("Folder")).toBeInTheDocument();
-        expect(screen.getByText("Upload folder")).toBeInTheDocument();
     });
 
     it("withholds them from viewers", () => {
         renderAs("viewer");
         expect(screen.queryByText("Folder")).not.toBeInTheDocument();
-        expect(screen.queryByText("Upload folder")).not.toBeInTheDocument();
     });
 
     it("keeps them in place but disabled while the role is unknown", () => {
@@ -91,10 +91,6 @@ describe("ProjectDocumentsView folder affordances", () => {
         // answer lands, but they cannot be clicked before it does.
         renderAs(null);
         const folder = screen.getByText("Folder").closest("button");
-        const uploadFolder = screen
-            .getByText("Upload folder")
-            .closest("button");
         expect(folder).toBeDisabled();
-        expect(uploadFolder).toBeDisabled();
     });
 });
