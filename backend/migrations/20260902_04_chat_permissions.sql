@@ -1,9 +1,9 @@
--- Migration date: 2026-08-27
+-- Migration date: 2026-09-01
 
 -- Chat permission parity (schema + backfill).
 --
 -- Chats were the one content table left out of the organizations schema
--- (20260831_01): they gained the nullable `user_id` every project-tree table
+-- (20260902_01): they gained the nullable `user_id` every project-tree table
 -- got, but no `org_id` and no `shared_with`. That made them the only resource
 -- family still on the pre-RBAC "row creator or nothing" model — a standalone
 -- chat could never be shared, and neither lib/access.ts nor get_chats_overview
@@ -17,7 +17,7 @@
 --                 personal content has no organization: `org_id is null` IS
 --                 the personal case, there is no hidden personal org to fall
 --                 back on. SET NULL so dropping an org detaches its chats
---                 rather than deleting them, exactly as 20260831_01 does for
+--                 rather than deleting them, exactly as 20260902_01 does for
 --                 projects/documents/workflows/reviews.
 --   shared_with — per-chat email share list, so standalone chats
 --                 (project_id null) can be shared directly, exactly like
@@ -26,7 +26,7 @@
 --                 backfill will ever be needed for this column.
 --
 -- WHY CHATS KEEP shared_with WHILE PROJECTS DO NOT
--- 20260831_02 moved projects off `shared_with` and onto role-carrying
+-- 20260902_02 moved projects off `shared_with` and onto role-carrying
 -- `project_access_grants` rows, because a project is the container people
 -- administer: sharing one has to say WHAT the recipient may do. A chat is a
 -- single thread inside (or outside) that container and carries no roles of
@@ -38,7 +38,7 @@
 -- Backfill matches what `resolveContentOrgId` does at creation time: a chat
 -- inside a project inherits that project's org, and everything else stays
 -- personal (org_id null). That is also what makes the chat's own org branch
--- in 20260831_05 safe — see that file's header.
+-- in 20260902_05 safe — see that file's header.
 --
 -- Idempotent: the column adds are IF NOT EXISTS, the index adds are IF NOT
 -- EXISTS, and the backfill is guarded by `where c.org_id is null`, so
