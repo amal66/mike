@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { User, Loader2 } from "lucide-react";
 import type { ProjectPeople } from "@/app/lib/mikeApi";
 import {
-    PROJECT_ROLES,
+    isProjectRole,
     PROJECT_ROLE_DESCRIPTIONS,
     PROJECT_ROLE_LABELS,
-    isProjectRole,
+    PROJECT_ROLES,
     type ProjectRole,
+    strongerRole,
 } from "@/app/lib/permissions";
 import { AddUserInput } from "../shared/AddUserInput";
 import { userFacingApiError } from "@/app/lib/userFacingError";
@@ -82,6 +83,9 @@ type RosterRow = {
     user_id?: string | null;
     display_name: string | null;
     role: ProjectRole;
+    /** Set when the server enforces a stronger role than the direct grant —
+     *  inheritance from an org role the grant cannot demote. */
+    effectiveRole?: ProjectRole;
     /** The creator's row is provenance — it has no grant to edit or revoke. */
     isCreator: boolean;
 };
@@ -202,8 +206,10 @@ export function PeopleModal({
     if (!open || !resource) return null;
 
     const memberDisplayByEmail = new Map<string, string | null>();
+    const effectiveRoleByEmail = new Map<string, ProjectRole>();
     for (const m of people?.members ?? []) {
         memberDisplayByEmail.set(m.email.toLowerCase(), m.display_name);
+        if (m.role) effectiveRoleByEmail.set(m.email.toLowerCase(), m.role);
     }
     const creatorEmail =
         people?.owner?.email?.trim().toLowerCase() ??
@@ -225,11 +231,23 @@ export function PeopleModal({
         });
     }
     const recipients: { email: string; role: ProjectRole }[] = roleAware
-        ? grants
+        ? canManage
+            ? grants
+            : // Below access.manage the grant list is never fetched — the
+              // endpoint is admin-only — but the roster itself is not
+              // privileged: /people serves every collaborator with their
+              // effective role, which is exactly what a member should see
+              // here. Everyone who can see the project sees who else is on
+              // it; only the controls are the admin's.
+              (people?.members ?? []).map((member) => ({
+                  email: member.email,
+                  role: member.role ?? ("member" as ProjectRole),
+              }))
         : sharedWith.map((email) => ({ email, role: "member" as ProjectRole }));
     for (const recipient of recipients) {
         const lower = recipient.email.toLowerCase();
         if (creatorEmail && lower === creatorEmail) continue;
+        const effectiveRole = effectiveRoleByEmail.get(lower);
         roster.push({
             email: recipient.email,
             display_name:
@@ -237,6 +255,15 @@ export function PeopleModal({
                 lookupDisplayByEmail.get(lower) ??
                 null,
             role: recipient.role,
+            // The picker edits the GRANT; the server's verdict is the
+            // strongest of every branch. When they differ (an org admin
+            // holding a viewer grant), showing only the grant would present
+            // a role the server does not enforce.
+            effectiveRole:
+                effectiveRole &&
+                strongerRole(effectiveRole, recipient.role) !== recipient.role
+                    ? effectiveRole
+                    : undefined,
             isCreator: false,
         });
     }
@@ -554,6 +581,20 @@ export function PeopleModal({
                                                                 entry.role
                                                             ]
                                                         }
+                                                    </span>
+                                                )}
+                                                {entry.effectiveRole && (
+                                                    <span
+                                                        title={`Their organization role already makes them ${PROJECT_ROLE_LABELS[entry.effectiveRole].toLowerCase()} here; a direct grant can add standing but never remove it.`}
+                                                        className="shrink-0 whitespace-nowrap text-[10px] text-gray-400"
+                                                    >
+                                                        {
+                                                            PROJECT_ROLE_LABELS[
+                                                                entry
+                                                                    .effectiveRole
+                                                            ]
+                                                        }{" "}
+                                                        via organization
                                                     </span>
                                                 )}
                                                 {canManage && (

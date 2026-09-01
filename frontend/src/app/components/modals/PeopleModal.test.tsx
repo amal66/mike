@@ -106,10 +106,12 @@ describe("PeopleModal — per-recipient roles", () => {
             await screen.findByLabelText("Role for the new recipient"),
             "viewer",
         );
-        await user.type(
+        await user.click(
             screen.getByPlaceholderText("Add by email..."),
-            "newcounsel@outside.example",
         );
+        // paste, not per-key typing: one input event cannot be cut off
+        // mid-word by a slow re-render on a loaded machine.
+        await user.paste("newcounsel@outside.example");
         await user.click(screen.getByRole("button", { name: "Add" }));
         await waitFor(() =>
             expect(onGrant).toHaveBeenCalledWith(
@@ -139,10 +141,12 @@ describe("PeopleModal — per-recipient roles", () => {
                 ),
         });
         await screen.findByLabelText("Role for the new recipient");
-        await user.type(
+        await user.click(
             screen.getByPlaceholderText("Add by email..."),
-            "creator@firm.example2",
         );
+        // paste, not per-key typing: one input event cannot be cut off
+        // mid-word by a slow re-render on a loaded machine.
+        await user.paste("creator@firm.example2");
         await user.click(screen.getByRole("button", { name: "Add" }));
 
         expect(
@@ -166,10 +170,12 @@ describe("PeopleModal — per-recipient roles", () => {
                 ),
         });
         await screen.findByLabelText("Role for the new recipient");
-        await user.type(
+        await user.click(
             screen.getByPlaceholderText("Add by email..."),
-            "someone@firm.example",
         );
+        // paste, not per-key typing: one input event cannot be cut off
+        // mid-word by a slow re-render on a loaded machine.
+        await user.paste("someone@firm.example");
         await user.click(screen.getByRole("button", { name: "Add" }));
 
         expect(
@@ -274,5 +280,79 @@ describe("PeopleModal — roleless resources", () => {
         expect(
             screen.queryByLabelText("Role for colleague@firm.example"),
         ).not.toBeInTheDocument();
+    });
+    it("shows the /people roster to a member who cannot manage access", async () => {
+        // Below access.manage the grant list is never fetched — GET /access
+        // is admin-only — so the roster must come from /people, which every
+        // viewer of the project may read and which carries each person's
+        // effective role. The old behavior rendered only the creator.
+        render(
+            <PeopleModal
+                open
+                onClose={vi.fn()}
+                resource={PROJECT}
+                fetchPeople={peopleResponse}
+                currentUserEmail="me@firm.example"
+                breadcrumb={["Projects", "Matter", "People"]}
+                access={{
+                    grants: [],
+                    orgId: null,
+                    canManage: false,
+                    onGrant: vi.fn() as never,
+                    onRevoke: vi.fn(),
+                }}
+            />,
+        );
+        expect(
+            await screen.findByText(/counsel@outside\.example/),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Viewer")).toBeInTheDocument();
+        expect(
+            screen.queryByLabelText("Role for counsel@outside.example"),
+        ).not.toBeInTheDocument();
+    });
+
+    it("annotates a grant the organization already outranks", async () => {
+        // The picker edits the GRANT; the server enforces the strongest of
+        // every branch. An org admin holding a viewer grant must not render
+        // as a viewer with no explanation.
+        render(
+            <PeopleModal
+                open
+                onClose={vi.fn()}
+                resource={PROJECT}
+                fetchPeople={() =>
+                    Promise.resolve({
+                        owner: {
+                            user_id: "u1",
+                            email: "creator@firm.example",
+                            display_name: "Creator",
+                            role: "admin" as const,
+                        },
+                        members: [
+                            {
+                                email: "counsel@outside.example",
+                                display_name: null,
+                                role: "admin" as const,
+                            },
+                        ],
+                    })
+                }
+                currentUserEmail="me@firm.example"
+                breadcrumb={["Projects", "Matter", "People"]}
+                access={{
+                    grants: [
+                        { email: "counsel@outside.example", role: "viewer" },
+                    ],
+                    orgId: null,
+                    canManage: true,
+                    onGrant: vi.fn() as never,
+                    onRevoke: vi.fn(),
+                }}
+            />,
+        );
+        expect(
+            await screen.findByText(/Admin via organization/),
+        ).toBeInTheDocument();
     });
 });
