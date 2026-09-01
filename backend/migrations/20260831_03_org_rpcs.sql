@@ -322,6 +322,19 @@ as $$
         coalesce(p_scope, 'all') = 'all'
         or (p_scope = 'mine' and p.user_id::text = p_user_id)
         or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
+        or (
+          p_scope = 'collaborative'
+          and (
+            p.user_id is null
+            or p.user_id::text <> p_user_id
+            or p.shared_with <> '[]'::jsonb
+          )
+        )
+        or (
+          p_scope = 'private'
+          and p.user_id::text = p_user_id
+          and p.shared_with = '[]'::jsonb
+        )
       )
       and (
         p_search_term is null
@@ -460,6 +473,19 @@ as $$
       coalesce(p_scope, 'all') = 'all'
       or (p_scope = 'mine' and p.user_id::text = p_user_id)
       or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
+      or (
+        p_scope = 'collaborative'
+        and (
+          p.user_id is null
+          or p.user_id::text <> p_user_id
+          or p.shared_with <> '[]'::jsonb
+        )
+      )
+      or (
+        p_scope = 'private'
+        and p.user_id::text = p_user_id
+        and p.shared_with = '[]'::jsonb
+      )
     )
     and (
       p_search_term is null

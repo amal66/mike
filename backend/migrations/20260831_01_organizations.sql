@@ -214,6 +214,9 @@ create index if not exists idx_tabular_reviews_org on public.tabular_reviews(org
 --       `workflows`. Leaving `user_id` on cascade would strip an org
 --       workflow of the very documents it references the moment its author
 --       left, quietly breaking a workflow that otherwise survived intact.
+--       (20260901_03 folds these into `documents`; on a database past that
+--       point the table is gone and the loop skips it — the `documents`
+--       conversion above already covers workflow assets there.)
 --
 -- Deliberately NOT in this list: per-account tables where the row IS the
 -- account's own state and should die with it — user_api_keys, quick_actions,
@@ -232,6 +235,15 @@ begin
     'projects', 'project_subfolders', 'documents', 'chats', 'tabular_reviews',
     'workflows', 'tabular_review_chats', 'workflow_reference_documents'
   ] loop
+    -- workflow_reference_documents no longer exists once
+    -- 20260901_03_workflow_assets_as_documents has folded workflow assets
+    -- into `documents` (whose user_id this same loop converts). Skip any
+    -- table the running database does not have, so the loop is correct both
+    -- before and after that migration.
+    if to_regclass(format('public.%I', t)) is null then
+      continue;
+    end if;
+
     execute format('alter table public.%I alter column user_id drop not null', t);
 
     select con.conname into c
