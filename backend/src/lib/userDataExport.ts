@@ -365,17 +365,38 @@ export async function buildUserAccountExport(
             query.eq("user_id", userId).order("created_at", { ascending: true }),
         ),
         userEmail
-            ? selectAll(db, "projects", (query) =>
-                  query
-                      .filter(
-                          "shared_with",
-                          "cs",
-                          JSON.stringify([userEmail.trim().toLowerCase()]),
-                      )
-                      .neq("user_id", userId)
-                      .order("created_at", { ascending: true }),
-                  "id, user_id, name, cm_number, created_at, updated_at",
-              )
+            ? (async () => {
+                  // Shared projects come from the grant table, not the
+                  // shared_with display mirror: the mirror can be stale, and
+                  // the export must list exactly the projects the caller can
+                  // actually reach — the same source every access decision
+                  // reads (see lib/projectAccess.ts).
+                  const grantRows = await selectAll(
+                      db,
+                      "project_access_grants",
+                      (query) =>
+                          query.eq(
+                              "email",
+                              userEmail.trim().toLowerCase(),
+                          ),
+                      "project_id",
+                  );
+                  const projectIds = [
+                      ...new Set(
+                          grantRows
+                              .map((row) => row.project_id as string | null)
+                              .filter((id): id is string => !!id),
+                      ),
+                  ];
+                  if (projectIds.length === 0) return [];
+                  return selectAll(db, "projects", (query) =>
+                      query
+                          .in("id", projectIds)
+                          .neq("user_id", userId)
+                          .order("created_at", { ascending: true }),
+                      "id, user_id, name, cm_number, created_at, updated_at",
+                  );
+              })()
             : Promise.resolve([]),
         userEmail
             ? selectAll(db, "tabular_reviews", (query) =>
