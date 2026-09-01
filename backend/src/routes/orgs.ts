@@ -132,6 +132,7 @@ orgsRouter.patch("/:orgId/members/:userId", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const result = await updateMember(db, {
         actorId: userId,
+        actorEmail: res.locals.userEmail as string | undefined,
         orgId: req.params.orgId,
         targetUserId: req.params.userId,
         role: req.body?.role,
@@ -146,6 +147,7 @@ orgsRouter.delete("/:orgId/members/:userId", requireAuth, async (req, res) => {
     const db = createServerSupabase();
     const result = await removeMember(db, {
         actorId: userId,
+        actorEmail: res.locals.userEmail as string | undefined,
         orgId: req.params.orgId,
         targetUserId: req.params.userId,
     });

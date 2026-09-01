@@ -189,6 +189,78 @@ describe("orgs.service roles", () => {
         ).resolves.toMatchObject({ ok: true });
     });
 
+    it("audits role changes and removals like the invitation lifecycle", async () => {
+        // An org role inherits onto every project the org owns, so changing
+        // or removing one moves real standing — it belongs in the same audit
+        // trail org.invite.* already writes to.
+        const db = seedPair();
+        (db._tables.user_profiles ??= []).push({
+            user_id: "member1",
+            email: "member1@example.com",
+        });
+        await expect(
+            updateMember(db, {
+                actorId: "admin1",
+                actorEmail: "admin1@example.com",
+                orgId: "o1",
+                targetUserId: "member1",
+                role: "admin",
+            }),
+        ).resolves.toMatchObject({ ok: true });
+        await expect(
+            removeMember(db, {
+                actorId: "admin1",
+                actorEmail: "admin1@example.com",
+                orgId: "o1",
+                targetUserId: "member1",
+            }),
+        ).resolves.toMatchObject({ ok: true });
+
+        const events = (db._tables.audit_events ?? []) as Record<
+            string,
+            unknown
+        >[];
+        expect(events.map((e) => e.action)).toEqual([
+            "org.member.role_changed",
+            "org.member.removed",
+        ]);
+        expect(events[0]).toMatchObject({
+            user_id: "admin1",
+            user_email: "admin1@example.com",
+            title: "member1@example.com",
+            detail: {
+                org_id: "o1",
+                target_user_id: "member1",
+                previous_role: "member",
+                role: "admin",
+            },
+        });
+        expect(events[1].detail).toMatchObject({ role: "admin" });
+    });
+
+    it("audits a self-removal as leaving, not as being removed", async () => {
+        const db = makeDb({
+            organizations: [{ id: "o1", name: "Acme" }],
+            org_members: [
+                { id: "m1", org_id: "o1", user_id: "admin1", role: "admin" },
+                { id: "m2", org_id: "o1", user_id: "member1", role: "member" },
+            ],
+        });
+        await expect(
+            removeMember(db, {
+                actorId: "member1",
+                actorEmail: "member1@example.com",
+                orgId: "o1",
+                targetUserId: "member1",
+            }),
+        ).resolves.toMatchObject({ ok: true });
+        const events = (db._tables.audit_events ?? []) as Record<
+            string,
+            unknown
+        >[];
+        expect(events.map((e) => e.action)).toEqual(["org.member.left"]);
+    });
+
     it("lets a member change nobody's role, including their own", async () => {
         const db = seedPair();
         await expect(

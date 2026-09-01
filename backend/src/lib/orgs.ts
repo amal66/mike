@@ -279,6 +279,7 @@ export async function updateMember(
     db: Db,
     params: {
         actorId: string;
+        actorEmail?: string | null;
         orgId: string;
         targetUserId: string;
         role: unknown;
@@ -318,12 +319,35 @@ export async function updateMember(
             detail: error?.message ?? "Failed to update member",
         };
     }
+    // Role changes move real standing (an org role inherits onto every
+    // project the org owns), so they belong in the same audit trail the
+    // invitation lifecycle already writes to.
+    const profiles = await attachProfiles(db, [
+        { user_id: params.targetUserId },
+    ]);
+    await recordAudit(db, {
+        userId: params.actorId,
+        userEmail: params.actorEmail ?? null,
+        action: "org.member.role_changed",
+        title: profiles.get(params.targetUserId)?.email ?? params.targetUserId,
+        detail: {
+            org_id: params.orgId,
+            target_user_id: params.targetUserId,
+            previous_role: targetRole,
+            role: nextRole,
+        },
+    });
     return { ok: true, member };
 }
 
 export async function removeMember(
     db: Db,
-    params: { actorId: string; orgId: string; targetUserId: string },
+    params: {
+        actorId: string;
+        actorEmail?: string | null;
+        orgId: string;
+        targetUserId: string;
+    },
 ): Promise<OrgResult<Record<never, never>>> {
     const actorRole = await getOrgRole(params.actorId, params.orgId, db);
     if (!actorRole) return { ok: false, kind: "not_found" };
@@ -352,6 +376,20 @@ export async function removeMember(
             return { ok: false, kind: "last_admin" };
         return { ok: false, kind: "db_error", detail: error.message };
     }
+    const profiles = await attachProfiles(db, [
+        { user_id: params.targetUserId },
+    ]);
+    await recordAudit(db, {
+        userId: params.actorId,
+        userEmail: params.actorEmail ?? null,
+        action: isSelf ? "org.member.left" : "org.member.removed",
+        title: profiles.get(params.targetUserId)?.email ?? params.targetUserId,
+        detail: {
+            org_id: params.orgId,
+            target_user_id: params.targetUserId,
+            role: targetRole,
+        },
+    });
     return { ok: true };
 }
 
