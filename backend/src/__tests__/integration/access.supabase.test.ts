@@ -52,7 +52,7 @@ maybeDescribe("Supabase access integration", () => {
 
             // Sharing is a `project_access_grants` row keyed on lowercase
             // email; `projects.shared_with` is only a display mirror rebuilt
-            // from the grants (20260831_02 backfilled it once for legacy
+            // from the grants (20260902_02 backfilled it once for legacy
             // rows). The "private" project deliberately carries the
             // reviewer's email in that mirror WITHOUT a grant row: if any
             // access path ever consults the mirror again, the private doc
