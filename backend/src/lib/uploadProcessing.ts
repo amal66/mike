@@ -258,6 +258,18 @@ async function processCreatedDocument(
   // document as personal content.
   const resolvedOrg = await resolveContentOrgId(db, { projectId });
   if (!resolvedOrg.ok) throw new Error(resolvedOrg.detail);
+  let orgId = resolvedOrg.orgId;
+  if (!orgId && workflowId) {
+    // A workflow asset belongs to its workflow's tenant: an org workflow's
+    // assets must survive their uploader's account the way the workflow does.
+    const { data: workflowRow, error: workflowError } = await db
+      .from("workflows")
+      .select("org_id")
+      .eq("id", workflowId)
+      .maybeSingle();
+    if (workflowError) throw new Error(workflowError.message);
+    orgId = (workflowRow as { org_id?: string | null } | null)?.org_id ?? null;
+  }
 
   const { error: documentError } = await db.from("documents").upsert(
     {
@@ -265,7 +277,7 @@ async function processCreatedDocument(
       project_id: projectId,
       user_id: session.user_id,
       status: "processing",
-      org_id: resolvedOrg.orgId,
+      org_id: orgId,
       folder_id: folderId,
       library_kind: libraryKind,
       library_folder_id: libraryFolderId,

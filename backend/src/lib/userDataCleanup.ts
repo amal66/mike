@@ -172,11 +172,11 @@ async function getDocumentIdsForAccountDeletion(
     orgProjectIds: string[],
 ): Promise<string[]> {
     const [ownedDocs, projectDocs, orgProjectDocs] = await Promise.all([
-        db.from("documents").select("id, org_id").eq("user_id", userId),
+        db.from("documents").select("id, org_id, workflow_id").eq("user_id", userId),
         personalProjectIds.length > 0
             ? db
                   .from("documents")
-                  .select("id, org_id")
+                  .select("id, org_id, workflow_id")
                   .in("project_id", personalProjectIds)
             : Promise.resolve({ data: [], error: null }),
         orgProjectIds.length > 0
@@ -194,11 +194,37 @@ async function getDocumentIdsForAccountDeletion(
         "Failed to load organization project documents",
     );
 
-    type DocRow = { id: string | null; org_id?: string | null };
+    type DocRow = {
+        id: string | null;
+        org_id?: string | null;
+        workflow_id?: string | null;
+    };
     const candidates = [
         ...((ownedDocs.data ?? []) as DocRow[]),
         ...((projectDocs.data ?? []) as DocRow[]),
     ];
+
+    // A workflow asset (documents.workflow_id) belongs to its workflow. When
+    // the workflow is organization-owned it survives this deletion, and an
+    // asset stripped from a surviving workflow is a workflow that silently
+    // stopped working — so those documents are kept (and detached) too.
+    const workflowIds = uniqueStrings(
+        candidates.map((row) => row.workflow_id ?? null),
+    );
+    const survivingWorkflowIds = new Set<string>();
+    for (const batch of chunks(workflowIds)) {
+        const { data: workflowRows, error: workflowError } = await db
+            .from("workflows")
+            .select("id, org_id")
+            .in("id", batch);
+        await throwIfError(workflowError, "Failed to classify workflows");
+        for (const row of (workflowRows ?? []) as {
+            id: string | null;
+            org_id?: string | null;
+        }[]) {
+            if (row.id && row.org_id) survivingWorkflowIds.add(row.id);
+        }
+    }
 
     const keep = new Set([
         ...uniqueStrings(
@@ -206,6 +232,15 @@ async function getDocumentIdsForAccountDeletion(
         ),
         ...uniqueStrings(
             candidates.filter((row) => !!row.org_id).map((row) => row.id),
+        ),
+        ...uniqueStrings(
+            candidates
+                .filter(
+                    (row) =>
+                        !!row.workflow_id &&
+                        survivingWorkflowIds.has(row.workflow_id),
+                )
+                .map((row) => row.id),
         ),
     ]);
 
@@ -274,12 +309,12 @@ async function detachOrgProjectContent(
 }
 
 /**
- * Two tables hang off content that has just been handed to an organization
- * and carry a `user_id` of their own: the chat threads attached to a review,
- * and the reference documents attached to a workflow. Their parent FKs
- * already cascade, so keeping the parent while cascading the child away
- * would leave a review nobody appears to have worked on and a workflow
- * whose references have silently vanished.
+ * Two kinds of row hang off content that has just been handed to an
+ * organization and carry a `user_id` of their own: the chat threads attached
+ * to a review, and the asset documents attached to a workflow
+ * (documents.workflow_id). Their parent FKs already cascade, so keeping the
+ * parent while cascading the child away would leave a review nobody appears
+ * to have worked on and a workflow whose assets have silently vanished.
  */
 async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
     const pairs = [
@@ -290,10 +325,12 @@ async function detachChildrenOfSurvivingContent(db: Db, userId: string) {
             label: "review chats",
         },
         {
-            table: "workflow_reference_documents",
+            // Workflow assets are `documents` rows with a workflow_id since
+            // 20260901_03 folded workflow_reference_documents away.
+            table: "documents",
             fk: "workflow_id",
             parent: "workflows",
-            label: "workflow reference documents",
+            label: "workflow assets",
         },
     ] as const;
 
@@ -425,7 +462,10 @@ async function claimedStoragePaths(
     };
 
     for (const batch of chunks(paths)) {
-        const [versions, pdfVersions, references] = await Promise.all([
+        // Workflow-asset files are claimed through document_versions too:
+        // 20260901_03 gave every legacy reference file a version row carrying
+        // its original workflow-references/ storage path.
+        const [versions, pdfVersions] = await Promise.all([
             db
                 .from("document_versions")
                 .select("storage_path, pdf_storage_path")
@@ -434,19 +474,11 @@ async function claimedStoragePaths(
                 .from("document_versions")
                 .select("storage_path, pdf_storage_path")
                 .in("pdf_storage_path", batch),
-            (db as any)
-                .from("workflow_reference_documents")
-                .select("storage_path")
-                .in("storage_path", batch),
         ]);
         await throwIfError(versions.error, "Failed to classify stored versions");
         await throwIfError(
             pdfVersions.error,
             "Failed to classify stored version PDFs",
-        );
-        await throwIfError(
-            references.error,
-            "Failed to classify stored workflow references",
         );
 
         for (const row of [
@@ -455,9 +487,6 @@ async function claimedStoragePaths(
         ]) {
             claim(row.storage_path);
             claim(row.pdf_storage_path);
-        }
-        for (const row of (references.data ?? []) as Record<string, unknown>[]) {
-            claim(row.storage_path);
         }
     }
 

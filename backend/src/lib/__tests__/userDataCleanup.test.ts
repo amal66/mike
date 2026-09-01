@@ -596,6 +596,12 @@ describe("deleteUserAccountData organization retention", () => {
                 { id: "d-loose-org", user_id: "u1", project_id: null, org_id: "org-1" },
                 { id: "d-personal", user_id: "u1", project_id: "p-personal", org_id: null },
                 { id: "d-loose-personal", user_id: "u1", project_id: null, org_id: null },
+                // Workflow assets are documents rows since 20260901_03 —
+                // deliberately with no org_id of their own, the shape legacy
+                // migrated assets have: only workflow_id ties them to the
+                // tenant.
+                { id: "wa-org", user_id: "u1", project_id: null, org_id: null, workflow_id: "w-org" },
+                { id: "wa-personal", user_id: "u1", project_id: null, org_id: null, workflow_id: "w-personal" },
             ],
             document_versions: [
                 {
@@ -608,6 +614,19 @@ describe("deleteUserAccountData organization retention", () => {
                     id: "v-personal",
                     document_id: "d-personal",
                     storage_path: "documents/u1/d-personal/source.pdf",
+                    pdf_storage_path: null,
+                },
+                {
+                    id: "v-wa-org",
+                    document_id: "wa-org",
+                    storage_path: "workflow-references/u1/w-org/wr-org/abc.pdf",
+                    pdf_storage_path: null,
+                },
+                {
+                    id: "v-wa-personal",
+                    document_id: "wa-personal",
+                    storage_path:
+                        "workflow-references/u1/w-personal/wr-personal/def.pdf",
                     pdf_storage_path: null,
                 },
             ],
@@ -630,21 +649,6 @@ describe("deleteUserAccountData organization retention", () => {
             workflows: [
                 { id: "w-org", user_id: "u1", org_id: "org-1" },
                 { id: "w-personal", user_id: "u1", org_id: null },
-            ],
-            workflow_reference_documents: [
-                {
-                    id: "wr-org",
-                    user_id: "u1",
-                    workflow_id: "w-org",
-                    storage_path: "workflow-references/u1/w-org/wr-org/abc.pdf",
-                },
-                {
-                    id: "wr-personal",
-                    user_id: "u1",
-                    workflow_id: "w-personal",
-                    storage_path:
-                        "workflow-references/u1/w-personal/wr-personal/def.pdf",
-                },
             ],
         });
 
@@ -685,15 +689,16 @@ describe("deleteUserAccountData organization retention", () => {
         expect(row(tables.documents, "d-loose-org")?.user_id).toBeNull();
     });
 
-    it("keeps org workflows and the reference documents they depend on", async () => {
-        // workflow_reference_documents.workflow_id cascades from workflows,
-        // so a surviving org workflow whose references were cascaded away
-        // would still be there and no longer work.
+    it("keeps org workflows and the asset documents they depend on", async () => {
+        // documents.workflow_id cascades from workflows, so a surviving org
+        // workflow whose assets were deleted with their uploader would still
+        // be there and no longer work. The asset carries no org_id of its
+        // own (the migrated legacy shape) — the workflow's org is the claim.
         const { db, tables } = fixture();
         await deleteUserAccountData(db, "u1", null);
 
         expect(row(tables.workflows, "w-org")?.user_id).toBeNull();
-        expect(row(tables.workflow_reference_documents, "wr-org")?.user_id).toBeNull();
+        expect(row(tables.documents, "wa-org")?.user_id).toBeNull();
     });
 
     it("keeps the review chat attached to a surviving org review", async () => {
@@ -715,9 +720,7 @@ describe("deleteUserAccountData organization retention", () => {
         expect(row(tables.tabular_reviews, "r-personal")).toBeUndefined();
         expect(row(tables.tabular_review_chats, "rc-personal")).toBeUndefined();
         expect(row(tables.workflows, "w-personal")).toBeUndefined();
-        expect(
-            row(tables.workflow_reference_documents, "wr-personal"),
-        ).toBeUndefined();
+        expect(row(tables.documents, "wa-personal")).toBeUndefined();
     });
 
     it("deletes storage only for the documents it actually destroys", async () => {
@@ -736,18 +739,23 @@ describe("deleteUserAccountData organization retention", () => {
         // blanket "delete documents/u1/" destroyed them while their rows
         // survived — a matter full of documents whose every version 404s.
         const { db } = fixture();
-        listFilesMock.mockImplementation(async (prefix: string) =>
-            prefix === "documents/u1/"
-                ? [
-                      "documents/u1/d-colleague/source.pdf",
-                      "documents/u1/d-personal/source.pdf",
-                      "documents/u1/interrupted-upload.bin",
-                  ]
-                : [
-                      "workflow-references/u1/w-org/wr-org/abc.pdf",
-                      "workflow-references/u1/w-personal/wr-personal/def.pdf",
-                  ],
-        );
+        // Prefix-exact on purpose: main's export-artifact cleanup sweeps
+        // exports/u1/ too, and a mock that answers every prefix with the
+        // workflow files would hand them to that sweep as its own.
+        listFilesMock.mockImplementation(async (prefix: string) => {
+            if (prefix === "documents/u1/")
+                return [
+                    "documents/u1/d-colleague/source.pdf",
+                    "documents/u1/d-personal/source.pdf",
+                    "documents/u1/interrupted-upload.bin",
+                ];
+            if (prefix === "workflow-references/u1/")
+                return [
+                    "workflow-references/u1/w-org/wr-org/abc.pdf",
+                    "workflow-references/u1/w-personal/wr-personal/def.pdf",
+                ];
+            return [];
+        });
 
         await deleteUserAccountData(db, "u1", null);
         const deleted = deleteFileMock.mock.calls.map(([path]) => path);
