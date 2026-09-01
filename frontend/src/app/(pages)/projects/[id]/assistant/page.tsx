@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { deleteChat, renameChat } from "@/app/lib/mikeApi";
 import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
-import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { ProjectAssistantTable } from "@/app/components/projects/ProjectAssistantTable";
 import {
     ProjectSectionToolbar,
@@ -15,7 +14,6 @@ import type { Chat } from "@/app/components/shared/types";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { can, roleFrom } from "@/app/lib/permissions";
 import { userFacingApiError } from "@/app/lib/userFacingError";
-import { deleteTabularReviewsWithConcurrency } from "@/app/lib/deleteTabularReviewsWithConcurrency";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { TabPillButton } from "@/app/components/ui/tab-pill-button";
 
@@ -136,21 +134,13 @@ export default function ProjectAssistantPage({ params }: Props) {
             setOwnerOnlyAction("delete this chat");
             return;
         }
-        setProjectChats((prev) => (prev ?? []).filter((c) => c.id !== chat.id));
+        // Await first, remove after: a refusal or an outage used to make the
+        // row disappear locally and come back on reload with no explanation.
+        // The row action calls this without awaiting, so rethrowing would
+        // only produce an unhandled rejection.
         try {
             await deleteChat(chat.id);
         } catch (error) {
-            setProjectChats((current) =>
-                restoreOptimisticallyDeletedRows(
-                    current ?? [],
-                    chats,
-                    [chat.id],
-                ),
-            );
-            // A refusal or an outage used to disappear: the row vanished
-            // locally and came back on reload with no explanation. The row
-            // action calls this without awaiting, so rethrowing would only
-            // produce an unhandled rejection.
             setActionNotice({
                 title: "The chat was not deleted",
                 message: userFacingApiError(
@@ -158,7 +148,9 @@ export default function ProjectAssistantPage({ params }: Props) {
                     "The chat could not be deleted. Please try again.",
                 ),
             });
+            return;
         }
+        setProjectChats((prev) => (prev ?? []).filter((c) => c.id !== chat.id));
     }
 
     const handleDeleteSelectedChats = useCallback(async () => {

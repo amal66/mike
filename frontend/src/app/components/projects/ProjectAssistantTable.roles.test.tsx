@@ -40,6 +40,7 @@ function renderTable(row: Chat) {
             onCreateChat={vi.fn()}
             onOpenChat={vi.fn()}
             onDeleteChat={vi.fn()}
+            onDeleteSelectedChats={vi.fn()}
             onOwnerOnlyAction={onOwnerOnlyAction}
             submitChatRename={vi.fn()}
             setSelectedChatIds={vi.fn()}
