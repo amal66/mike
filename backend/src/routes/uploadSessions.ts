@@ -8,7 +8,12 @@ import {
   type Response,
 } from "express";
 
-import { ensureDocAccess, checkProjectAccess } from "../lib/access";
+import {
+  can,
+  checkProjectAccess,
+  creatorScopedAllowed,
+  ensureDocAccess,
+} from "../lib/access";
 import { mapWithConcurrency } from "../lib/concurrency";
 import { sendInternalError } from "../lib/httpError";
 import { uploadSessionRateLimitConfiguration } from "../lib/runtimeConfig";
@@ -183,7 +188,9 @@ export async function validateDestinationAccess(
     if (destination.scope === "project") {
       const projectId = destination.project_id as string;
       const access = await checkProjectAccess(projectId, userId, userEmail, db);
-      if (!access.ok) {
+      // Uploading into a project is content work: a viewer can open the
+      // project but must not be able to open an upload session into it.
+      if (!access.ok || !can(access.projectRole, "content.edit")) {
         res.status(404).json({ detail: "Project not found" });
         return false;
       }
@@ -246,7 +253,7 @@ export async function validateDestinationAccess(
     const documentId = destination.document_id as string;
     const { data: document, error } = await db
       .from("documents")
-      .select("id, user_id, project_id, workflow_id")
+      .select("id, user_id, project_id, org_id, workflow_id")
       .eq("id", documentId)
       .maybeSingle();
     if (error) {
@@ -258,12 +265,18 @@ export async function validateDestinationAccess(
       return false;
     }
     const access = await ensureDocAccess(document, userId, userEmail, db);
+    const canEditContent =
+      access.ok && can(access.projectRole, "content.edit");
+    // Replacing a version is creator-scoped (with the admin heir once the
+    // creator's account is gone); workflow assets stay editable at the
+    // workflow share's edit tier.
     const canReplace =
       access.ok &&
-      (access.isOwner || (Boolean(document.workflow_id) && access.canEdit));
+      (creatorScopedAllowed(access, document.user_id) ||
+        (Boolean(document.workflow_id) && canEditContent));
     if (
       !access.ok ||
-      !access.canEdit ||
+      !canEditContent ||
       (manifest.purpose === "document_version_replace" && !canReplace)
     ) {
       res.status(404).json({ detail: "Document not found" });

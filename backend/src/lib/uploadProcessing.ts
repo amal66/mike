@@ -7,6 +7,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
+import { resolveContentOrgId } from "./access";
 import { recordAudit } from "./audit";
 import { convertedPdfKey, officeFileToPdf } from "./convert";
 import { shouldConvertToPdf } from "./documentTypes";
@@ -251,12 +252,20 @@ async function processCreatedDocument(
   const documentId = file.resource_id;
   const versionId = file.id;
 
+  // A document created inside an org project belongs to the organization —
+  // the org_id stamp is an authorization input, so a failed lookup must fail
+  // the job (the durable worker retries) rather than quietly filing a firm's
+  // document as personal content.
+  const resolvedOrg = await resolveContentOrgId(db, { projectId });
+  if (!resolvedOrg.ok) throw new Error(resolvedOrg.detail);
+
   const { error: documentError } = await db.from("documents").upsert(
     {
       id: documentId,
       project_id: projectId,
       user_id: session.user_id,
       status: "processing",
+      org_id: resolvedOrg.orgId,
       folder_id: folderId,
       library_kind: libraryKind,
       library_folder_id: libraryFolderId,

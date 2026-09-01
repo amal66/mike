@@ -843,7 +843,7 @@ documentsRouter.patch(
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
     const access = await ensureDocAccess(doc, userId, userEmail, db);
-    if (!access.ok || !access.canEdit)
+    if (!access.ok || !can(access.projectRole, "content.edit"))
       return void res.status(404).json({ detail: "Document not found" });
 
     const raw = req.body?.filename;
@@ -887,7 +887,11 @@ documentsRouter.delete(
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
     const access = await ensureDocAccess(doc, userId, userEmail, db);
-    if (!access.ok || (!access.isOwner && !(doc.workflow_id && access.canEdit)))
+    if (
+      !access.ok ||
+      (!creatorScopedAllowed(access, doc.user_id) &&
+        !(doc.workflow_id && can(access.projectRole, "content.edit")))
+    )
       return void res.status(404).json({ detail: "Document not found" });
 
     const { data: versions, error: versionsErr } = await db
@@ -1100,7 +1104,7 @@ async function handleEditResolution(
   devLog(`[edit-resolution] fetched doc`, { doc, docErr });
   if (!doc) return void res.status(404).json({ detail: "Document not found" });
   const access = await ensureDocAccess(doc, userId, userEmail, db);
-  if (!access.ok || !access.canEdit)
+  if (!access.ok || !can(access.projectRole, "content.edit"))
     return void res.status(404).json({ detail: "Document not found" });
 
   const active = await loadActiveVersion(documentId, db);
