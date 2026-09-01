@@ -514,18 +514,23 @@ describe("organization invitations", () => {
         expect(mine.body).toEqual([]);
     });
 
-    it("an admin cancels an invitation, and acceptance then 409s", async () => {
+    it("an admin cancels an invitation, and acceptance then 404s", async () => {
         const created = await invite("new@hire.example");
         const cancelled = await request(app)
             .delete(`/orgs/org-1/invitations/${created.body.id}`)
             .set(...AUTH);
         expect(cancelled.status).toBe(204);
 
+        // 404, not 409: "already answered" would tell the recipient
+        // something untrue — an admin withdrew the invitation; they never
+        // answered it. The client's 404 copy is written for exactly this:
+        // "That invitation is no longer available. It may have been
+        // cancelled."
         as("new-hire", "new@hire.example");
         const res = await request(app)
             .post(`/user/invitations/${created.body.id}/accept`)
             .set(...AUTH);
-        expect(res.status).toBe(409);
+        expect(res.status).toBe(404);
     });
 
     it("resend pushes the expiry back out", async () => {

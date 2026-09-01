@@ -641,6 +641,11 @@ export async function cancelInvitation(
         .maybeSingle();
     const row = invite as InvitationRow | null;
     if (!row) return { ok: false, kind: "not_found" };
+    // A cancelled invitation was withdrawn by an admin, not answered by the
+    // recipient — reporting it as "already answered" tells them something
+    // untrue about their own actions. It reads as missing instead, which is
+    // the branch the client's "may have been cancelled" copy is written for.
+    if (row.status === "cancelled") return { ok: false, kind: "not_found" };
     if (row.status !== "pending")
         return {
             ok: false,
@@ -689,6 +694,11 @@ export async function resendInvitation(
     if (!row) return { ok: false, kind: "not_found" };
     // Resending an answered invitation would silently re-open a decision the
     // recipient already made. Only pending ones (expired included) refresh.
+    // A cancelled invitation was withdrawn by an admin, not answered by the
+    // recipient — reporting it as "already answered" tells them something
+    // untrue about their own actions. It reads as missing instead, which is
+    // the branch the client's "may have been cancelled" copy is written for.
+    if (row.status === "cancelled") return { ok: false, kind: "not_found" };
     if (row.status !== "pending")
         return {
             ok: false,
@@ -794,6 +804,11 @@ async function loadAnswerableInvitation(
     // invitation id exists for some other address.
     if (!row || !email || row.email !== email)
         return { ok: false, kind: "not_found" };
+    // A cancelled invitation was withdrawn by an admin, not answered by the
+    // recipient — reporting it as "already answered" tells them something
+    // untrue about their own actions. It reads as missing instead, which is
+    // the branch the client's "may have been cancelled" copy is written for.
+    if (row.status === "cancelled") return { ok: false, kind: "not_found" };
     if (row.status !== "pending")
         return {
             ok: false,

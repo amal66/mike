@@ -773,7 +773,10 @@ describe("org invitations", () => {
                 userEmail: "newbie@acme.example",
                 invitationId: inviteId,
             }),
-        ).resolves.toMatchObject({ ok: false, kind: "conflict" });
+            // not_found, not conflict: "already answered" would tell the
+            // recipient something untrue — an admin withdrew it; they never
+            // answered. The client maps 404 to "It may have been cancelled."
+        ).resolves.toMatchObject({ ok: false, kind: "not_found" });
     });
 
     it("resending pushes the expiry out without re-opening an answered one", async () => {
