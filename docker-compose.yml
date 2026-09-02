@@ -142,6 +142,8 @@ services:
       - ./backend/migrations/20260902_01_organizations.sql:/organizations-migration.sql:ro
       - ./backend/migrations/20260902_02_org_data_migration.sql:/org-data-migration.sql:ro
       - ./backend/migrations/20260902_03_org_rpcs.sql:/org-rpcs-migration.sql:ro
+      - ./backend/migrations/20260902_04_chat_permissions.sql:/chat-permissions-migration.sql:ro
+      - ./backend/migrations/20260902_05_chats_overview_rpc.sql:/chats-overview-migration.sql:ro
     entrypoint: ["bash", "-c"]
     command:
       - |
@@ -171,6 +173,8 @@ services:
         psql "$$DB" -v ON_ERROR_STOP=1 -f /organizations-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /org-data-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /org-rpcs-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /chat-permissions-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /chats-overview-migration.sql;
         psql "$$DB" -c "grant usage on schema public to service_role;
           grant all privileges on all tables in schema public to service_role;
           grant all privileges on all sequences in schema public to service_role;

@@ -35,7 +35,15 @@ import {
     persistLastSelectedChatModel,
     persistLastSelectedReasoningLevel,
 } from "../lib/userSettings";
-import { checkProjectAccess } from "../lib/access";
+import {
+    checkProjectAccess,
+    ensureChatAccess,
+    resolveContentOrgId,
+} from "../lib/access";
+import {
+    findMissingUserEmails,
+    loadProfileUsersByEmail,
+} from "../lib/userLookup";
 import { can, type ProjectRole } from "../lib/permissions";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import { sendInternalError } from "../lib/httpError";
@@ -56,10 +64,14 @@ const devLog = (...args: Parameters<typeof console.log>) => {
 type AccessibleChat = {
     id: string;
     title: string | null;
-    user_id: string;
+    // Nullable since 20260902_01: content in an organization project outlives
+    // the account that created it (the FK is ON DELETE SET NULL).
+    user_id: string | null;
     project_id: string | null;
     model: string | null;
     reasoning_level: string | null;
+    shared_with?: string[] | null;
+    org_id?: string | null;
 } & Record<string, unknown>;
 
 async function validateAccessibleProjectId(
@@ -77,16 +89,25 @@ async function validateAccessibleProjectId(
 }
 
 type ChatAccess =
-    | { ok: true; chat: AccessibleChat; projectRole: ProjectRole }
+    | {
+          ok: true;
+          chat: AccessibleChat;
+          /** Provenance only ("I started this thread"), not a right — the
+           *  admin role the creator branch derives is what grants. */
+          isCreator: boolean;
+          projectRole: ProjectRole;
+      }
     | { ok: false };
 
 // Resolve a chat AND the caller's role for it, so callers can gate reads and
 // writes separately: "can you see it" (project.view) and "can you write to
-// it" (content.edit) are different questions. The chat's creator is always
-// "admin" of their own thread; for project chats everyone else inherits their
-// project role (lib/access.ts) — org admins land on admin, org members on
-// member, and a direct grant gives exactly the role it names.
-// Chats without a project stay owner-only.
+// it" (content.edit) are different questions. The role comes from
+// `ensureChatAccess` (lib/access.ts) — the same derivation reviews use: the
+// chat's creator administers their own thread ("admin"), an email in the
+// chat's own shared_with is a "member", project chats inherit the project
+// role, and chat-org membership contributes admin/member — all merged
+// strongest-wins. Standalone chats are shareable via their own shared_with,
+// which is what stops "chats without a project" from being creator-only.
 async function getAccessibleChat(
     chatId: string,
     userId: string,
@@ -101,34 +122,27 @@ async function getAccessibleChat(
     if (error || !chat) return { ok: false };
 
     const row = chat as AccessibleChat;
-    // The chat's creator administers their own thread regardless of what the
-    // surrounding project grants them: a project viewer who started a chat
-    // must still be able to continue it.
-    if (row.user_id === userId)
-        return { ok: true, chat: row, projectRole: "admin" };
-
-    if (row.project_id) {
-        const access = await checkProjectAccess(
-            row.project_id,
-            userId,
-            userEmail,
-            db,
-        );
-        if (access.ok)
-            return { ok: true, chat: row, projectRole: access.projectRole };
-    }
-
-    return { ok: false };
+    // The creator branch inside ensureChatAccess derives "admin", so a
+    // project viewer who started a chat still administers that thread.
+    const access = await ensureChatAccess(row, userId, userEmail, db);
+    if (!access.ok) return { ok: false };
+    return {
+        ok: true,
+        chat: row,
+        isCreator: access.isCreator,
+        projectRole: access.projectRole,
+    };
 }
 
 // GET /chat
-// Visible chats = the user's own chats + every chat under a project the
-// user owns (so a project owner sees all collaborator chats in their
-// own projects in the global recent-chats list). Chats in projects that
-// are merely *shared with* the user are NOT included here — those are
-// listed per-project via GET /projects/:projectId/chats.
+// Lists every chat the caller could open: the RPC's predicate mirrors
+// ensureChatAccess branch for branch (creator, chat shared_with, chat org,
+// accessible project), so the list and GET /chat/:chatId can never disagree
+// about what exists. Each row carries is_owner so the sidebar can tell the
+// caller's own chats from colleagues' ones — provenance, not a role.
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const db = createServerSupabase();
     const requestedLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
     const requestedOffset = Number.parseInt(String(req.query.offset ?? ""), 10);
@@ -142,6 +156,7 @@ chatRouter.get("/", requireAuth, async (req, res) => {
 
     const { data, error } = await db.rpc("get_chats_overview", {
         p_user_id: userId,
+        p_user_email: userEmail?.trim().toLowerCase() ?? null,
         p_limit: limit,
         p_offset: offset,
     });
@@ -170,9 +185,18 @@ chatRouter.post("/create", requireAuth, async (req, res) => {
             .status(projectAccess.status)
             .json({ detail: projectAccess.detail });
 
+    // Tenant stamping, like every other content create: a project chat
+    // inherits the project's org; a standalone chat is personal (org_id
+    // null) and stays private until its own shared_with names someone.
+    const resolvedOrg = await resolveContentOrgId(db, { projectId });
+    if (!resolvedOrg.ok) return void sendInternalError(res, resolvedOrg.detail);
     const { data, error } = await db
         .from("chats")
-        .insert({ user_id: userId, project_id: projectId ?? null })
+        .insert({
+            user_id: userId,
+            project_id: projectId ?? null,
+            org_id: resolvedOrg.orgId,
+        })
         .select("id")
         .single();
 
@@ -204,7 +228,58 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
         withoutEmptyAssistantReservations(messages ?? []),
         db,
     );
-    res.json({ chat, messages: hydrated });
+    // access_role/is_owner mirror the project and review detail responses so
+    // the client can render per-role affordances instead of re-deriving them.
+    res.json({
+        chat,
+        is_owner: access.isCreator,
+        access_role: access.projectRole,
+        messages: hydrated,
+    });
+});
+
+// GET /chat/:chatId/people
+// The chat's creator + every direct shared_with recipient, resolved to
+// {email, display_name, role} — the same roster shape as
+// GET /projects/:projectId/people, including its nullable `owner` (a chat in
+// an organization project outlives its author's account). Visible to anyone
+// who can see the chat.
+chatRouter.get("/:chatId/people", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    const chat = access.chat;
+    const sharedWith = (
+        Array.isArray(chat.shared_with) ? chat.shared_with : []
+    ).map((e) => (e ?? "").toLowerCase());
+
+    const { userByEmail, userById } = await loadProfileUsersByEmail(db);
+    const ownerInfo = chat.user_id ? userById.get(chat.user_id) : undefined;
+    // The creator holds admin on their own thread; shared_with recipients are
+    // members — chat sharing carries no role of its own, so it lands on the
+    // content-collaboration tier exactly like a review's share list.
+    const owner = chat.user_id
+        ? {
+              user_id: chat.user_id,
+              email: ownerInfo?.email ?? null,
+              display_name: ownerInfo?.display_name ?? null,
+              role: "admin" as const,
+          }
+        : null;
+    const members = sharedWith.map((email) => {
+        const u = userByEmail.get(email);
+        return {
+            email,
+            display_name: u?.display_name ?? null,
+            role: "member" as const,
+        };
+    });
+    res.json({ owner, members });
 });
 
 // Stored doc_edited events capture the `status` at the time the assistant
@@ -320,66 +395,111 @@ async function hydrateEditStatuses(
     });
 }
 
-// PATCH /chat/:chatId
+// PATCH /chat/:chatId — rename and/or edit sharing.
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
+    const updates: Record<string, unknown> = {};
     const body =
         req.body && typeof req.body === "object" && !Array.isArray(req.body)
             ? (req.body as Record<string, unknown>)
             : {};
-    const invalidField = Object.keys(body).find(
-        (field) =>
-            field !== "title" &&
-            field !== "model" &&
-            field !== "reasoningLevel",
-    );
-    if (invalidField) {
-        return void res
-            .status(400)
-            .json({ detail: `Unsupported chat field: ${invalidField}` });
-    }
-    const hasTitle = Object.hasOwn(body, "title");
-    const hasModel = Object.hasOwn(body, "model");
-    const hasReasoning = Object.hasOwn(body, "reasoningLevel");
-    if (!hasTitle && !hasModel && !hasReasoning) {
-        return void res
-            .status(400)
-            .json({ detail: "title, model, or reasoningLevel is required" });
-    }
 
-    const title = typeof body.title === "string" ? body.title.trim() : "";
-    if (hasTitle && !title) {
-        return void res.status(400).json({ detail: "title is required" });
+    // Validate the SHAPE of what arrived instead of coercing it.
+    // `String(req.body.title)` accepts anything: `{}` becomes the literal
+    // title "[object Object]" and `42` becomes "42", so a client bug is
+    // stored as data and discovered later by a human reading a nonsense chat
+    // name. Refusing names the problem while it is still fixable.
+    if (body.title != null) {
+        if (typeof body.title !== "string")
+            return void res
+                .status(400)
+                .json({ detail: "title must be a string" });
+        const title = body.title.trim();
+        if (!title)
+            return void res.status(400).json({ detail: "title is required" });
+        updates.title = title;
     }
-    const parsedModel = parseOptionalModel(body.model);
+    if (body.shared_with != null) {
+        // A non-array `shared_with` used to fall past this block entirely and
+        // land on "title or shared_with is required" — a 400 naming a field
+        // the caller DID send, which sends them looking in the wrong place.
+        if (!Array.isArray(body.shared_with))
+            return void res.status(400).json({
+                detail: "shared_with must be an array of email addresses",
+            });
+        // Normalise: lowercase + dedupe + drop empties (same rules as the
+        // project share list, so `@>` matching in SQL stays exact-match).
+        const normalizedUserEmail = userEmail?.trim().toLowerCase();
+        const seen = new Set<string>();
+        const cleaned: string[] = [];
+        for (const raw of body.shared_with) {
+            // A non-string entry used to be dropped in silence: the caller
+            // got 200 and a share list missing a recipient they asked for.
+            if (typeof raw !== "string")
+                return void res.status(400).json({
+                    detail: "shared_with must be an array of email addresses",
+                });
+            const e = raw.trim().toLowerCase();
+            if (!e || seen.has(e)) continue;
+            if (normalizedUserEmail && e === normalizedUserEmail) {
+                return void res
+                    .status(400)
+                    .json({ detail: "You cannot share a chat with yourself." });
+            }
+            seen.add(e);
+            cleaned.push(e);
+        }
+        updates.shared_with = cleaned;
+    }
+    const hasModel = req.body.model != null;
+    const parsedModel = parseOptionalModel(req.body.model);
     if (hasModel && !parsedModel.ok) {
         return void res.status(400).json({ detail: parsedModel.detail });
     }
-    const parsedReasoning = parseOptionalReasoning(body.reasoningLevel);
+    const hasReasoning = req.body.reasoningLevel != null;
+    const parsedReasoning = parseOptionalReasoning(req.body.reasoningLevel);
     if (hasReasoning && !parsedReasoning.ok) {
         return void res.status(400).json({ detail: parsedReasoning.detail });
     }
 
-    const db = createServerSupabase();
-    // The ladder's getAccessibleChat answers with an access verdict, not a
-    // bare row (main's shape before the ladder). Renaming stays creator-only
-    // at this layer; model/reasoning follow reachability, as on main.
-    const access = await getAccessibleChat(chatId, userId, userEmail, db);
-    if (!access.ok || (hasTitle && access.chat.user_id !== userId)) {
-        return void res.status(404).json({ detail: "Chat not found" });
-    }
-    const chat = access.chat;
+    if (Object.keys(updates).length === 0 && !hasModel && !hasReasoning)
+        return void res.status(400).json({
+            detail: "title, model, reasoningLevel or shared_with is required",
+        });
 
-    let selectedModel: string | undefined;
-    const selectedReasoningLevel =
-        hasReasoning && parsedReasoning.ok ? parsedReasoning.value : undefined;
+    const db = createServerSupabase();
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    // Title edits are content collaboration (the same tier that already
+    // rewrites titles via generate-title); the share list is access
+    // management, admin only — both mirroring the project PATCH.
+    if (updates.title != null && !can(access.projectRole, "content.edit"))
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to modify this chat" });
+    if (
+        updates.shared_with != null &&
+        !can(access.projectRole, "access.manage")
+    )
+        return void res.status(403).json({
+            detail: "Only a project admin can change who has access.",
+        });
+    if (
+        (hasModel || hasReasoning) &&
+        !can(access.projectRole, "content.edit")
+    )
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to modify this chat" });
+
     if (hasModel) {
         const settings = await getUserModelSettings(userId, db);
         const resolution = await resolveEffectiveChatModel({
             requested: parsedModel.ok ? parsedModel.value : undefined,
-            chatModel: chat.model,
+            chatModel: access.chat.model,
             lastSelectedModel: settings.last_selected_chat_model,
             apiKeys: settings.api_keys,
             userId,
@@ -391,38 +511,53 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
                 detail: resolution.detail,
             });
         }
-        selectedModel = resolution.model;
+        updates.model = resolution.model;
+    }
+    if (hasReasoning && parsedReasoning.ok && parsedReasoning.value) {
+        updates.reasoning_level = parsedReasoning.value;
     }
 
-    const update = {
-        ...(hasTitle ? { title } : {}),
-        ...(selectedModel ? { model: selectedModel } : {}),
-        ...(selectedReasoningLevel
-            ? { reasoning_level: selectedReasoningLevel }
-            : {}),
-    };
+    if (Array.isArray(updates.shared_with)) {
+        const missingSharedUsers = await findMissingUserEmails(
+            db,
+            updates.shared_with as string[],
+        );
+        if (missingSharedUsers.length > 0) {
+            return void res.status(400).json({
+                detail: `${missingSharedUsers[0]} does not belong to a Mike user.`,
+            });
+        }
+    }
+
     const { data, error } = await db
         .from("chats")
-        .update(update)
+        .update(updates)
         .eq("id", chatId)
-        .select("id, title, model, reasoning_level")
+        .select("id, title, model, reasoning_level, shared_with")
         .single();
 
-    if (error || !data)
-        return void res.status(404).json({ detail: "Chat not found" });
+    // Two different failures that must not share an answer. Authorization
+    // already passed above, so a database error here is OUR fault, not a
+    // statement about what exists: reporting it as "404 Chat not found" tells
+    // the client a lie it will act on (dropping the chat from the sidebar)
+    // and hides the outage from whoever is reading the logs. The row being
+    // gone is the only real 404 — the chat was deleted between the access
+    // check and the write. DELETE below already splits them this way.
+    if (error) return void sendInternalError(res, error);
+    if (!data) return void res.status(404).json({ detail: "Chat not found" });
 
-    if (selectedModel) {
+    if (typeof updates.model === "string") {
         const profileError = await persistLastSelectedChatModel(
             userId,
-            selectedModel,
+            updates.model,
             db,
         );
         if (profileError) return void sendInternalError(res, profileError);
     }
-    if (selectedReasoningLevel) {
+    if (hasReasoning && parsedReasoning.ok && parsedReasoning.value) {
         const profileError = await persistLastSelectedReasoningLevel(
             userId,
-            selectedReasoningLevel,
+            parsedReasoning.value,
             db,
         );
         if (profileError) return void sendInternalError(res, profileError);
@@ -433,14 +568,21 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 // DELETE /chat/:chatId
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
     const db = createServerSupabase();
-    const { error } = await db
-        .from("chats")
-        .delete()
-        .eq("id", chatId)
-        .eq("user_id", userId);
+    // container.delete keeps chat deletion at the top of the ladder: the
+    // chat's creator, or an admin of the project it lives in (who could
+    // already delete the whole project). Members and viewers get 403.
+    const access = await getAccessibleChat(chatId, userId, userEmail, db);
+    if (!access.ok)
+        return void res.status(404).json({ detail: "Chat not found" });
+    if (!can(access.projectRole, "container.delete"))
+        return void res
+            .status(403)
+            .json({ detail: "You do not have permission to delete this chat" });
 
+    const { error } = await db.from("chats").delete().eq("id", chatId);
     if (error) return void sendInternalError(res, error);
     res.status(204).send();
 });
@@ -557,6 +699,13 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     let chatModel: string | null = null;
     let chatReasoningLevel: string | null = null;
     let resolvedProjectId: string | null = parsedProjectId.value.projectId;
+    // Whether the document-writing tools are offered this turn. A standalone
+    // chat writes into the caller's own library, so it keeps them; a project
+    // chat writes into the PROJECT, and that is a question about the caller's
+    // project role, never about their standing in the thread. See the long
+    // note in routes/projectChat.ts — this is the same partition on the
+    // route that serves standalone and project chats alike.
+    let allowDocumentMutation = true;
 
     if (chatId) {
         const access = await getAccessibleChat(chatId, userId, userEmail, db);
@@ -584,6 +733,19 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         chatTitle = existing.title;
         chatModel = existing.model;
         chatReasoningLevel = existing.reasoning_level;
+        if (existingProjectId) {
+            // The role above may have come from the chat's own share list;
+            // creating documents in the project needs the project's verdict.
+            const projectAccess = await checkProjectAccess(
+                existingProjectId,
+                userId,
+                userEmail,
+                db,
+            );
+            allowDocumentMutation =
+                projectAccess.ok &&
+                can(projectAccess.projectRole, "content.edit");
+        }
     }
 
     const modelSettings = await getUserModelSettings(userId, db);
@@ -638,6 +800,11 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 .status(projectAccess.status)
                 .json({ detail: projectAccess.detail });
 
+        const resolvedOrg = await resolveContentOrgId(db, {
+            projectId: resolvedProjectId,
+        });
+        if (!resolvedOrg.ok)
+            return void sendInternalError(res, resolvedOrg.detail);
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -645,6 +812,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 project_id: resolvedProjectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
+                org_id: resolvedOrg.orgId,
             })
             .select("id, title")
             .single();
@@ -821,6 +989,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             userId,
             db,
             write,
+            allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,

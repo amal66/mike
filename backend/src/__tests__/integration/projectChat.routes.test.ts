@@ -4,11 +4,13 @@ import request from "supertest";
 const {
     runLLMStream,
     checkProjectAccess,
+    ensureChatAccess,
     buildMessages,
     buildProjectDocContext,
 } = vi.hoisted(() => ({
     runLLMStream: vi.fn(),
     checkProjectAccess: vi.fn(),
+    ensureChatAccess: vi.fn(),
     buildMessages: vi.fn(),
     buildProjectDocContext: vi.fn(),
 }));
@@ -98,8 +100,10 @@ vi.mock("../../lib/access", () => ({
     checkProjectAccess: (...args: unknown[]) => checkProjectAccess(...args),
     ensureDocAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
     ensureReviewAccess: vi.fn(async () => ({ ok: true, isCreator: true })),
+    ensureChatAccess: (...args: unknown[]) => ensureChatAccess(...args),
     filterAccessibleDocumentIds: vi.fn(async (ids: string[]) => ids),
     listAccessibleProjectIds: vi.fn(async () => []),
+    resolveContentOrgId: vi.fn(async () => ({ ok: true, orgId: null })),
 }));
 
 import { app } from "../../app";
@@ -131,6 +135,12 @@ describe("POST /projects/:projectId/chat", () => {
             orgRole: null,
             projectRole: "admin",
             project: { id: "p1", user_id: "u1", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
         });
     });
 
@@ -377,6 +387,13 @@ describe("POST /projects/:projectId/chat", () => {
             projectRole: "viewer",
             project: { id: "p1", user_id: "u2", shared_with: null },
         });
+        // The chat-level derivation agrees: viewer, no share-list promotion.
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+        });
         const updatedTables: string[] = [];
         const db = mockSupabase();
         (db.from as ReturnType<typeof vi.fn>).mockImplementation(
@@ -432,5 +449,195 @@ describe("POST /projects/:projectId/chat", () => {
         expect(res.status).toBe(200);
         expect(res.text).toContain('"type":"error"');
         expect(res.text).toContain("[DONE]");
+    });
+    // -----------------------------------------------------------------------
+    // Write authorization agrees with GET /chat
+    // -----------------------------------------------------------------------
+    // Since chats gained `shared_with`, a chat carries standing of its own,
+    // and the project role alone can no longer answer "may this person
+    // write here?". These pin the two routes to one derivation.
+
+    it("lets a project VIEWER on the chat's share list continue that chat", async () => {
+        // The disagreement this replaced: ensureChatAccess derives `member`
+        // from the chat's share list, so GET /chat serves the thread — while
+        // this route saw only the viewer role on the project and refused.
+        // The client gates on the served role, so it rendered the message
+        // and then lost it, because nothing had been persisted.
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "member",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalled();
+    });
+
+    it("still refuses a project viewer with no standing on the chat", async () => {
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(403);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the chat yields no verdict at all", async () => {
+        ensureChatAccess.mockResolvedValue({ ok: false });
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(403);
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    it("judges a NEW chat against the project, not against any chat row", async () => {
+        // Nothing exists yet to carry standing, so starting a thread is an
+        // edit to the project and a viewer may not do it.
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send(VALID_BODY);
+
+        expect(res.status).toBe(403);
+        expect(ensureChatAccess).not.toHaveBeenCalled();
+        expect(runLLMStream).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------------
+    // The tool loop is judged against the PROJECT, not against the chat
+    // -----------------------------------------------------------------------
+    // Continuing a conversation and rewriting the project's documents are two
+    // different permissions. `buildProjectDocContext` loads every document in
+    // the project with no per-caller filter, so handing the chat-derived role
+    // to the tool set would let anyone on one chat's share list edit the whole
+    // project through that thread.
+
+    const mutationFlag = () =>
+        (runLLMStream.mock.calls[0]?.[0] as { allowDocumentMutation: boolean })
+            .allowDocumentMutation;
+
+    it("withholds the document-writing tools from a project viewer who may write in the chat", async () => {
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        // The share list promotes them on the CHAT only.
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "member",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        // They may still talk in the thread…
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledTimes(1);
+        // …but the tools that would rewrite the project are not on offer.
+        expect(mutationFlag()).toBe(false);
+    });
+
+    it("withholds them from the chat's own creator when they only view the project", async () => {
+        // The creator branch derives admin ON THE CHAT — a strictly local
+        // standing that must not reach the project's documents either.
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: null,
+            projectRole: "viewer",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: true,
+            orgRole: null,
+            projectRole: "admin",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(200);
+        expect(mutationFlag()).toBe(false);
+    });
+
+    it("offers them to a project member, unchanged", async () => {
+        checkProjectAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: "member",
+            projectRole: "member",
+            project: { id: "p1", user_id: "u2", shared_with: null },
+        });
+        ensureChatAccess.mockResolvedValue({
+            ok: true,
+            isCreator: false,
+            orgRole: "member",
+            projectRole: "member",
+        });
+
+        const res = await request(app)
+            .post("/projects/p1/chat")
+            .set("Authorization", "Bearer test")
+            .send({ ...VALID_BODY, chat_id: "chat-1" });
+
+        expect(res.status).toBe(200);
+        expect(mutationFlag()).toBe(true);
     });
 });

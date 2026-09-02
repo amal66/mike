@@ -26,8 +26,9 @@ import {
   listUserOrgIds,
   normalizeEmail,
   resolveContentOrgId,
+  sharedRowOwnRole,
 } from "../lib/access";
-import { can } from "../lib/permissions";
+import { can, strongerRole, type ProjectRole } from "../lib/permissions";
 import {
   deleteProjectGrant,
   listProjectAdminContacts,
@@ -1369,9 +1370,9 @@ projectsRouter.patch(
 
 // GET /projects/:projectId/chats — every assistant chat under this project
 // (any author with project access). Used by the project page's chat tab so
-// it doesn't have to filter the global GET /chat list — and so collaborators
-// see each other's chats inside the project even though those don't appear
-// in the global list.
+// it doesn't have to filter the global GET /chat list. Since 20260902_05 the
+// global list shows these too (its predicate matches ensureChatAccess), so
+// this endpoint is a convenience scoping, not the only way to find them.
 projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
@@ -1390,6 +1391,29 @@ projectsRouter.get("/:projectId/chats", requireAuth, async (req, res) => {
   if (error) return void sendInternalError(res, error);
   const chats = data ?? [];
   await attachChatCreatorLabels(db, chats);
+  // Label each row with the caller's role for THAT chat, the way the detail
+  // route and the overview RPC already do. Without it the client has nothing
+  // to gate on but `user_id === me`, which this PR's model makes wrong in
+  // both directions: a project admin may delete a colleague's chat, and a
+  // member may not delete one they merely reach through the project.
+  //
+  // Derived, not fetched: every row here is in ONE project, so the project
+  // verdict is resolved once (above) and merged per row with the row's own
+  // standing — creator or share list. Calling ensureChatAccess per row would
+  // repeat checkProjectAccess for each chat. The chat's own org branch is
+  // omitted for the same reason 20260902_05 records: chats.org_id is only
+  // ever written as the project's org (or null), so it can add nothing the
+  // project verdict has not already granted.
+  for (const chat of chats as {
+    user_id?: string | null;
+    shared_with?: string[] | null;
+    is_owner?: boolean;
+    access_role?: ProjectRole | null;
+  }[]) {
+    const own = sharedRowOwnRole(chat, userId, userEmail);
+    chat.is_owner = own.isCreator;
+    chat.access_role = strongerRole(own.role, access.projectRole);
+  }
   res.json(chats);
 });
 

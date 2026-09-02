@@ -393,6 +393,15 @@ export function ProjectWorkspaceProvider({
                                       profile?.displayName ?? null,
                                   title: null,
                                   created_at: now,
+                                  // The row the server would have served for
+                                  // a chat we just created: its creator is
+                                  // its admin. Without these the client's
+                                  // `roleFrom` falls back to viewer — fail
+                                  // closed, correct as a default and wrong
+                                  // here — and the author could not rename or
+                                  // delete their own new chat until reload.
+                                  is_owner: true,
+                                  access_role: "admin",
                               },
                               ...prev,
                           ]

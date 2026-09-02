@@ -30,8 +30,12 @@ import {
     type ChatMessage,
 } from "../lib/chat";
 import { getUserModelSettings } from "../lib/userSettings";
-import { checkProjectAccess } from "../lib/access";
-import { can } from "../lib/permissions";
+import {
+    checkProjectAccess,
+    ensureChatAccess,
+    resolveContentOrgId,
+} from "../lib/access";
+import { can, type ProjectRole } from "../lib/permissions";
 import { generateAssistantChatTitle } from "../lib/chatTitle";
 import {
     resolveEffectiveChatModel,
@@ -115,16 +119,44 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     if (!projectAccess.ok)
         return void res.status(404).json({ detail: "Project not found" });
 
+    // Two different questions, deliberately answered by two different
+    // derivations:
+    //
+    //   (1) May this caller CONTINUE THIS CONVERSATION? That is standing on
+    //       the chat — `writeRole` below, from ensureChatAccess.
+    //   (2) May this caller MODIFY THIS PROJECT'S DOCUMENTS? That is standing
+    //       on the PROJECT, and nothing about a chat can grant it.
+    //
+    // They come apart exactly where chats gained a share list of their own. A
+    // project VIEWER named on one chat's `shared_with` derives `member` for
+    // that chat, which is what lets them talk in the thread — but the tool
+    // loop runs against `buildProjectDocContext`, which loads EVERY document
+    // in the project with no per-caller filter. Judging the tools on the
+    // chat-derived role would hand that viewer edit_document, replicate_document
+    // and the generate_* family over the whole project through a thread
+    // someone shared with them.
+    const allowDocumentMutation = can(
+        projectAccess.projectRole,
+        "content.edit",
+    );
+
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
     let chatModel: string | null = null;
     let chatReasoningLevel: string | null = null;
-    let chatCreatorId: string | null = null;
+
+    // The role this write is judged against. Starting a NEW chat is judged
+    // against the project — the caller is adding content to it. Continuing
+    // an EXISTING one is judged against that chat, because a chat carries
+    // standing of its own.
+    let writeRole: ProjectRole | null = projectAccess.projectRole;
 
     if (chatId) {
         const { data: existing } = await db
             .from("chats")
-            .select("id, title, model, reasoning_level, project_id, user_id")
+            .select(
+                "id, title, model, reasoning_level, project_id, user_id, shared_with, org_id",
+            )
             .eq("id", chatId)
             .maybeSingle();
         const canUse = !!existing && existing.project_id === projectId;
@@ -134,29 +166,41 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             chatModel = (existing!.model as string | null) ?? null;
             chatReasoningLevel =
                 (existing!.reasoning_level as string | null) ?? null;
-            chatCreatorId =
-                (existing as { user_id?: string | null }).user_id ?? null;
+            // Exactly the derivation GET /chat uses, so the two routes can
+            // no longer disagree about who may write. It folds in the
+            // branches the project role alone cannot see: the chat's own
+            // creator (admin on their row), anyone on the chat's
+            // `shared_with`, and the chat's org — merged strongest-wins.
+            //
+            // The case that made this necessary: since chats gained
+            // `shared_with`, a project VIEWER named on a chat's share list
+            // derives `member` from ensureChatAccess and can open and read
+            // the thread through GET /chat, while this route still saw only
+            // their viewer role on the project and returned 403. The client
+            // gates on the served role, so it rendered the message and then
+            // lost it — nothing had been persisted.
+            const chatAccess = await ensureChatAccess(
+                existing as {
+                    user_id: string | null;
+                    project_id: string | null;
+                    shared_with?: string[] | null;
+                    org_id?: string | null;
+                },
+                userId,
+                userEmail,
+                db,
+            );
+            // No verdict at all means no write. `can(null, …)` is false, so
+            // an unreadable chat cannot be written through this door either.
+            writeRole = chatAccess.ok ? chatAccess.projectRole : null;
         }
     }
 
-    // Writing to a project chat needs `content.edit` — EXCEPT that a chat's
-    // own creator may always continue their thread, exactly as POST /chat
-    // allows (lib/access.ts derives "admin" for a row's creator there).
-    //
-    // The two routes used to disagree: this one gated purely on the project
-    // role, so a project viewer who had started a chat got a 404 when they
-    // sent the next message. The client, which gates on
-    // `canEditContent || chatOwnerId === user.id`, rendered the message
-    // locally and then lost it — the server had persisted nothing. Keeping
-    // both ladders identical is what stops that class of silent data loss.
-    //
-    // The gate must sit here, BEFORE model resolution: the model/reasoning
+    // This verdict must precede model resolution: the model/reasoning
     // persistence below is a real UPDATE on the chats row, and running it
-    // ahead of this verdict let a project viewer permanently change the
-    // model on a colleague's chat and then collect a 403 for the same
-    // request.
-    const isOwnChat = !!chatCreatorId && chatCreatorId === userId;
-    if (!isOwnChat && !can(projectAccess.projectRole, "content.edit"))
+    // ahead of the gate would let a refused caller permanently change the
+    // model on a thread they may not write to.
+    if (!can(writeRole, "content.edit"))
         return void res.status(403).json({
             detail: "You do not have permission to write in this project.",
         });
@@ -204,6 +248,12 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     }
 
     if (!chatId) {
+        const resolvedOrg = await resolveContentOrgId(db, { projectId });
+        if (!resolvedOrg.ok) {
+            return void res
+                .status(500)
+                .json({ detail: "Failed to create chat" });
+        }
         const { data: newChat, error } = await db
             .from("chats")
             .insert({
@@ -211,6 +261,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
                 project_id: projectId,
                 model: selectedModel,
                 reasoning_level: selectedReasoningLevel,
+                org_id: resolvedOrg.orgId,
             })
             .select("id, title")
             .single();
@@ -400,6 +451,10 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             db,
             write,
             extraTools: PROJECT_EXTRA_TOOLS,
+            // Read-only collaborators keep the conversational surface
+            // (read_document, find_in_document, list/fetch_documents, the
+            // workflow and research tools) and lose only the writers.
+            allowDocumentMutation,
             workflowStore,
             includeResearchTools: legalResearchUs,
             model: selectedModel,

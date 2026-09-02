@@ -1813,10 +1813,12 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     const { reviewId } = req.params;
     const db = createServerSupabase();
 
-    // Verify access (owner or shared-project member).
+    // Verify access (creator, direct share, project access, or org).
+    // shared_with must be selected or ensureReviewAccess's direct-share
+    // branch can never fire and review-level collaborators 404 here.
     const { data: review, error } = await db
         .from("tabular_reviews")
-        .select("id, user_id, project_id, org_id")
+        .select("id, user_id, project_id, shared_with, org_id")
         .eq("id", reviewId)
         .single();
     if (error || !review)
@@ -1838,21 +1840,97 @@ tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
     res.json(chats ?? []);
 });
 
+// Review-chat writes share one preamble: the caller must be able to access
+// the review named in the URL, and the chat must actually belong to it —
+// previously these two writes checked neither, so any chat id could be hit
+// through any (or a nonexistent) review path.
+async function ensureReviewChatWriteAccess(
+    reviewId: string,
+    chatId: string,
+    userId: string,
+    userEmail: string | null | undefined,
+    db: ReturnType<typeof createServerSupabase>,
+): Promise<{ ok: true } | { ok: false; status: number; detail: string }> {
+    const { data: review } = await db
+        .from("tabular_reviews")
+        .select("id, user_id, project_id, shared_with, org_id")
+        .eq("id", reviewId)
+        .single();
+    if (!review) return { ok: false, status: 404, detail: "Review not found" };
+    const access = await ensureReviewAccess(review, userId, userEmail, db);
+    if (!access.ok)
+        return { ok: false, status: 404, detail: "Review not found" };
+    const { data: chat } = await db
+        .from("tabular_review_chats")
+        .select("id, review_id, user_id")
+        .eq("id", chatId)
+        .single();
+    if (!chat || chat.review_id !== reviewId)
+        return { ok: false, status: 404, detail: "Chat not found" };
+    // Review chats are creator-write: collaborators read each other's
+    // threads but cannot rename or delete them. Refusing here, not via the
+    // write's user_id filter alone, keeps a non-creator from getting a
+    // success-shaped 204 for an update that silently matched zero rows.
+    //
+    // `creatorScopedAllowed` rather than a bare `chat.user_id !== userId`,
+    // because `tabular_review_chats.user_id` is ON DELETE SET NULL since
+    // 20260902_01: once the author's account is deleted the column is NULL
+    // and "only the creator may act" means NOBODY may act — the thread is
+    // stranded inside a review the organization still owns, which is the
+    // opposite of what detaching the row was for. When the creator is gone
+    // the container's admins inherit the operation; while a creator exists
+    // nothing changes, and an admin still may not touch a colleague's live
+    // thread.
+    if (
+        !creatorScopedAllowed(
+            {
+                // "isCreator" is about THIS chat. `access` was derived for
+                // the REVIEW, and the review's creator is not thereby the
+                // creator of every chat inside it — passing `access` whole
+                // would hand them everyone's threads.
+                isCreator: !!chat.user_id && chat.user_id === userId,
+                projectRole: access.projectRole,
+            },
+            chat.user_id,
+        )
+    )
+        return {
+            ok: false,
+            status: 403,
+            detail: "Only the chat's creator can modify it",
+        };
+    return { ok: true };
+}
+
 // DELETE /tabular-review/:reviewId/chats/:chatId — delete a single chat
 tabularRouter.delete(
     "/:reviewId/chats/:chatId",
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
-        const { chatId } = req.params;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId, chatId } = req.params;
         const db = createServerSupabase();
-        // Owner-only delete — sibling collaborators shouldn't be able to wipe
-        // each other's threads.
+        const gate = await ensureReviewChatWriteAccess(
+            reviewId,
+            chatId,
+            userId,
+            userEmail,
+            db,
+        );
+        if (!gate.ok)
+            return void res.status(gate.status).json({ detail: gate.detail });
+        // Scoped by the binding the gate just proved (this chat, in this
+        // review) and nothing more. A `user_id` filter here would be a
+        // second, weaker copy of the authorization rule: it would silently
+        // match zero rows for the case the gate now allows — an admin
+        // clearing up after a departed colleague — and answer 204 while
+        // deleting nothing.
         const { error } = await db
             .from("tabular_review_chats")
             .delete()
             .eq("id", chatId)
-            .eq("user_id", userId);
+            .eq("review_id", reviewId);
         if (error) return void sendInternalError(res, error);
         res.status(204).send();
     },
@@ -1864,6 +1942,7 @@ tabularRouter.patch(
     requireAuth,
     async (req, res) => {
         const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
         const { reviewId, chatId } = req.params;
         const body =
             req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -1905,12 +1984,21 @@ tabularRouter.patch(
         }
 
         const db = createServerSupabase();
+        const gate = await ensureReviewChatWriteAccess(
+            reviewId,
+            chatId,
+            userId,
+            userEmail,
+            db,
+        );
+        if (!gate.ok)
+            return void res.status(gate.status).json({ detail: gate.detail });
+        // Scoped by chat + review only — mirrors the delete above.
         const { data: chat, error: chatError } = await db
             .from("tabular_review_chats")
             .select("id, model")
             .eq("id", chatId)
             .eq("review_id", reviewId)
-            .eq("user_id", userId)
             .single();
         if (chatError || !chat) {
             return void res.status(404).json({ detail: "Chat not found" });
@@ -1952,7 +2040,6 @@ tabularRouter.patch(
             .update(update)
             .eq("id", chatId)
             .eq("review_id", reviewId)
-            .eq("user_id", userId)
             .select("id, title, model, reasoning_level")
             .single();
         if (error || !data) {
@@ -1991,7 +2078,7 @@ tabularRouter.get(
 
         const { data: review } = await db
             .from("tabular_reviews")
-            .select("id, user_id, project_id, org_id")
+            .select("id, user_id, project_id, shared_with, org_id")
             .eq("id", reviewId)
             .single();
         if (!review)

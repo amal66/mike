@@ -920,6 +920,105 @@ describe("projects.routes", () => {
         });
     });
 
+    // ── GET /projects/:projectId/chats ────────────────────────────────────
+    // The list has to say what the caller may DO with each chat, or the
+    // client is left gating on `user_id === me` — which this PR's model makes
+    // wrong in both directions.
+    describe("GET /projects/:projectId/chats", () => {
+        const seedChats = () => {
+            supabaseState.tables.chats = {
+                data: [
+                    { id: "c-mine", user_id: "u1", shared_with: [] },
+                    { id: "c-theirs", user_id: "u2", shared_with: [] },
+                    {
+                        id: "c-shared",
+                        user_id: "u2",
+                        shared_with: ["u1@test.local"],
+                    },
+                ],
+                error: null,
+            };
+            supabaseState.tables.user_profiles = { data: [], error: null };
+        };
+
+        it("labels each chat with the caller's role for it", async () => {
+            seedChats();
+            // A project MEMBER: content collaboration, not administration.
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "member",
+                projectRole: "member",
+                project: { id: "p1", user_id: "u2", org_id: "org-1" },
+            });
+
+            const res = await request(app)
+                .get("/projects/p1/chats")
+                .set(...AUTH);
+
+            expect(res.status).toBe(200);
+            expect(
+                (res.body as { id: string; access_role: string; is_owner: boolean }[]).map(
+                    ({ id, access_role, is_owner }) => ({
+                        id,
+                        access_role,
+                        is_owner,
+                    }),
+                ),
+            ).toEqual([
+                // Their own thread: the creator branch derives admin, so they
+                // may delete it even though they only collaborate on the
+                // project.
+                { id: "c-mine", access_role: "admin", is_owner: true },
+                // A colleague's: the project verdict, member — readable and
+                // writable, not deletable.
+                { id: "c-theirs", access_role: "member", is_owner: false },
+                // Shared directly: still member, and is_owner stays false.
+                { id: "c-shared", access_role: "member", is_owner: false },
+            ]);
+        });
+
+        it("never demotes a project admin on a colleague's chat", async () => {
+            seedChats();
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: "admin",
+                projectRole: "admin",
+                project: { id: "p1", user_id: "u2", org_id: "org-1" },
+            });
+
+            const res = await request(app)
+                .get("/projects/p1/chats")
+                .set(...AUTH);
+
+            expect(
+                (res.body as { access_role: string }[]).map((c) => c.access_role),
+            ).toEqual(["admin", "admin", "admin"]);
+        });
+
+        it("labels every chat viewer when the caller only views the project", async () => {
+            seedChats();
+            checkProjectAccess.mockResolvedValue({
+                ok: true,
+                isCreator: false,
+                orgRole: null,
+                projectRole: "viewer",
+                project: { id: "p1", user_id: "u2", org_id: null },
+            });
+
+            const res = await request(app)
+                .get("/projects/p1/chats")
+                .set(...AUTH);
+
+            // A share list is a floor: it promotes the shared chat to member
+            // without lifting the ones reached through the project.
+            expect(
+                (res.body as { access_role: string }[]).map((c) => c.access_role),
+            ).toEqual(["admin", "viewer", "member"]);
+        });
+    });
+
     // ── GET /projects/:projectId/documents (checkProjectAccess guard) ─────
     describe("GET /projects/:projectId/documents", () => {
         it("returns 404 when checkProjectAccess denies access", async () => {

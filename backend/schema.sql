@@ -1729,6 +1729,8 @@ create table if not exists public.chats (
   title text,
   model text,
   reasoning_level text check (reasoning_level in ('none', 'low', 'medium', 'high', 'xhigh', 'max')),
+  shared_with jsonb not null default '[]'::jsonb,
+  org_id uuid references public.organizations(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -1741,6 +1743,93 @@ create index if not exists chats_user_created_idx
 create index if not exists idx_chats_project
   on public.chats(project_id);
 
+create index if not exists idx_chats_org on public.chats(org_id);
+
+create index if not exists chats_shared_with_idx
+  on public.chats using gin (shared_with);
+
+-- A chat carries exactly the columns review_access_role() takes -- creator,
+-- own share list, containing project, own org -- so the visibility rule is one
+-- call to it rather than a second copy of its four arms. That function is
+-- named for its first caller, not for a restriction: it is the SQL twin of
+-- lib/access.ts's ensureSharedRowAccess, which ensureReviewAccess and
+-- ensureChatAccess both delegate to. Keeping one copy is what stops the list
+-- and the detail route from drifting apart about which chats exist.
+--
+-- p_user_email is deliberately NOT defaulted: the pre-#363 three-argument
+-- signature still exists below as a deploy-window wrapper, and a defaulted
+-- p_user_email would make the old three-key call ambiguous between the two
+-- (postgres 42725 / PostgREST PGRST203). See 20260902_05's header.
+create or replace function public.get_chats_overview(
+  p_user_id text,
+  p_user_email text,
+  p_limit integer default null,
+  p_offset integer default 0
+)
+returns table (
+  id uuid,
+  project_id uuid,
+  user_id text,
+  title text,
+  model text,
+  created_at timestamptz,
+  project_name text,
+  is_owner boolean,
+  access_role text
+)
+language sql
+stable
+as $$
+  select
+    c.id,
+    c.project_id,
+    c.user_id::text as user_id,
+    c.title,
+    c.model,
+    c.created_at,
+    p.name as project_name,
+    -- Provenance ("I started this thread"), not a role: the ladder itself is
+    -- lib/permissions.ts, and the creator branch of ensureChatAccess is what
+    -- turns this into admin standing.
+    coalesce(c.user_id::text = p_user_id, false) as is_owner,
+    -- The SAME verdict the predicate below filters on, served to the caller.
+    -- Serving only is_owner was not enough: the client's roleFrom() falls
+    -- back to "member" for any non-owned row it has no access_role for, so
+    -- the global sidebar offered viewers a rename the server refuses and
+    -- told admins they may not delete what the server would happily delete.
+    -- One evaluation, one truth: the lateral computes the role once and both
+    -- the column and the WHERE read it.
+    verdict.role as access_role
+  from public.chats c
+  left join public.projects p on p.id = c.project_id
+  cross join lateral (
+    select public.review_access_role(
+             c.user_id,
+             c.project_id,
+             c.shared_with,
+             c.org_id,
+             p_user_id,
+             p_user_email
+           ) as role
+  ) verdict
+  -- The whole predicate, in one call -- see this function's header comment.
+  -- The join above is for project_name only; the function resolves the
+  -- project itself.
+  where verdict.role is not null
+  order by c.created_at desc, c.id asc
+  limit case
+    when p_limit is null then null
+    else greatest(1, least(p_limit, 100))
+  end
+  offset greatest(coalesce(p_offset, 0), 0);
+$$;
+
+-- Deploy-window shim: the pre-#363 three-argument signature, kept so that API
+-- instances still running the old code survive the gap between "migration
+-- applied" and "last old pod replaced". Passing p_user_email => null replays
+-- the old predicate exactly (see 20260902_05's header for the branch-by-branch
+-- argument). Drop this together with 20260902_05's copy in a follow-up
+-- migration once the rollout is complete.
 create or replace function public.get_chats_overview(
   p_user_id text,
   p_limit integer default null,
@@ -1759,34 +1848,14 @@ language sql
 stable
 as $$
   select
-    c.id,
-    c.project_id,
-    c.user_id::text as user_id,
-    c.title,
-    c.model,
-    c.created_at,
-    p.name as project_name
-  from public.chats c
-  left join public.projects p on p.id = c.project_id
-  where c.user_id::text = p_user_id
-     or (
-       p.id is not null
-       and p.user_id::text = p_user_id
-     )
-     or (
-       p.id is not null
-       and p.org_id is not null
-       and exists (
-         select 1 from public.org_members m
-         where m.org_id = p.org_id and m.user_id::text = p_user_id
-       )
-     )
-  order by c.created_at desc, c.id asc
-  limit case
-    when p_limit is null then null
-    else greatest(1, least(p_limit, 100))
-  end
-  offset greatest(coalesce(p_offset, 0), 0);
+    o.id,
+    o.project_id,
+    o.user_id,
+    o.title,
+    o.model,
+    o.created_at,
+    o.project_name
+  from public.get_chats_overview(p_user_id, null::text, p_limit, p_offset) o;
 $$;
 
 create table if not exists public.chat_messages (
