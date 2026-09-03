@@ -27,6 +27,7 @@ import {
 import {
   type McpConnectorSummary,
   MikeApiError,
+    isConnectorSetupError,
   createMcpConnector,
   deleteMcpConnector,
   getMcpConnector,
@@ -139,6 +140,9 @@ export default function ConnectorsPage() {
   const [addStep, setAddStep] = useState<AddStep>("form");
   const [addResult, setAddResult] = useState<McpConnectorSummary | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
+    // Operator-side setup text from the backend (code connector_setup_required):
+    // rendered as guidance in the modal body, not as a red failure line.
+    const [addSetupNotice, setAddSetupNotice] = useState<string | null>(null);
   const [addAuthMessage, setAddAuthMessage] = useState<string | null>(null);
   const [showAddToken, setShowAddToken] = useState(false);
   const [showAddAdvanced, setShowAddAdvanced] = useState(false);
@@ -310,6 +314,7 @@ export default function ConnectorsPage() {
     setAddStep("form");
     setAddResult(null);
     setAddError(null);
+        setAddSetupNotice(null);
     setAddAuthMessage(null);
     setShowAddToken(false);
     setShowAddAdvanced(false);
@@ -517,7 +522,17 @@ export default function ConnectorsPage() {
                 }
         setAddStep("form");
         setAddAuthMessage(null);
-        setAddError(userFacingApiError(err, "Failed to add connector."));
+                if (isConnectorSetupError(err)) {
+                    // The connector row was created; only the OAuth start was
+                    // refused. The instructions name the env vars and the
+                    // redirect URI, so show them where the user is looking.
+                    setAddSetupNotice(err.message);
+                    setAddError(null);
+                    return;
+                }
+                setAddError(
+                    userFacingApiError(err, "Failed to add connector."),
+                );
       } finally {
         setBusyKey(null);
       }
@@ -765,6 +780,7 @@ export default function ConnectorsPage() {
         step={addStep}
         result={addResult}
         error={addError}
+                setupNotice={addSetupNotice}
         authMessage={addAuthMessage}
         showToken={showAddToken}
         showAdvanced={showAddAdvanced}
