@@ -41,6 +41,7 @@ import {
     setUserMcpToolEnabled,
     startUserMcpConnectorOAuth,
     updateUserMcpConnector,
+    ConnectorSetupError,
 } from "../lib/mcpConnectors";
 import { conciseMcpErrorMessage } from "../lib/mcp/errors";
 import {
@@ -1632,6 +1633,16 @@ userRouter.post(
                 connectorId: req.params.connectorId,
                 error: detail,
             });
+            // The setup error is static text this repo authors (with only our
+            // own redirect URI interpolated), so it is safe to hand to the
+            // browser — and it is the one failure here the user can fix.
+            // Everything else may carry SDK-embedded upstream bodies and stays
+            // a fixed string; the operator reads the real message in the log.
+            if (err instanceof ConnectorSetupError) {
+                return void res
+                    .status(400)
+                    .json({ code: err.code, detail: err.message });
+            }
             res.status(400).json({
                 detail: "Connector authorization could not be started.",
             });

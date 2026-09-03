@@ -241,3 +241,69 @@ describe("ConnectorsPage OAuth poll cancellation", () => {
         ).toBe("https://mcp.slack.com/mcp");
     });
 });
+
+describe("ConnectorsPage operator setup guidance", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(needsMfaVerification).mockResolvedValue(false);
+        vi.mocked(listMcpConnectors).mockResolvedValue([]);
+        vi.spyOn(window, "open").mockReturnValue({
+            location: { href: "" },
+            close: vi.fn(),
+            closed: false,
+        } as unknown as Window);
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    it("shows the backend's setup instructions in the Add modal instead of a generic failure", async () => {
+        // Slack has no dynamic client registration: the connector row is
+        // created, the tool refresh says "oauth required", and the OAuth
+        // start is refused with connector_setup_required carrying the
+        // operator steps and this deployment's redirect URI.
+        vi.mocked(createMcpConnector).mockResolvedValue(makeSummary());
+        vi.mocked(refreshMcpConnectorTools).mockRejectedValue(
+            new MikeApiError({
+                message: "oauth required",
+                status: 401,
+                code: "oauth_required",
+            }),
+        );
+        const instructions =
+            "Slack's MCP server needs a pre-configured OAuth client — add http://localhost:3000/api/user/mcp-connectors/oauth/callback as a redirect URL and set SLACK_MCP_OAUTH_CLIENT_ID.";
+        vi.mocked(startMcpConnectorOAuth).mockRejectedValue(
+            new MikeApiError({
+                message: instructions,
+                status: 400,
+                code: "connector_setup_required",
+            }),
+        );
+
+        render(<ConnectorsPage />);
+        await act(async () => {
+            await flushMicrotasks();
+        });
+        fireEvent.click(screen.getByRole("button", { name: /add/i }));
+        fireEvent.click(
+            screen.getByRole("button", { name: /slack mcp\.slack\.com/i }),
+        );
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+            await flushMicrotasks();
+        });
+
+        const notice = screen.getByRole("status");
+        expect(notice.textContent).toContain(
+            "This server needs a one-time setup by the administrator",
+        );
+        expect(notice.textContent).toContain("SLACK_MCP_OAUTH_CLIENT_ID");
+        expect(notice.textContent).toContain(
+            "http://localhost:3000/api/user/mcp-connectors/oauth/callback",
+        );
+        // Back on the form, and NOT the red "Failed to add connector" line.
+        expect(screen.queryByText(/failed to add connector/i)).toBeNull();
+        expect(screen.getByRole("button", { name: "Connect" })).toBeTruthy();
+    });
+});
