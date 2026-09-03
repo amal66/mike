@@ -1,7 +1,5 @@
-import type { createServerSupabase } from "./supabase";
+import type { Db } from "./supabase";
 import type { ProjectRole } from "./permissions";
-
-type Db = ReturnType<typeof createServerSupabase>;
 
 export type OrgResourceKind =
     | "project"

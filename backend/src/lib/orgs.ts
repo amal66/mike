@@ -22,7 +22,7 @@
 // someone to a firm workspace exposes confidential content, so it takes the
 // recipient's consent, not just the inviter's intent.
 
-import { createServerSupabase } from "./supabase";
+import type { Db } from "./supabase";
 import { recordAudit } from "./audit";
 import {
     getOrgRole,
@@ -31,8 +31,6 @@ import {
     normalizeEmail,
     type OrgRole,
 } from "./access";
-
-type Db = ReturnType<typeof createServerSupabase>;
 
 type DbError = { code?: string; message: string } | null;
 
