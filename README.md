@@ -111,6 +111,21 @@ If a user starts an OAuth connect before the deployment is configured, the
 error message contains the exact provider-console steps and the redirect URI
 to paste — nothing fails silently.
 
+**Redirect URIs.** Every callback below is derived from the backend's
+`API_PUBLIC_URL`, which is the browser-reachable frontend gateway *including
+its `/api` prefix* (the frontend proxies `/api/*` to the backend, so the
+backend's own port never appears in a redirect URI):
+
+| Deployment | `API_PUBLIC_URL` | Register with the provider |
+| --- | --- | --- |
+| Local development | `http://localhost:3000/api` | `http://localhost:3000/api/user/…/oauth/callback` |
+| Production | `https://<your-mike-host>/api` | `https://<your-mike-host>/api/user/…/oauth/callback` |
+
+The path is `/user/mcp-connectors/oauth/callback` for MCP connectors. A
+Connect attempt on an unconfigured Slack/Google MCP connector shows the exact
+URI, so you can copy it rather than assemble it. A value that does not
+byte-match what the provider has on file fails as `redirect_uri_mismatch`.
+
 ### Slack
 
 Slack's hosted MCP server (`https://mcp.slack.com/mcp`) gives the assistant
@@ -130,10 +145,15 @@ rights in the workspace):
 2. Two settings the manifest cannot express, required on **either** path:
    turn on the **Slack MCP Server** toggle under the app's *Agents* settings,
    and enable **PKCE** under *OAuth & Permissions*.
-3. Add your backend's callback,
-   `https://<your-backend-host>/user/mcp-connectors/oauth/callback`, as a
-   redirect URL. Slack requires HTTPS — for local development use an HTTPS
-   tunnel and set `API_PUBLIC_URL` to the tunnel URL so the callback matches.
+3. Add the callback,
+   `https://<your-mike-host>/api/user/mcp-connectors/oauth/callback`, as a
+   redirect URL. Slack requires HTTPS, so local development needs an HTTPS
+   tunnel pointed at the **frontend** (port 3000, which proxies `/api` to the
+   backend) — for example `cloudflared tunnel --url http://localhost:3000` —
+   with `API_PUBLIC_URL=https://<tunnel-host>/api` in `backend/.env` and the
+   matching `https://<tunnel-host>/api/user/mcp-connectors/oauth/callback`
+   registered on the Slack app. Quick tunnels get a new hostname on every
+   start, so update both when the tunnel restarts.
 4. Set `SLACK_MCP_OAUTH_CLIENT_ID` and `SLACK_MCP_OAUTH_CLIENT_SECRET` in
    `backend/.env` and restart the backend.
 
