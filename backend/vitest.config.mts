@@ -14,26 +14,31 @@ export default defineConfig({
         coverage: {
             provider: "v8",
             reporter: ["text", "lcov"],
-            include: ["src/lib/**"],
-            // No-regression RATCHET floor, not a target. src/lib/** spans the
-            // tested libs (access, storage keys/dispositions, downloadTokens,
-            // userApiKeys provider/env checks, chat doc resolution,
-            // llm model resolution, chat citations, userLookup,
-            // documentVersions, userDataCleanup, docxTrackedChanges,
-            // documentTypes, chat prompts, workflow catalog ingestion) AND the large,
-            // lightly tested feature libs (courtlistener, mcp, chat tool
-            // dispatch, llm providers, spreadsheet handling). Measured on
-            // this tree: 52.72% statements, 46.31% branches, 53.24% functions,
-            // 54.11% lines. These floors sit just below that (rounded down to
-            // whole percents) so CI
-            // fails on a *drop*. Floors only go up: when you add tests, raise
-            // them in the same PR. Backlog + per-area status:
-            // docs/testing-coverage.md.
+            include: ["src/lib/**", "src/modules/**"],
+            // No-regression RATCHET floor, not a target. The measured set is
+            // src/lib/** (the tested libs — access, storage keys/dispositions,
+            // downloadTokens, userApiKeys, chat doc resolution, llm model
+            // resolution, chat citations, documentVersions, userDataCleanup,
+            // docxTrackedChanges, workflow catalog ingestion — AND the large,
+            // lightly tested feature libs: courtlistener, mcp, chat tool
+            // dispatch, llm providers, spreadsheet handling) PLUS
+            // src/modules/** (every domain's route handlers and service
+            // layers; the tabular extraction core moved here from lib/).
+            // Widening the include grew the denominator by previously
+            // unmeasured route/service code; the module split then added
+            // service-level unit tests (tabular, uploads, chat, workflows
+            // add-ons, models) and, after the 2026-09-14 rebase onto main,
+            // main's own org-access, memory and connector suites now running
+            // against the modules, which raised the measurement to 61.34%
+            // statements, 52.31% branches, 66.28% functions, 63.97% lines.
+            // The floors sit just below that — CI fails on a *drop* from
+            // here. Floors only go up: when you add tests, raise them in the
+            // same PR. Backlog + per-area status: docs/testing-coverage.md.
             thresholds: {
-                statements: 52,
-                branches: 46,
-                functions: 53,
-                lines: 54,
+                statements: 61,
+                branches: 52,
+                functions: 66,
+                lines: 63,
             },
         },
     },
