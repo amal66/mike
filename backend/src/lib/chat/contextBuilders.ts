@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { createServerSupabase } from "../supabase";
+import type { Db } from "../supabase";
 import { attachActiveVersionPaths } from "../documentVersions";
 import {
   type DocStore,
@@ -135,7 +135,7 @@ export function spotlightWorkflow(text: string, nonce: string): string {
 export async function enrichWithPriorEvents(
   messages: ChatMessage[],
   chatId: string | null | undefined,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   docIndex: DocIndex,
   nonce?: string,
   messageTable = "chat_messages",
@@ -504,7 +504,7 @@ type StoredAssistantEventRow = {
 };
 
 async function loadAssistantMessage(
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   chatId: string,
   messageId: string,
   messageTable = "chat_messages",
@@ -529,7 +529,7 @@ async function loadAssistantMessage(
 }
 
 export async function appendAssistantEventsToMessage(
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   chatId: string,
   messageId: string,
   authorUserId: string,
@@ -645,7 +645,7 @@ function canonicalAskInputsResponses(
 }
 
 export async function appendAskInputsResponseToAssistantMessage(
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   chatId: string,
   response: AskInputsResponseRequest,
   authorUserId: string,
@@ -737,7 +737,7 @@ export function buildCancelledAssistantMessage(args: {
 export async function buildDocContext(
   messages: ChatMessage[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   chatId?: string | null,
   messageTable = "chat_messages",
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
@@ -842,7 +842,7 @@ export async function buildDocContext(
 export async function buildProjectDocContext(
   projectId: string,
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   messages: ChatMessage[] = [],
 ): Promise<{
   docIndex: DocIndex;
@@ -957,7 +957,7 @@ export async function buildProjectDocContext(
 export async function buildWorkflowStore(
   userId: string,
   userEmail: string | null | undefined,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
 ): Promise<WorkflowStore> {
   const store: WorkflowStore = new Map();
   const normalizedUserEmail = (userEmail ?? "").trim().toLowerCase();

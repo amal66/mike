@@ -1,4 +1,4 @@
-import { createServerSupabase } from "./supabase";
+import type { Db } from "./supabase";
 import {
     assertStorageConfigured,
     deleteFile,
@@ -9,8 +9,6 @@ import { enqueueStorageCleanup } from "./dbq/enqueue";
 import { removeGrantsForEmail } from "./projectAccess";
 import { removeContentGrantsForEmail } from "./contentAccess";
 import { chunkArray } from "./arrays";
-
-type Db = ReturnType<typeof createServerSupabase>;
 
 const DELETE_BATCH_SIZE = 500;
 
