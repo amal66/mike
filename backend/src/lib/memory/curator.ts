@@ -12,7 +12,11 @@ import {
 } from "../llm";
 import { resolveEffectiveChatModel } from "../modelSelection";
 import { can } from "../permissions";
-import { getUserModelSettings } from "../userSettings";
+// The user module's facade is the one door to per-user model settings. A
+// lib file reaching into modules/ is the documented exception the
+// architecture test allowlists (the curator is a DB job handler, and job
+// handlers have not moved into modules yet).
+import { getUserModelSettings } from "../../modules/user/user.service";
 import { DbJobDeferredError, type Db, type DbJob } from "../dbq/types";
 import {
   ensureMemoryFile,

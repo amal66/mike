@@ -143,7 +143,7 @@ vi.mock("../../lib/chat", async (importOriginal) => {
   };
 });
 
-vi.mock("../../lib/userSettings", () => ({
+vi.mock("../../modules/user/user.settings", () => ({
   getUserModelSettings: vi.fn(async () => ({
     legal_research_us: false,
     title_model: "test-model",

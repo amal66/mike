@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import { sealManifest } from "./manifestSigning";
-import { createServerSupabase } from "./supabase";
-
-type Db = ReturnType<typeof createServerSupabase>;
+import type { Db } from "./supabase";
 
 const PAGE_SIZE = 1000;
 

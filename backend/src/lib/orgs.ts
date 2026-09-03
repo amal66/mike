@@ -1,6 +1,6 @@
 // Business logic + data-access for the organizations / RBAC module.
 //
-// These functions are the service layer behind routes/orgs.ts. They take an
+// These functions are the service layer behind modules/orgs/orgs.routes.ts. They take an
 // explicit Supabase client (`db`) plus request-derived primitives, enforce the
 // admin/member role model, and RETURN typed discriminated results the thin
 // route handlers map onto HTTP status codes. They never touch req/res.

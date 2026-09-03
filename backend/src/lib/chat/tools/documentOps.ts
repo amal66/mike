@@ -7,7 +7,7 @@ import {
 import { convertedPdfKey, docxToPdf } from "../../convert";
 import { enqueueConversion } from "../../queue/conversionQueue";
 import { enqueueDbJob, enqueueStorageCleanup } from "../../dbq/enqueue";
-import { createServerSupabase } from "../../supabase";
+import type { Db } from "../../supabase";
 import { profileAttributionName } from "../../userLookup";
 import {
   applyTrackedEdits,
@@ -115,7 +115,7 @@ export async function generateDocx(
   title: string,
   sections: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   options?: {
     landscape?: boolean;
     numberSections?: boolean;
@@ -1018,7 +1018,7 @@ async function persistGeneratedFile(params: {
   extension: "xlsx" | "pptx";
   buffer: Buffer;
   userId: string;
-  db: ReturnType<typeof createServerSupabase>;
+  db: Db;
   projectId?: string | null;
 }) {
   const { title, extension, buffer, userId, db, projectId } = params;
@@ -1143,7 +1143,7 @@ export async function generateExcel(
   title: string,
   sheets: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1169,7 +1169,7 @@ export async function generatePpt(
   title: string,
   slides: unknown[],
   userId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   options?: { projectId?: string | null },
 ) {
   try {
@@ -1201,7 +1201,7 @@ export async function generatePpt(
  */
 export async function loadCurrentVersionBytes(
   documentId: string,
-  db: ReturnType<typeof createServerSupabase>,
+  db: Db,
   versionId?: string | null,
 ): Promise<{ bytes: Buffer; storage_path: string } | null> {
   const active = await loadActiveVersion(documentId, db, versionId);
@@ -1220,7 +1220,7 @@ export async function runEditDocument(params: {
   documentId: string;
   userId: string;
   edits: EditInput[];
-  db: ReturnType<typeof createServerSupabase>;
+  db: Db;
   /**
    * If provided, append these edits to the existing turn-scoped version
    * (overwrites the file at storagePath and reuses the document_versions
@@ -1473,7 +1473,7 @@ export async function getTurnReadIdentity(params: {
   docLabel: string;
   docStore: DocStore;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: Db;
 }): Promise<{
   key: string;
   docLabel: string;
@@ -1547,7 +1547,7 @@ export async function readDocumentContent(
   docStore: DocStore,
   write: (s: string) => void,
   docIndex?: DocIndex,
-  db?: ReturnType<typeof createServerSupabase>,
+  db?: Db,
   opts?: {
     emitEvents?: boolean;
     readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
@@ -1889,7 +1889,7 @@ export async function findInDocumentContent(params: {
   docStore: DocStore;
   write: (s: string) => void;
   docIndex?: DocIndex;
-  db?: ReturnType<typeof createServerSupabase>;
+  db?: Db;
   readIdentity?: Awaited<ReturnType<typeof getTurnReadIdentity>>;
 }): Promise<string> {
   const {
