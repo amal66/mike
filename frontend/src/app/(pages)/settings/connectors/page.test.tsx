@@ -243,13 +243,15 @@ describe("ConnectorsPage OAuth poll cancellation", () => {
 });
 
 describe("ConnectorsPage operator setup guidance", () => {
+    const popupClose = vi.fn();
+
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(needsMfaVerification).mockResolvedValue(false);
         vi.mocked(listMcpConnectors).mockResolvedValue([]);
         vi.spyOn(window, "open").mockReturnValue({
             location: { href: "" },
-            close: vi.fn(),
+            close: popupClose,
             closed: false,
         } as unknown as Window);
     });
@@ -310,5 +312,9 @@ describe("ConnectorsPage operator setup guidance", () => {
         expect(screen.queryByText(/failed to add connector/i)).toBeNull();
         expect(screen.queryByText("New MCP connector")).toBeNull();
         expect(screen.getByRole("button", { name: /delete connector/i })).toBeTruthy();
+        // The about:blank window opened ahead of the start call must not be
+        // left behind: nothing will ever navigate it on this path.
+        expect(window.open).toHaveBeenCalledTimes(1);
+        expect(popupClose).toHaveBeenCalledTimes(1);
     });
 });

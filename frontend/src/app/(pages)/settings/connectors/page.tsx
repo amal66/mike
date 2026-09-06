@@ -362,8 +362,20 @@ export default function ConnectorsPage() {
             "mike_mcp_oauth",
             "popup,width=560,height=720,menubar=no,toolbar=no,location=no,status=no",
         );
-        const { authorizationUrl, alreadyAuthorized, callbackOrigin } =
-            await startMcpConnectorOAuth(connectorId);
+        let started: Awaited<ReturnType<typeof startMcpConnectorOAuth>>;
+        try {
+            started = await startMcpConnectorOAuth(connectorId);
+        } catch (err) {
+            // The popup is opened *before* the start call so browsers treat it
+            // as user-initiated. When the start call fails — typically the 400
+            // "connector_setup_required" answer for a Slack/Google client the
+            // deployment has not configured yet — nothing will ever navigate
+            // that window, so close it instead of stranding an about:blank
+            // popup next to the setup notice (seen live on 2026-09-06).
+            popup?.close();
+            throw err;
+        }
+        const { authorizationUrl, alreadyAuthorized, callbackOrigin } = started;
         if (alreadyAuthorized) {
             popup?.close();
             const refreshed = await refreshMcpConnectorTools(connectorId);
