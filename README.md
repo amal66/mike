@@ -163,6 +163,13 @@ app approval enabled, a Workspace Owner/Admin must approve the app before
 members can authorize it. Tokens are encrypted at rest, and individual tools
 can be toggled per connector.
 
+Tools Slack marks as writes — sending messages, adding reactions, creating
+canvases and lists, scheduling messages — are cached but kept **disabled**,
+and the toggle refuses to enable them: Mike has no human-confirmation step
+for write tools yet, so the assistant is only ever given the read and search
+tools. The consent screen therefore grants more than the assistant can use;
+trim the manifest's user scopes if that is not acceptable for your workspace.
+
 ## System workflows
 
 Mike's system assistant and tabular-review workflows are maintained in the
