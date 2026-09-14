@@ -1,4 +1,4 @@
--- Migration date: 2026-08-30
+-- Migration date: 2026-09-14
 -- Highlight-assigned chat agents.
 --
 -- An "agent" is a real chat row parented to the chat whose assistant response
@@ -37,17 +37,23 @@ alter table public.chat_messages
   add column if not exists edited_at timestamptz;
 
 -- Three read paths must stop counting agents as conversations. Each body below
--- is copied verbatim from schema.sql so a fresh install and an upgraded one
--- land on identical definitions.
+-- is copied VERBATIM from backend/schema.sql on this branch, so a fresh install
+-- and an upgraded deployment land on byte-identical definitions and the
+-- "Fresh install vs upgraded deployment" drift gate stays green.
+--
+-- These bodies therefore carry everything main added since this feature was
+-- first written -- the organization access columns, the access_role verdict
+-- lateral, the visibility scopes -- with only the `parent_chat_id is null`
+-- arms added on top. `create or replace` cannot change an existing function's
+-- return type, so the argument and return lists must match what the previous
+-- migration (20260904_01_organization_access.sql) left in place.
 --
 -- Agents are reached from their parent conversation, never from the global
--- recent-chats list. The `model` column in the return type is NOT optional
--- bookkeeping: the model-selection policy already added it on this function,
--- and `create or replace` cannot change an existing function's return type --
--- omitting it here would abort the migration outright.
+-- recent-chats list.
 
 create or replace function public.get_chats_overview(
   p_user_id text,
+  p_user_email text,
   p_limit integer default null,
   p_offset integer default 0
 )
@@ -58,7 +64,9 @@ returns table (
   title text,
   model text,
   created_at timestamptz,
-  project_name text
+  project_name text,
+  is_owner boolean,
+  access_role text
 )
 language sql
 stable
@@ -70,19 +78,36 @@ as $$
     c.title,
     c.model,
     c.created_at,
-    p.name as project_name
+    p.name as project_name,
+    -- Provenance ("I started this thread"), not a role: the ladder itself is
+    -- lib/permissions.ts, and the creator branch of ensureChatAccess is what
+    -- turns this into Owner standing.
+    coalesce(c.user_id::text = p_user_id, false) as is_owner,
+    -- The SAME verdict the predicate below filters on, served to the caller.
+    -- Serving only is_owner was not enough: the client must distinguish
+    -- Editor and Viewer from Owner so its actions match the server verdict.
+    -- One evaluation, one truth: the lateral computes the role once and both
+    -- the column and the WHERE read it.
+    verdict.role as access_role
   from public.chats c
   left join public.projects p on p.id = c.project_id
+  cross join lateral (
+    select public.chat_access_role(
+             c.id,
+             c.user_id,
+             c.project_id,
+             c.org_id,
+             p_user_id,
+             p_user_email
+           ) as role
+  ) verdict
+  -- The whole predicate, in one call.
+  -- The join above is for project_name only; the function resolves the
+  -- project itself.
   -- Agents (parent_chat_id set) are reached from their parent conversation,
   -- never from the global recent-chats list.
   where c.parent_chat_id is null
-    and (
-      c.user_id::text = p_user_id
-      or (
-        p.id is not null
-        and p.user_id::text = p_user_id
-      )
-    )
+    and verdict.role is not null
   order by c.created_at desc, c.id asc
   limit case
     when p_limit is null then null
@@ -92,10 +117,10 @@ as $$
 $$;
 
 
--- Both `get_projects_overview` overloads count a project's chats on the project
--- card. An agent inherits its parent's project binding for access control, so
--- without the same exclusion a conversation with three agents would report
--- itself as four chats.
+-- Both `get_projects_overview` overloads count a project's chats on the
+-- project card. An agent inherits its parent's project binding for access
+-- control, so without the same exclusion a conversation with three agents
+-- would report itself as four chats.
 
 create or replace function public.get_projects_overview(
   p_user_id text,
@@ -104,15 +129,18 @@ create or replace function public.get_projects_overview(
 returns table (
   id uuid,
   user_id text,
+  org_id uuid,
+  access_scope text,
+  organization_name text,
   name text,
   cm_number text,
   practice text,
-  shared_with jsonb,
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
   owner_display_name text,
   owner_email text,
+  access_role text,
   document_count integer,
   chat_count integer,
   review_count integer
@@ -123,12 +151,9 @@ as $$
   with visible_projects as (
     select p.*
     from public.projects p
-    where p.user_id::text = p_user_id
-       or (
-        coalesce(p_user_email, '') <> ''
-        and p.user_id::text <> p_user_id
-        and p.shared_with @> jsonb_build_array(p_user_email)
-      )
+    where public.project_access_role(
+      p.id, p.user_id, p.org_id, p_user_id, p_user_email
+    ) is not null
   ),
   document_counts as (
     select d.project_id, count(*)::integer as document_count
@@ -154,15 +179,34 @@ as $$
   select
     vp.id,
     vp.user_id::text as user_id,
+    vp.org_id,
+    case
+      when vp.org_id is not null then 'organization'
+      when exists (
+        select 1 from public.project_access_grants g
+        where g.project_id = vp.id
+      ) then 'shared'
+      else 'private'
+    end as access_scope,
+    (
+      select nullif(trim(o.name), '')
+      from public.organizations o
+      where o.id = vp.org_id
+    ) as organization_name,
     vp.name,
     vp.cm_number,
     vp.practice,
-    vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id::text = p_user_id as is_owner,
+    coalesce(vp.user_id::text = p_user_id, false) as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
-    null::text as owner_email,
+    -- Populated at last. The column has always been declared and always
+    -- returned NULL, so the UI's "ask the project admin" line had no address
+    -- to render and silently collapsed to nothing.
+    up.email as owner_email,
+    public.project_access_role(
+      vp.id, vp.user_id, vp.org_id, p_user_id, p_user_email
+    ) as access_role,
     coalesce(dc.document_count, 0) as document_count,
     coalesce(cc.chat_count, 0) as chat_count,
     coalesce(rc.review_count, 0) as review_count
@@ -193,15 +237,18 @@ create or replace function public.get_projects_overview(
 returns table (
   id uuid,
   user_id text,
+  org_id uuid,
+  access_scope text,
+  organization_name text,
   name text,
   cm_number text,
   practice text,
-  shared_with jsonb,
   created_at timestamptz,
   updated_at timestamptz,
   is_owner boolean,
   owner_display_name text,
   owner_email text,
+  access_role text,
   document_count integer,
   chat_count integer,
   review_count integer
@@ -212,18 +259,34 @@ as $$
   with visible_projects as (
     select p.*
     from public.projects p
-    where (
-        p.user_id::text = p_user_id
-        or (
-          coalesce(p_user_email, '') <> ''
-          and p.user_id::text <> p_user_id
-          and p.shared_with @> jsonb_build_array(p_user_email)
-        )
-      )
+    where public.project_access_role(
+        p.id, p.user_id, p.org_id, p_user_id, p_user_email
+      ) is not null
       and (
         coalesce(p_scope, 'all') = 'all'
         or (p_scope = 'mine' and p.user_id::text = p_user_id)
-        or (p_scope = 'shared' and p.user_id::text <> p_user_id)
+        or (p_scope = 'shared' and (p.user_id is null or p.user_id::text <> p_user_id))
+        or (
+          p_scope = 'collaborative'
+          and (
+            p.org_id is not null
+            or p.user_id is null
+            or p.user_id::text <> p_user_id
+            or exists (
+              select 1 from public.project_access_grants g
+              where g.project_id = p.id
+            )
+          )
+        )
+        or (
+          p_scope = 'private'
+          and p.org_id is null
+          and p.user_id::text = p_user_id
+          and not exists (
+            select 1 from public.project_access_grants g
+            where g.project_id = p.id
+          )
+        )
       )
       and (
         p_search_term is null
@@ -265,15 +328,34 @@ as $$
   select
     vp.id,
     vp.user_id::text as user_id,
+    vp.org_id,
+    case
+      when vp.org_id is not null then 'organization'
+      when exists (
+        select 1 from public.project_access_grants g
+        where g.project_id = vp.id
+      ) then 'shared'
+      else 'private'
+    end as access_scope,
+    (
+      select nullif(trim(o.name), '')
+      from public.organizations o
+      where o.id = vp.org_id
+    ) as organization_name,
     vp.name,
     vp.cm_number,
     vp.practice,
-    vp.shared_with,
     vp.created_at,
     vp.updated_at,
-    vp.user_id::text = p_user_id as is_owner,
+    coalesce(vp.user_id::text = p_user_id, false) as is_owner,
     nullif(trim(up.display_name), '') as owner_display_name,
-    null::text as owner_email,
+    -- Populated at last. The column has always been declared and always
+    -- returned NULL, so the UI's "ask the project admin" line had no address
+    -- to render and silently collapsed to nothing.
+    up.email as owner_email,
+    public.project_access_role(
+      vp.id, vp.user_id, vp.org_id, p_user_id, p_user_email
+    ) as access_role,
     coalesce(dc.document_count, 0) as document_count,
     coalesce(cc.chat_count, 0) as chat_count,
     coalesce(rc.review_count, 0) as review_count

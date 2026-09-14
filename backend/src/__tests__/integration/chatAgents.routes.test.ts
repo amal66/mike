@@ -198,6 +198,28 @@ import { MAX_ACTIVE_CHAT_AGENTS, PROPOSE_EDIT_TOOL_NAME } from "../../lib/chat";
 
 const auth = (r: request.Test) => r.set("Authorization", "Bearer test");
 
+const projectRow = (over: Record<string, unknown> = {}) => ({
+    id: "proj-9",
+    user_id: "u1",
+    org_id: null,
+    ...over,
+});
+
+/**
+ * Arrange a project chat the caller can SEE but not write to: the project
+ * belongs to somebody else and the caller holds a viewer grant on it. The
+ * chat routes gate writes on `content.edit`, so this is the fixture that
+ * separates "can open the thread" from "can change it".
+ */
+const asProjectViewer = () => {
+    db.rows.projects.push(projectRow({ user_id: "someone-else" }));
+    db.rows.project_access_grants.push({
+        project_id: "proj-9",
+        email: "u1@test.local",
+        role: "viewer",
+    });
+};
+
 const parentChat = (over: Record<string, unknown> = {}) => ({
     id: "parent-1",
     user_id: "u1",
@@ -223,7 +245,12 @@ const agentChat = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
     vi.clearAllMocks();
-    db.rows = { chats: [], chat_messages: [] };
+    db.rows = {
+        chats: [],
+        chat_messages: [],
+        projects: [],
+        project_access_grants: [],
+    };
     db.writes = [];
     db.insertError = null;
     runLLMStream.mockResolvedValue({
@@ -261,6 +288,9 @@ describe("POST /chat/create — assigning an agent", () => {
     });
 
     it("inherits the parent's project binding", async () => {
+        // A project chat's standing comes from the PROJECT (ensureChatAccess),
+        // so the project row has to exist for the parent to be reachable.
+        db.rows.projects.push(projectRow());
         db.rows.chats.push(parentChat({ project_id: "proj-9" }));
 
         await auth(request(app).post("/chat/create")).send({
@@ -274,6 +304,7 @@ describe("POST /chat/create — assigning an agent", () => {
     });
 
     it("rejects a project_id that contradicts the parent", async () => {
+        db.rows.projects.push(projectRow());
         db.rows.chats.push(parentChat({ project_id: "proj-9" }));
 
         const res = await auth(request(app).post("/chat/create")).send({
@@ -284,6 +315,21 @@ describe("POST /chat/create — assigning an agent", () => {
 
         expect(res.status).toBe(400);
         expect(res.body.detail).toBe("project_id does not match parent chat");
+    });
+
+    it("refuses to assign an agent as a viewer on the parent", async () => {
+        asProjectViewer();
+        db.rows.chats.push(
+            parentChat({ user_id: "someone-else", project_id: "proj-9" }),
+        );
+
+        const res = await auth(request(app).post("/chat/create")).send({
+            parent_chat_id: "parent-1",
+            agent_instruction: "look at this",
+        });
+
+        expect(res.status).toBe(403);
+        expect(db.writes).toHaveLength(0);
     });
 
     it("404s when the parent is not accessible", async () => {
@@ -515,6 +561,23 @@ describe("PATCH /chat/:chatId/messages/:messageId", () => {
         ]);
     });
 
+    it("refuses to rewrite a message as a viewer", async () => {
+        asProjectViewer();
+        db.rows.chats.push(
+            parentChat({ user_id: "someone-else", project_id: "proj-9" }),
+        );
+        db.rows.chat_messages.push(assistantMessage());
+
+        const res = await auth(
+            request(app).patch("/chat/parent-1/messages/msg-1"),
+        ).send({ content: [{ type: "content", text: "new wording" }] });
+
+        expect(res.status).toBe(403);
+        expect(db.rows.chat_messages[0].content).toEqual([
+            { type: "content", text: "old wording" },
+        ]);
+    });
+
     it("refuses to rewrite a message in another chat", async () => {
         db.rows.chats.push(parentChat());
         db.rows.chat_messages.push(
@@ -608,6 +671,24 @@ describe("PATCH /chat/:chatId/proposals/:proposalId", () => {
         expect(
             (db.rows.chat_messages[0].content as { status: string }[])[0].status,
         ).toBe("accepted");
+    });
+
+    it("refuses to resolve a proposal as a viewer", async () => {
+        asProjectViewer();
+        withProposal();
+        for (const chat of db.rows.chats) {
+            chat.user_id = "someone-else";
+            chat.project_id = "proj-9";
+        }
+
+        const res = await auth(
+            request(app).patch("/chat/agent-1/proposals/p1"),
+        ).send({ status: "accepted" });
+
+        expect(res.status).toBe(403);
+        expect(
+            (db.rows.chat_messages[0].content as { status: string }[])[0].status,
+        ).toBe("pending");
     });
 
     it("rejects an unknown status", async () => {
