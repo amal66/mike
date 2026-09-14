@@ -22,19 +22,20 @@ export default defineConfig({
             // documentVersions, userDataCleanup, docxTrackedChanges,
             // documentTypes, chat prompts, workflow catalog ingestion) AND the large,
             // lightly tested feature libs (courtlistener, mcp, chat tool
-            // dispatch, llm providers, spreadsheet handling). Measured on
-            // this tree (2026-08-27, while wiring the gate into ci.yml —
-            // coverage had risen unenforced since the floors were first set):
-            // 57.31% statements, 50.36% branches, 58.27% functions, 58.81%
+            // dispatch, llm providers, spreadsheet handling). Re-measured on
+            // this tree (2026-09-14, when this branch was rebased onto main —
+            // coverage had risen unenforced since the floors were first set,
+            // and again between 2026-08-27 and today):
+            // 64.22% statements, 55.06% branches, 69.34% functions, 66.72%
             // lines. These floors sit just below that (rounded down to whole
             // percents) so CI fails on a *drop*. Floors only go up: when you
             // add tests, raise them in the same PR. Backlog + per-area
             // status: docs/testing-coverage.md.
             thresholds: {
-                statements: 57,
-                branches: 50,
-                functions: 58,
-                lines: 58,
+                statements: 64,
+                branches: 55,
+                functions: 69,
+                lines: 66,
             },
         },
     },

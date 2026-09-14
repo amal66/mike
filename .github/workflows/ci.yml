@@ -75,9 +75,13 @@ jobs:
       - run: npm ci
 
       # Runs the suite with the coverage-ratchet floor check (see
-      # docs/frontend-testing.md); --if-present keeps the fallback semantics,
-      # so a tree without the "test:coverage" script still no-ops.
-      - run: npm run test:coverage --if-present
+      # docs/frontend-testing.md). `--if-present` used to sit here as a
+      # pre-harness fallback: if "test:coverage" were ever renamed or
+      # dropped, npm would exit 0 and the whole frontend suite would vanish
+      # from CI behind a green check. The script has existed since the
+      # harness landed, so the fallback buys nothing but that silence — it
+      # is gone, same as the backend job's.
+      - run: npm run test:coverage
 
       # Blocking gate: the eslint error backlog was burned down in this PR
       # (0 errors; warnings do not fail the step), so any new error fails CI.
