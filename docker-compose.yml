@@ -149,7 +149,7 @@ services:
       - ./backend/migrations/20260905_01_scoped_memory_files.sql:/scoped-memory-migration.sql:ro
       - ./backend/migrations/20260908_01_remove_transparent_tables.sql:/remove-transparent-tables-migration.sql:ro
       - ./backend/migrations/20260909_01_memory_safety_boundaries.sql:/memory-safety-migration.sql:ro
-      - ./backend/migrations/20260912_01_google_drive_integration.sql:/google-drive-migration.sql:ro
+      - ./backend/migrations/20260914_01_google_drive_integration.sql:/google-drive-migration.sql:ro
     entrypoint: ["bash", "-c"]
     command:
       - |

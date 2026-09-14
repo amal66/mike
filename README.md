@@ -240,7 +240,7 @@ verification rules depend on **who connects**, not on who wrote the code.
 
 Fresh databases created from `backend/schema.sql` already include the Drive
 token tables. Existing deployments should apply
-`backend/migrations/20260912_01_google_drive_integration.sql`.
+`backend/migrations/20260914_01_google_drive_integration.sql`.
 
 Each user then clicks **Connect** on **Settings > Connectors**, approves the
 Google consent screen once, and the assistant's Drive tools activate for
