@@ -364,7 +364,7 @@ function GoogleDriveCard({
         <p className="px-4 pb-4 text-xs text-gray-500">
           Not available on this server yet: the database is missing the Google
           Drive migration
-          (backend/migrations/20260906_01_google_drive_integration.sql). The
+          (backend/migrations/20260914_01_google_drive_integration.sql). The
           administrator needs to apply it and restart.
         </p>
       )}
