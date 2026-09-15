@@ -18,7 +18,7 @@ dangerous (scope in `backend/stryker.config.json`):
 
 - `src/lib/access.ts` — project/document sharing access checks
 - `src/lib/downloadTokens.ts` — HMAC-signed download tokens
-- `src/lib/chat/citations.ts` — citation extraction (what the model may
+- `src/modules/chat/engine/citations.ts` — citation extraction (what the model may
   cite from which document)
 
 ### Running it

@@ -1,3 +1,4 @@
+import type { AssistantEvent as WireAssistantEvent } from "@mike/contracts";
 // Shared TypeScript types for Mike AI legal assistant
 
 import type {
@@ -7,12 +8,12 @@ import type {
   SourceDocumentQuote,
   SourceDocumentType,
   SourceSubdocument,
-} from "../../../../../backend/src/lib/sourceDocuments";
+} from "@mike/contracts";
 import type {
   AskInputItem as SharedAskInputItem,
   AskInputResponseItem as SharedAskInputResponseItem,
   AskInputsEvent as SharedAskInputsEvent,
-} from "../../../../../backend/src/lib/chat/types";
+} from "@mike/contracts";
 
 export interface Folder {
   id: string;
@@ -195,63 +196,59 @@ export type AskInputsResponseEvent = {
   responses: AskInputResponseItem[];
 };
 
+type WireActivity<T extends WireAssistantEvent["type"]> = Extract<
+  WireAssistantEvent,
+  { type: T }
+>;
 export type AssistantEvent =
-  | { type: "reasoning"; text: string; isStreaming?: boolean }
-  | { type: "error"; message: string; safe_to_display?: boolean }
+  | (Omit<WireActivity<"reasoning">, "isStreaming"> & { isStreaming?: boolean })
+  | (Omit<WireActivity<"error">, "safe_to_display"> & {
+      safe_to_display?: boolean;
+    })
   | {
       type: "tool_call_start";
       name: string;
       isStreaming?: boolean;
     }
-  | {
-      type: "mcp_tool_call";
-      connector_id: string;
-      connector_name: string;
-      tool_name: string;
-      openai_tool_name: string;
-      status: "ok" | "error";
+  | (Omit<WireActivity<"mcp_tool_call">, "error" | "isStreaming"> & {
       error?: string;
       isStreaming?: boolean;
-    }
+    })
   | AskInputsEvent
   | AskInputsResponseEvent
   | { type: "thinking"; isStreaming?: boolean }
-  | {
-      type: "doc_read";
-      filename: string;
+  | (Omit<
+      WireActivity<"doc_read">,
+      "document_id" | "version_id" | "version_number" | "isStreaming"
+    > & {
       document_id?: string;
       version_id?: string | null;
       version_number?: number | null;
       isStreaming?: boolean;
-    }
-  | {
-      type: "doc_find";
-      filename: string;
+    })
+  | (Omit<
+      WireActivity<"doc_find">,
+      "document_id" | "version_id" | "version_number" | "isStreaming"
+    > & {
       document_id?: string;
       version_id?: string | null;
       version_number?: number | null;
-      query: string;
-      total_matches: number;
       isStreaming?: boolean;
-    }
-  | {
-      type: "doc_created";
-      filename: string;
-      download_url: string;
-      /** Set when the generated doc is persisted as a first-class document. */
+    })
+  | (Omit<
+      WireActivity<"doc_created">,
+      "document_id" | "version_id" | "version_number" | "isStreaming"
+    > & {
       document_id?: string;
       version_id?: string;
       version_number?: number | null;
       isStreaming?: boolean;
-    }
-  | { type: "doc_download"; filename: string; download_url: string }
-  | {
-      type: "doc_replicated";
-      /** Source document filename. */
-      filename: string;
-      /** How many copies were produced in this single tool call. */
-      count: number;
-      /** One entry per new copy. Empty while streaming. */
+    })
+  | WireActivity<"doc_download">
+  | (Omit<
+      WireActivity<"doc_replicated">,
+      "copies" | "error" | "isStreaming"
+    > & {
       copies?: {
         new_filename: string;
         document_id: string;
@@ -259,30 +256,25 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    }
-  | { type: "workflow_applied"; workflow_id: string; title: string }
-  | {
-      type: "doc_edited";
-      filename: string;
-      document_id: string;
-      version_id: string;
-      /** Per-document monotonic Vn written at emit time. */
+    })
+  | WireActivity<"workflow_applied">
+  | (Omit<
+      WireActivity<"doc_edited">,
+      "version_number" | "annotations" | "error" | "isStreaming"
+    > & {
       version_number?: number | null;
-      download_url: string;
       annotations: EditAnnotation[];
       error?: string;
       isStreaming?: boolean;
-    }
-  | {
-      type: "courtlistener_search_case_law";
-      query: string;
-      result_count?: number;
-      error?: string;
-      isStreaming?: boolean;
-    }
-  | {
-      type: "courtlistener_get_cases";
-      cluster_ids: number[];
+    })
+  | (Omit<
+      WireActivity<"courtlistener_search_case_law">,
+      "result_count" | "error" | "isStreaming"
+    > & { result_count?: number; error?: string; isStreaming?: boolean })
+  | (Omit<
+      WireActivity<"courtlistener_get_cases">,
+      "case_count" | "opinion_count" | "cases" | "error" | "isStreaming"
+    > & {
       case_count?: number;
       opinion_count?: number;
       cases?: {
@@ -294,11 +286,16 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    }
-  | {
-      type: "courtlistener_find_in_case";
-      cluster_id: number | null;
-      query: string;
+    })
+  | (Omit<
+      WireActivity<"courtlistener_find_in_case">,
+      | "total_matches"
+      | "case_name"
+      | "citation"
+      | "searches"
+      | "error"
+      | "isStreaming"
+    > & {
       total_matches?: number;
       case_name?: string | null;
       citation?: string | null;
@@ -312,39 +309,38 @@ export type AssistantEvent =
       }[];
       error?: string;
       isStreaming?: boolean;
-    }
-  | {
-      type: "courtlistener_read_case";
-      cluster_id: number | null;
+    })
+  | (Omit<
+      WireActivity<"courtlistener_read_case">,
+      "case_name" | "citation" | "opinion_count" | "error" | "isStreaming"
+    > & {
       case_name?: string | null;
       citation?: string | null;
       opinion_count?: number;
       error?: string;
       isStreaming?: boolean;
-    }
-  | {
-      type: "courtlistener_verify_citations";
+    })
+  | (Omit<
+      WireActivity<"courtlistener_verify_citations">,
+      "citation_count" | "match_count" | "error" | "isStreaming"
+    > & {
       citation_count?: number;
       match_count?: number;
       error?: string;
       isStreaming?: boolean;
-    }
-  | {
-      type: "case_citation";
-      cluster_id: number | null;
-      case_name: string | null;
-      citation: string | null;
-      url: string;
+    })
+  | (Omit<
+      WireActivity<"case_citation">,
+      "pdfUrl" | "dateFiled" | "document"
+    > & {
       pdfUrl?: string | null;
       dateFiled?: string | null;
       document?: PanelDocument;
-    }
-  | {
-      type: "case_opinions";
-      cluster_id: number;
+    })
+  | (Omit<WireActivity<"case_opinions">, "document"> & {
       document?: PanelDocument;
-    }
-  | { type: "content"; text: string; isStreaming?: boolean };
+    })
+  | (Omit<WireActivity<"content">, "isStreaming"> & { isStreaming?: boolean });
 
 export type CaseCitationQuote = {
   opinionId: number | null;

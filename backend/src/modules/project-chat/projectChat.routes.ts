@@ -1,3 +1,4 @@
+import { openAssistantSse } from "../../lib/assistantSse";
 // HTTP layer for the project-chat module.
 //
 // The route handler parses the request body, calls
@@ -18,7 +19,7 @@ import {
     buildCancelledAssistantMessage,
     extractCitations,
     isAbortError,
-    openAssistantSse,
+
     runLLMStream,
     stripTransientAssistantEvents,
     PROJECT_EXTRA_TOOLS,
@@ -29,7 +30,7 @@ import {
     parseOptionalDisplayedDoc,
     parseOptionalModel,
     parseOptionalReasoning,
-} from "../../lib/chat";
+} from "../chat/chat.service";
 import { generateAssistantChatTitle } from "../chat/chat.service";
 import { titleModelForChat } from "../../lib/modelSelection";
 import {

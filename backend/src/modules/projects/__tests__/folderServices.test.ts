@@ -123,7 +123,8 @@ describe("folder callers retain their scope and failure policies", () => {
         { table: "documents", data: [{ id: "doc" }] },
         ...(library ? [{ table: "documents", data: [{ id: "doc" }] }] : []),
         {
-          table: "document_versions",
+          table: "documents",
+          op: "delete",
           error: { message: "version lookup failed" },
         },
       ]);

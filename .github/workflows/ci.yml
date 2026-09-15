@@ -54,6 +54,8 @@ jobs:
       # signature fails the build instead of silently passing at runtime.
       - run: npm run typecheck:test
 
+      - run: npm run typecheck:contracts
+
   frontend:
     name: Frontend build and tests
     runs-on: ubuntu-latest

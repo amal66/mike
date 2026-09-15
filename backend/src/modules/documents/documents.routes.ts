@@ -69,8 +69,10 @@ documentsRouter.delete("/:documentId", requireAuth, asyncRoute(async (req, res) 
     const db = createServerSupabase();
 
     const result = await deleteDocument(documentId, userId, db);
-    if (!result.ok)
+    if (!result.ok) {
+        if (result.error) return void sendInternalError(res, result.error);
         return void res.status(404).json({ detail: "Document not found" });
+    }
     res.status(204).send();
 }));
 

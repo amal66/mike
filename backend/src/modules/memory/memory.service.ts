@@ -135,3 +135,5 @@ export async function wipeMemory(
         source: "wipe",
     });
 }
+
+export { handleMemoryConsolidation, markMemoryConsolidationFailed } from "./memory.curator";

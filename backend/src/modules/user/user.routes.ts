@@ -22,7 +22,7 @@ import {
     listMyInvitations,
 } from "../../lib/orgs";
 import { sendOrgFailure } from "../../lib/orgFailure";
-import { userExportFilename } from "../../lib/userDataExport";
+import { userExportFilename } from "./user.dataExport";
 import { configuredApiPublicUrl } from "../../lib/runtimeConfig";
 import {
     bootstrapUserProfile,

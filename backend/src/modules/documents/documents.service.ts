@@ -15,9 +15,8 @@
 //   documents.versions.ts  — version lifecycle (list/create/rename/delete)
 //   documents.edits.ts     — tracked-change ids + accept/reject edits
 //
-// Creating a document or a version from uploaded bytes is not part of this
-// module: clients upload directly to object storage through the upload-session
-// protocol (modules/uploads).
+// Upload sessions own transport and destination authorization; version metadata
+// creation, activation, replacement, copying, and cleanup use this facade.
 
 export {
     getDocument,
@@ -48,3 +47,15 @@ export {
 
 export { renameDocument } from "./documents.rename";
 export { deleteCollectionDocuments } from "./documents.cleanup";
+
+export { handleDocumentPrecomputeText } from "./documents.textJobs";
+export { handleConversionConvert, markConversionFailed } from "./documents.conversionJobs";
+export { sweepStaleProcessingDocuments } from "./documents.maintenance";
+
+export { createDocumentVersion, type NewDocumentVersion, type DocumentVersionRecord } from "./documents.lifecycle";
+export { handleDocumentCleanup } from "./documents.cleanupJobs";
+export { copyDocumentVersionFiles } from "./documents.copyFiles";
+export { captureInlineDocumentCleanup, completeInlineDocumentCleanup } from "./documents.cleanupJobs";
+export { createDocumentVersions, activateDocumentVersion, updateDocumentVersion, type DocumentVersionPatch } from "./documents.lifecycle";
+
+export { runConversionJob, setDocumentTerminalStatus } from "./documents.conversion";

@@ -1,3 +1,9 @@
+import {
+    captureInlineDocumentCleanup,
+    completeInlineDocumentCleanup,
+} from "./documents.cleanupJobs";
+import { copyDocumentVersionFiles } from "./documents.copyFiles";
+import { createDocumentVersion } from "./documents.lifecycle";
 // Version lifecycle for documents: listing, creating one from another
 // document's bytes, renaming, and deleting versions.
 //
@@ -7,7 +13,6 @@
 
 import {
     downloadFile,
-    deleteFile,
     uploadFile,
     versionStorageKey,
 } from "../../lib/storage";
@@ -17,7 +22,6 @@ import { contentSha256, loadActiveVersion } from "../../lib/documentVersions";
 import { creatorScopedAllowed } from "../../lib/access";
 import { can } from "../../lib/permissions";
 import {
-    contentTypeForDocumentType,
     documentSuffix,
     shouldConvertToPdf,
 } from "../../lib/documentTypes";
@@ -37,9 +41,15 @@ export async function listVersions(
     | { ok: true; current_version_id: string | null; versions: unknown[] }
     | { ok: false; detail: string }
 > {
-    const access = await ensureDocumentAccess(documentId, userId, userEmail, db, {
-        select: "id, current_version_id, user_id, project_id, workflow_id",
-    });
+    const access = await ensureDocumentAccess(
+        documentId,
+        userId,
+        userEmail,
+        db,
+        {
+            select: "id, current_version_id, user_id, project_id, workflow_id",
+        },
+    );
     if (!access.ok) return { ok: false, detail: "Document not found" };
 
     const { data: rows } = await db
@@ -87,8 +97,13 @@ export async function createVersionFromDocument(
           detail: string;
       }
 > {
-    const { documentId, sourceDocumentId, requestedFilename, userId, userEmail } =
-        params;
+    const {
+        documentId,
+        sourceDocumentId,
+        requestedFilename,
+        userId,
+        userEmail,
+    } = params;
 
     const targetAccess = await ensureDocumentAccess(
         documentId,
@@ -162,10 +177,17 @@ export async function createVersionFromDocument(
     const suffix = sourceType || documentSuffix(filename);
     const versionSlug = crypto.randomUUID().replace(/-/g, "");
     const key = versionStorageKey(userId, documentId, versionSlug, filename);
-    const contentType = contentTypeForDocumentType(suffix);
+    let pdfStoragePath: string | null = null;
 
     try {
-        await uploadFile(key, bytes, contentType);
+        ({ pdfStoragePath } = await copyDocumentVersionFiles({
+            source: { ...active, file_type: suffix },
+            storagePath: key,
+            pdfStoragePath: `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`,
+            transport: "download",
+            rendition: "optional",
+            sourceBytes: bytes,
+        }));
     } catch (e) {
         console.error("[versions/copy] storage write failed", e);
         return {
@@ -175,22 +197,10 @@ export async function createVersionFromDocument(
         };
     }
 
-    let pdfStoragePath: string | null = null;
     let deferConversion = false;
     if (suffix === "pdf") {
         pdfStoragePath = key;
-    } else if (active.pdf_storage_path) {
-        if (active.pdf_storage_path === active.storage_path) {
-            pdfStoragePath = key;
-        } else {
-            const pdfBytes = await downloadFile(active.pdf_storage_path);
-            if (pdfBytes) {
-                const pdfKey = `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`;
-                await uploadFile(pdfKey, pdfBytes, "application/pdf");
-                pdfStoragePath = pdfKey;
-            }
-        }
-    } else if (shouldConvertToPdf(suffix)) {
+    } else if (!active.pdf_storage_path && shouldConvertToPdf(suffix)) {
         // Only reached when the source has no rendition to copy — this is the
         // one branch of the copy flow that pays for LibreOffice, so it's the
         // branch the conversion queue takes over when the flag is on.
@@ -219,54 +229,27 @@ export async function createVersionFromDocument(
         }
     }
 
-    const { data: maxRow } = await db
-        .from("document_versions")
-        .select("version_number")
-        .eq("document_id", documentId)
-        .in("source", ["upload", "user_upload", "assistant_edit"])
-        .order("version_number", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle();
-    const nextVersionNumber =
-        ((maxRow?.version_number as number | null) ?? 1) + 1;
-
-    const { data: versionRow, error: verErr } = await db
-        .from("document_versions")
-        .insert({
+    const { data: versionRow, error: verErr } = await createDocumentVersion(
+        db,
+        {
             document_id: documentId,
             storage_path: key,
             pdf_storage_path: pdfStoragePath,
             source: "user_upload",
-            version_number: nextVersionNumber,
+
             filename: filename,
             file_type: sourceType || null,
             size_bytes: active.size_bytes ?? bytes.byteLength,
             page_count: active.page_count,
             content_sha256: contentSha256(bytes),
-        })
-        .select("id, version_number, source, created_at, filename")
-        .single();
+        },
+    );
     if (verErr || !versionRow) {
         console.error("[versions/copy] insert failed", verErr);
         return {
             ok: false,
             kind: "version_insert",
             detail: "Failed to record new version.",
-        };
-    }
-
-    const { error: updateDocErr } = await db
-        .from("documents")
-        .update({
-            current_version_id: versionRow.id,
-        })
-        .eq("id", documentId);
-    if (updateDocErr) {
-        console.error("[versions/copy] current version update failed", updateDocErr);
-        return {
-            ok: false,
-            kind: "doc_update",
-            detail: "Failed to update document current version.",
         };
     }
 
@@ -288,7 +271,10 @@ export async function createVersionFromDocument(
             sourceDocumentId,
         );
         if (deleteErr) {
-            console.error("[versions/copy] source document delete failed", deleteErr);
+            console.error(
+                "[versions/copy] source document delete failed",
+                deleteErr,
+            );
             return {
                 ok: false,
                 kind: "source_delete",
@@ -297,7 +283,23 @@ export async function createVersionFromDocument(
         }
     }
 
-    return { ok: true, version: versionRow };
+    const {
+        id,
+        version_number,
+        source,
+        created_at,
+        filename: savedFilename,
+    } = versionRow;
+    return {
+        ok: true,
+        version: {
+            id,
+            version_number,
+            source,
+            created_at,
+            filename: savedFilename,
+        },
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +318,12 @@ export async function renameVersion(
 ): Promise<{ ok: true; version: unknown } | { ok: false; detail: string }> {
     const { documentId, versionId, rawFilename, userId, userEmail } = params;
 
-    const access = await ensureDocumentAccess(documentId, userId, userEmail, db);
+    const access = await ensureDocumentAccess(
+        documentId,
+        userId,
+        userEmail,
+        db,
+    );
     // A rename is a write: viewer-only shares are rejected the same way a
     // missing document is.
     if (!access.ok || !can(access.projectRole, "content.edit"))
@@ -364,107 +371,64 @@ export async function deleteVersion(
     // hands the raw error to sendInternalError rather than echoing it.
     | { ok: false; kind: "db"; error: unknown }
 > {
-    const access = await ensureDocumentAccess(documentId, userId, userEmail, db, {
-        select: "id, user_id, project_id, org_id, workflow_id, current_version_id",
-    });
+    const access = await ensureDocumentAccess(
+        documentId,
+        userId,
+        userEmail,
+        db,
+        {
+            select: "id, user_id, project_id, org_id, workflow_id, current_version_id",
+        },
+    );
     // Deleting a version is creator-scoped (with the admin heir once the
     // creator's account is gone). Workflow documents are the exception: an
     // editor on the workflow share manages its versions too.
     if (
         !access.ok ||
         (!creatorScopedAllowed(access, access.doc.user_id) &&
-            !(access.doc.workflow_id && can(access.projectRole, "content.edit")))
+            !(
+                access.doc.workflow_id &&
+                can(access.projectRole, "content.edit")
+            ))
     )
-        return { ok: false, kind: "doc_not_found", detail: "Document not found" };
-    const doc = access.doc;
-
-    const { data: versions, error: versionsErr } = await db
-        .from("document_versions")
-        .select(
-            "id, storage_path, pdf_storage_path, version_number, created_at, deleted_at",
-        )
-        .eq("document_id", documentId)
-        .is("deleted_at", null);
-    if (versionsErr) {
-        return { ok: false, kind: "db", error: versionsErr };
-    }
-
-    const rows = (versions ?? []) as {
-        id: string;
-        storage_path: string | null;
-        pdf_storage_path: string | null;
-        version_number: number | null;
-        created_at: string | null;
-        deleted_at?: string | null;
-    }[];
-    const target = rows.find((row) => row.id === versionId);
-    if (!target)
-        return { ok: false, kind: "version_not_found", detail: "Version not found" };
-    if (rows.length <= 1) {
+        return {
+            ok: false,
+            kind: "doc_not_found",
+            detail: "Document not found",
+        };
+    const keys = await captureInlineDocumentCleanup(db, {
+        versionIds: [versionId],
+    });
+    const { data, error } = await db.rpc("delete_document_version", {
+        p_document_id: documentId,
+        p_version_id: versionId,
+        p_actor_id: userId,
+    });
+    if (error) return { ok: false, kind: "db", error };
+    if (data?.kind === "only_version")
         return {
             ok: false,
             kind: "only_version",
             detail: "Cannot delete the only document version.",
         };
-    }
-
-    const remaining = rows
-        .filter((row) => row.id !== versionId)
-        .sort((a, b) => {
-            const versionDelta =
-                (b.version_number ?? -1) - (a.version_number ?? -1);
-            if (versionDelta !== 0) return versionDelta;
-            return (
-                new Date(b.created_at ?? 0).getTime() -
-                new Date(a.created_at ?? 0).getTime()
-            );
-        });
-    const nextCurrentVersionId =
-        doc.current_version_id === versionId
-            ? (remaining[0]?.id ?? null)
-            : doc.current_version_id;
-    const deletedAt = new Date().toISOString();
-
-    if (doc.current_version_id === versionId) {
-        const { error: updateErr } = await db
-            .from("documents")
-            .update({
-                current_version_id: nextCurrentVersionId,
-                updated_at: new Date().toISOString(),
-            })
-            .eq("id", documentId);
-        if (updateErr) {
-            return { ok: false, kind: "db", error: updateErr };
-        }
-    }
-
-    const { error: deleteErr } = await db
-        .from("document_versions")
-        .update({
-            storage_path: null,
-            pdf_storage_path: null,
-            deleted_at: deletedAt,
-            deleted_by: userId,
-        })
-        .eq("id", versionId)
-        .eq("document_id", documentId)
-        .is("deleted_at", null);
-    if (deleteErr) {
-        return { ok: false, kind: "db", error: deleteErr };
-    }
-
-    await Promise.all(
-        [target.storage_path, target.pdf_storage_path]
-            .filter((path): path is string => !!path)
-            .map((path) => deleteFile(path).catch(() => {})),
-    );
-
-    return {
-        ok: true,
-        payload: {
-            deleted_version_id: versionId,
-            current_version_id: nextCurrentVersionId,
-            deleted_at: deletedAt,
-        },
-    };
+    if (data?.kind === "doc_not_found")
+        return {
+            ok: false,
+            kind: "doc_not_found",
+            detail: "Document not found",
+        };
+    if (data?.kind === "version_not_found")
+        return {
+            ok: false,
+            kind: "version_not_found",
+            detail: "Version not found",
+        };
+    if (!data?.deleted_version_id)
+        return {
+            ok: false,
+            kind: "db",
+            error: new Error("version_delete_returned_no_data"),
+        };
+    await completeInlineDocumentCleanup(db, keys);
+    return { ok: true, payload: data };
 }

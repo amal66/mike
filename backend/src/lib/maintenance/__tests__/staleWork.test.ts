@@ -23,7 +23,7 @@ vi.mock("../../queue/extractionQueue", () => ({
 import {
     sweepStaleProcessingDocuments,
     sweepStaleGeneratingCells,
-} from "../staleWork";
+} from "../../../jobs/staleWork";
 
 type Call = {
     table: string;

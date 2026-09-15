@@ -165,8 +165,8 @@ vi.mock("../../middleware/auth", async () => {
     return authMock();
 });
 
-vi.mock("../../lib/chat", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("../../lib/chat")>()),
+vi.mock("../../modules/chat/engine/index", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../modules/chat/engine/index")>()),
     runLLMStream: (...args: unknown[]) => runLLMStream(...args),
 }));
 

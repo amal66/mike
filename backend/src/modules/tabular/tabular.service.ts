@@ -104,3 +104,8 @@ export {
     formatPromptSuffix,
     type DraftedColumnPrompt,
 } from "./tabular.prompt";
+
+export { handleExtractionExtract, markExtractionJobFailed } from "./tabular.extractionJobs";
+export { sweepStaleGeneratingCells } from "./tabular.maintenance";
+
+export { runExtractionJob, markExtractionFailed, type ExtractionDeps } from "./tabular.extraction";

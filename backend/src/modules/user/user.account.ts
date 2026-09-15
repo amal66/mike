@@ -12,7 +12,7 @@ import {
     deleteAllUserTabularReviews,
     deleteUserAccountData,
     deleteUserProjects,
-} from "../../lib/userDataCleanup";
+} from "./user.dataCleanup";
 import { type Db, errorMessage } from "./user.shared";
 
 export async function deleteUserAccount(

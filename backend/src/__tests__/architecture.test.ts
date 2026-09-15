@@ -23,6 +23,7 @@
 //   6. `middleware/` is request plumbing; it depends on `lib/`, not on
 //      domain modules.
 //   7. `src/routes/` no longer exists. New HTTP surfaces are modules.
+//   8. Document-version writes and lifecycle RPCs belong to documents.
 //
 // Each rule has an explicit allowlist. Adding to an allowlist is a reviewable
 // decision with a comment explaining why; silently widening one is not.
@@ -110,23 +111,8 @@ describe("backend architecture", () => {
   });
 
   it("rule 1: lib/ never imports from modules/", () => {
-    // Documented exceptions, each with the reason it has not been fixed yet.
-    const ALLOWED = new Set<string>([
-      // The stale-work sweeper re-runs tabular extraction jobs; it reaches the
-      // tabular module through its facade only. Moving the sweeper into the
-      // module would make lib/maintenance depend on a queue it should not
-      // know about. Tracked as a follow-up in docs/backend-architecture.md.
-      "lib/maintenance/staleWork.ts",
-      // The memory curator is a DB job handler (main's scoped-memory feature,
-      // #451) that needs the caller's model settings. Job handlers have not
-      // moved into modules yet, so it reaches the user module through its
-      // facade only — the same shape as the sweeper above, and it goes away
-      // with the same follow-up (a per-module job registry).
-      "lib/memory/curator.ts",
-    ]);
     const offenders: string[] = [];
     for (const file of PRODUCTION_FILES.filter((f) => f.startsWith("lib/"))) {
-      if (ALLOWED.has(file)) continue;
       for (const spec of importsOf(file)) {
         if (spec.startsWith("modules/")) offenders.push(`${file} -> ${spec}`);
       }
@@ -212,5 +198,15 @@ describe("backend architecture", () => {
 
   it("rule 7: src/routes/ is gone; HTTP surfaces are modules", () => {
     expect(existsSync(join(SRC, "routes"))).toBe(false);
+  });
+
+  it("document version mutations belong to the documents module", () => {
+    const directWrite = /\.from\(\s*["']document_versions["']\s*\)\s*\.(insert|upsert|update|delete)\s*\(/;
+    const lifecycleRpc = /\.rpc\(\s*["'](?:create_document_versions?|activate_document_version|delete_document_version)["']/;
+    const offenders = PRODUCTION_FILES.filter((file) =>
+      !file.startsWith("modules/documents/") &&
+      (directWrite.test(read(file)) || lifecycleRpc.test(read(file))),
+    );
+    expect(offenders).toEqual([]);
   });
 });

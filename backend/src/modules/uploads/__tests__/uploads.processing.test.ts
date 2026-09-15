@@ -109,7 +109,9 @@ function fakeDb(singleResults: Record<string, QueryResult[]> = {}) {
 
   return {
     from: vi.fn((table: string) => new Query(table)),
-    rpc: vi.fn().mockResolvedValue({ data: "processing", error: null }),
+    rpc: vi.fn(async (name: string, args: { p_version?: Record<string, unknown> }): Promise<QueryResult> => name === "create_document_version"
+      ? { data: { ...args.p_version, version_number: args.p_version?.version_number ?? 3 }, error: null }
+      : { data: "processing", error: null }),
   };
 }
 
@@ -188,7 +190,9 @@ function scriptedDb(results: QueryResult[]) {
 
   return {
     from: vi.fn((table: string) => new Query(table)),
-    rpc: vi.fn().mockResolvedValue({ data: "processing", error: null }),
+    rpc: vi.fn(async (name: string, args: { p_version?: Record<string, unknown> }): Promise<QueryResult> => name === "create_document_version"
+      ? { data: { ...args.p_version, version_number: args.p_version?.version_number ?? 3 }, error: null }
+      : { data: "processing", error: null }),
     calls,
     remaining: results,
   };
@@ -260,7 +264,7 @@ describe("upload processing", () => {
       expect.stringContaining(baseFile.resource_id),
     );
     expect(db.from).toHaveBeenCalledWith("documents");
-    expect(db.from).toHaveBeenCalledWith("document_versions");
+    expect(db.rpc).toHaveBeenCalledWith("create_document_version", expect.objectContaining({ p_activate: true }));
     expect(mocks.recordAudit).toHaveBeenCalledWith(
       db,
       expect.objectContaining({
@@ -330,7 +334,7 @@ describe("upload processing", () => {
     );
 
     expect(db.from).toHaveBeenCalledWith("documents");
-    expect(db.from).toHaveBeenCalledWith("document_versions");
+    expect(db.rpc).toHaveBeenCalledWith("create_document_version", expect.objectContaining({ p_activate: true }));
     expect(result).toMatchObject({
       id: asset.id,
       workflow_id: asset.workflow_id,
@@ -366,15 +370,15 @@ describe("upload processing", () => {
       baseFile,
     );
 
-    expect(result).toEqual(createdVersion);
+    expect(result).toMatchObject(createdVersion);
     expect(mocks.copyFile).toHaveBeenCalledWith(
       baseFile.sealed_storage_path,
       expect.stringContaining("55555555-5555-4555-8555-555555555555"),
     );
-    expect(db.from).toHaveBeenCalledWith("documents");
+    expect(db.rpc).toHaveBeenCalledWith("create_document_version", expect.objectContaining({ p_document_id: "55555555-5555-4555-8555-555555555555" }));
   });
 
-  it("replaces a document version and removes its obsolete object", async () => {
+  it("replaces a document version; its trigger owns obsolete-object cleanup", async () => {
     const versionId = "55555555-5555-4555-8555-555555555555";
     const updatedVersion = {
       id: versionId,
@@ -412,8 +416,7 @@ describe("upload processing", () => {
     );
 
     expect(result).toEqual(updatedVersion);
-    expect(mocks.deleteFile).toHaveBeenCalledWith("old/source.docx");
-    expect(mocks.deleteFile).toHaveBeenCalledWith("old/rendition.pdf");
+    expect(mocks.deleteFile).not.toHaveBeenCalled();
   });
 
   it("rejects a sealed object whose size no longer matches the reservation", async () => {

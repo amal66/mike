@@ -22,7 +22,7 @@ import {
     type AssistantEvent,
     type ChatDocumentReference,
     type ChatMessage,
-} from "../../lib/chat";
+} from "../chat/chat.service";
 import { getUserModelSettings, resolveUserChatSelection } from "../user/user.service";
 import {
     checkProjectAccess,

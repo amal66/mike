@@ -29,7 +29,7 @@ import {
     type ChatMessage,
     parseOptionalModel,
     parseOptionalReasoning,
-} from "../../lib/chat";
+} from "../chat/chat.service";
 import {
     finishGeneration,
     startGenerationHeartbeat,

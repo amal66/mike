@@ -30,7 +30,7 @@ import {
   generateSpotlightNonce,
   withoutEmptyAssistantReservations,
   type ChatMessage,
-} from "../../lib/chat";
+} from "../chat/chat.service";
 import {
   getUserModelSettings,
   resolveUserChatSelection,
@@ -41,7 +41,7 @@ import {
   resolveEffectiveChatModel,
   resolveEffectiveReasoningLevel,
 } from "../../lib/modelSelection";
-import type { WordEditApplyMode } from "../../lib/chat/wordDocumentEdits";
+import type { WordEditApplyMode } from "../chat/chat.service";
 
 type LookupResult<T> =
   { ok: true; value: T | null } | { ok: false; detail: string };

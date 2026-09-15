@@ -126,7 +126,7 @@ export async function deleteDocument(
     documentId: string,
     userId: string,
     db: Db,
-): Promise<{ ok: true } | { ok: false }> {
+): Promise<{ ok: true } | { ok: false; error?: unknown }> {
     const { data: doc, error } = await db
         .from("documents")
         .select("id")
@@ -135,6 +135,7 @@ export async function deleteDocument(
         .single();
     if (error || !doc) return { ok: false };
 
-    await deleteDocumentAndVersionFiles(db, documentId);
+    const result = await deleteDocumentAndVersionFiles(db, documentId);
+    if (result.error) return { ok: false, error: result.error };
     return { ok: true };
 }

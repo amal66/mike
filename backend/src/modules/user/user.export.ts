@@ -10,14 +10,14 @@ import {
     EXPORT_TYPES,
     MAX_ZIP_EXPORT_DOCUMENTS,
     type ExportType,
-} from "../../lib/dbq/handlers";
+} from "./user.exportContracts";
 import type { DbJob } from "../../lib/dbq/types";
 import { downloadFile } from "../../lib/storage";
 import {
     buildUserAccountExport,
     buildUserChatsExport,
     buildUserTabularReviewsExport,
-} from "../../lib/userDataExport";
+} from "./user.dataExport";
 import { type Db, errorMessage } from "./user.shared";
 
 export async function exportUserAccount(

@@ -9,7 +9,7 @@ import {
   runMemoryCuratorScope,
   type CuratorScopeServices,
   type MemoryCuratorStoredMessage,
-} from "../curator";
+} from "../../../modules/memory/memory.curator";
 import {
   MemoryRevisionConflictError,
   type MemoryFileRow,
