@@ -106,6 +106,41 @@ begin
 end;
 $$;
 
+
+-- Cleanup cannot be stranded by an exhausted stale claim or an older worker
+-- rejecting the new kind during migration-before-code rollout.
+do $$
+declare
+  kind_name text;
+  failed_id uuid;
+  stale_id uuid;
+  ordinary_id uuid := gen_random_uuid();
+  row_data public.db_jobs%rowtype;
+begin
+  foreach kind_name in array array['storage.cleanup', 'document.cleanup'] loop
+    failed_id := gen_random_uuid(); stale_id := gen_random_uuid();
+    insert into public.db_jobs(id, kind, payload, status, attempts, max_attempts, finished_at, last_error)
+      values(failed_id, kind_name, '{}', 'failed', 8, 8, now(), 'unknown job kind: ' || kind_name);
+    select * into row_data from public.claim_db_job(failed_id);
+    assert row_data.status = 'running' and row_data.attempts = 9 and row_data.finished_at is null, 'rollout rejection must be recoverable';
+    update public.db_jobs set status = 'failed' where id = failed_id;
+    perform public.claim_db_jobs(1000);
+    assert (select status = 'running' from public.db_jobs where id = failed_id), 'poll path must recover failed cleanup too';
+    insert into public.db_jobs(id, kind, payload, status, attempts, max_attempts, claimed_at)
+      values(stale_id, kind_name, '{}', 'running', 2147483647, 2147483647, now() - interval '1 hour');
+    select * into row_data from public.claim_db_job(stale_id);
+    assert row_data.status = 'running' and row_data.attempts = 2147483647, 'stale cleanup survives attempt exhaustion and integer overflow';
+    update public.db_jobs set claimed_at = now() - interval '1 hour' where id = stale_id;
+    perform public.claim_db_jobs(1000);
+    assert (select status = 'running' and claimed_at > now() - interval '1 minute' from public.db_jobs where id = stale_id), 'batch path reclaims exhausted cleanup';
+  end loop;
+  insert into public.db_jobs(id, kind, payload, status, attempts, max_attempts, claimed_at)
+    values(ordinary_id, 'test.finite', '{}', 'running', 8, 8, now() - interval '1 hour');
+  perform public.claim_db_jobs(1000);
+  assert (select status = 'failed' from public.db_jobs where id = ordinary_id), 'ordinary job attempt limit retained';
+end;
+$$;
+
 create function pg_temp.reject_document_cleanup() returns trigger language plpgsql as $$
 begin
   if new.kind = 'document.cleanup' then raise exception 'cleanup_insert_rejected'; end if;

@@ -1,3 +1,7 @@
+import {
+  captureInlineVersionUpdateCleanup,
+  completeInlineDocumentCleanup,
+} from "./documents.cleanupJobs";
 import { type Db } from "../../lib/supabase";
 
 export type NewDocumentVersion = {
@@ -80,7 +84,13 @@ export async function updateDocumentVersion(
   versionId: string,
   patch: DocumentVersionPatch,
 ) {
-  return db
+  const keys = await captureInlineVersionUpdateCleanup(
+    db,
+    documentId,
+    versionId,
+    patch,
+  );
+  const result = await db
     .from("document_versions")
     .update(patch)
     .eq("id", versionId)
@@ -90,4 +100,7 @@ export async function updateDocumentVersion(
       "id, version_number, source, created_at, filename, file_type, size_bytes, page_count",
     )
     .maybeSingle();
+  if (!result.error && result.data)
+    await completeInlineDocumentCleanup(db, keys);
+  return result;
 }
