@@ -1,6 +1,7 @@
 // Project document service functions: list, assign/copy an existing document
 // into a project, and rename.
 
+import { renameDocument } from "../documents/documents.service";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -19,7 +20,6 @@ import { contentTypeForDocumentType } from "../../lib/documentTypes";
 import {
   type Db,
   attachDocumentOwnerLabels,
-  normalizeDocumentFilename,
 } from "./projects.shared";
 
 export async function listProjectDocuments(
@@ -318,7 +318,7 @@ export type RenameDocumentResult =
   | { ok: true; doc: Record<string, unknown> }
   | { ok: false; kind: "forbidden" }
   | { ok: false; kind: "doc_not_found" }
-  | { ok: false; kind: "db_error"; detail: string }
+  | { ok: false; kind: "db_error"; error: unknown }
   | { ok: false; kind: "validation"; detail: string };
 
 export async function renameProjectDocument(
@@ -331,72 +331,26 @@ export async function renameProjectDocument(
     filename: unknown;
   },
 ): Promise<RenameDocumentResult> {
-  const { projectId, documentId, userId, userEmail } = args;
-
-  const access = await checkProjectAccess(projectId, userId, userEmail, db);
-  if (!access.ok || !can(access.projectRole, "docs.organize"))
-    return { ok: false, kind: "forbidden" };
-
-  const { data: doc } = await db
-    .from("documents")
-    .select("id, current_version_id")
-    .eq("id", documentId)
-    .eq("project_id", projectId)
-    .single();
-  if (!doc) return { ok: false, kind: "doc_not_found" };
-  // The name being renamed lives on the active version row, so a document
-  // without one has nothing to rename.
-  if (!doc.current_version_id) return { ok: false, kind: "doc_not_found" };
-
-  const active = await db
-    .from("document_versions")
-    .select("filename")
-    .eq("id", doc.current_version_id)
-    .eq("document_id", documentId)
-    .single();
-  const currentName =
-    typeof active.data?.filename === "string" && active.data.filename.trim()
-      ? active.data.filename.trim()
-      : "Untitled document";
-  const filename = normalizeDocumentFilename(args.filename, currentName);
-  if (!filename)
-    return { ok: false, kind: "validation", detail: "filename is required" };
-
-  const { data: updated, error } = await db
-    .from("documents")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", documentId)
-    .eq("project_id", projectId)
-    .select("*")
-    .single();
-  if (error || !updated) return { ok: false, kind: "doc_not_found" };
-
-  // Read the stored name back instead of echoing the requested one — this
-  // update's error was never destructured, so an RLS denial was swallowed and
-  // the response still claimed the rename had happened.
-  const { data: renamed, error: renameError } = await db
-    .from("document_versions")
-    .update({ filename })
-    .eq("id", doc.current_version_id)
-    .eq("document_id", documentId)
-    .select("filename")
-    .single();
-  if (renameError)
-    return { ok: false, kind: "db_error", detail: renameError.message };
-  if (!renamed) return { ok: false, kind: "doc_not_found" };
-
-  // The response feeds the explorer's icon and preview logic, which key off the
-  // active version's file metadata. Re-enrich after the rename so a renamed
-  // document does not come back with stale (or missing) version paths.
+  const result = await renameDocument(db, {
+    ...args,
+    scope: { kind: "project", projectId: args.projectId },
+  });
+  if (!result.ok) {
+    if (result.kind === "error")
+      return { ok: false, kind: "db_error", error: result.error };
+    if (result.kind === "forbidden") return { ok: false, kind: "forbidden" };
+    if (result.kind === "validation")
+      return { ok: false, kind: "validation", detail: result.detail };
+    return { ok: false, kind: "doc_not_found" };
+  }
+  // The explorer keys its icons and previews off the active version's file
+  // metadata, so a renamed document must come back enriched rather than with
+  // stale (or missing) version paths. The enrichment also rewrites `filename`
+  // from the version row it read, so the name this rename actually stored is
+  // re-applied last.
+  const renamedFilename = result.data.filename;
   await attachActiveVersionPaths(db, [
-    updated as { id: string; current_version_id?: string | null },
+    result.data as { id: string; current_version_id?: string | null },
   ]);
-
-  return {
-    ok: true,
-    doc: {
-      ...updated,
-      filename: renamed.filename,
-    },
-  };
+  return { ok: true, doc: { ...result.data, filename: renamedFilename } };
 }

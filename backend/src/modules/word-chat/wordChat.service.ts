@@ -33,6 +33,7 @@ import {
 } from "../../lib/chat";
 import {
   getUserModelSettings,
+  resolveUserChatSelection,
   persistLastSelectedChatModel,
   persistLastSelectedReasoningLevel,
 } from "../user/user.service";
@@ -644,30 +645,15 @@ export async function prepareWordChatStream(
         : null;
   }
 
-  const modelSettings = await getUserModelSettings(userId, db);
-  const modelResolution = await resolveEffectiveChatModel({
-    requested: args.requestedModel,
-    chatModel,
-    lastSelectedModel: modelSettings.last_selected_chat_model,
-    apiKeys: modelSettings.api_keys,
+  const selection = await resolveUserChatSelection(db, {
     userId,
-    db,
-  });
-  if (!modelResolution.ok) {
-    return {
-      ok: false,
-      status: modelResolution.status,
-      code: modelResolution.code,
-      detail: modelResolution.detail,
-    };
-  }
-  const selectedModel = modelResolution.model;
-  const selectedReasoningLevel = resolveEffectiveReasoningLevel({
-    model: selectedModel,
-    requested: args.requestedReasoning,
+    chatModel,
     chatReasoningLevel,
-    lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
+    requestedModel: args.requestedModel,
+    requestedReasoning: args.requestedReasoning,
   });
+  if (!selection.ok) return selection;
+  const { modelSettings, selectedModel, selectedReasoningLevel } = selection;
 
   if (
     chatId &&

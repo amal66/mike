@@ -1,6 +1,7 @@
 // Project subfolder service functions: create, rename/move (with cycle
 // check), recursive delete, and moving documents between folders.
 
+import { parseFolderPath, validateFolderMove, collectFolderSubtree } from "../../lib/folderTree";
 import { checkProjectAccess } from "../../lib/access";
 import { can } from "../../lib/permissions";
 import {
@@ -80,19 +81,11 @@ export async function updateProjectFolder(
       const parent = await loadProjectFolder(db, projectId, body.parent_folder_id);
       if (!parent) return { ok: false, kind: "parent_not_found" };
 
-      // `visited` guards the walk against a pre-existing cycle among the
-      // ancestors (bad data, or a concurrent move): without it the loop never
-      // terminates and the request hangs holding a slot.
-      const visited = new Set<string>();
-      let cur: string | null = body.parent_folder_id;
-      while (cur) {
-        if (cur === folderId || visited.has(cur))
-          return { ok: false, kind: "cycle" };
-        visited.add(cur);
-        const p = await loadProjectFolder(db, projectId, cur);
-        if (!p) return { ok: false, kind: "parent_not_found" };
-        cur = p?.parent_folder_id ?? null;
-      }
+      const moveError = await validateFolderMove(
+        folderId, body.parent_folder_id,
+        (id) => loadProjectFolder(db, projectId, id),
+      );
+      if (moveError) return { ok: false, kind: moveError };
     }
     updates.parent_folder_id = body.parent_folder_id ?? null;
   }
@@ -139,23 +132,7 @@ export async function deleteProjectFolder(
   if (!(allFolders ?? []).some((f) => f.id === folderId))
     return { ok: false, kind: "not_found" };
 
-  const childrenByParent = new Map<string, string[]>();
-  for (const f of allFolders ?? []) {
-    const parentId = f.parent_folder_id as string | null;
-    if (!parentId) continue;
-    const children = childrenByParent.get(parentId) ?? [];
-    children.push(f.id as string);
-    childrenByParent.set(parentId, children);
-  }
-
-  const folderIds = new Set<string>();
-  const stack = [folderId];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    if (folderIds.has(id)) continue;
-    folderIds.add(id);
-    stack.push(...(childrenByParent.get(id) ?? []));
-  }
+  const folderIds = collectFolderSubtree(folderId, allFolders ?? []);
 
   const { data: docs, error: docsError } = await db
     .from("documents")
@@ -243,31 +220,9 @@ export async function resolveProjectFolderPath(
 ): Promise<ResolveFolderPathResult> {
   const { projectId, userId, userEmail, body } = args;
 
-  const rawSegments = Array.isArray(body.segments) ? body.segments : [];
-  const segments = Array.isArray(body.segments)
-    ? body.segments
-        .filter((segment): segment is string => typeof segment === "string")
-        .map((segment) => segment.trim())
-    : [];
-  // A non-string segment is dropped by the filter above, so a length mismatch
-  // means the caller sent something that isn't a path at all.
-  if (
-    rawSegments.length !== segments.length ||
-    segments.length === 0 ||
-    segments.length > 100 ||
-    segments.some((segment) => !segment || segment.length > 255)
-  ) {
-    return { ok: false, kind: "invalid_path" };
-  }
-  const conflictResolution =
-    body.conflict_resolution === "reuse" ||
-    body.conflict_resolution === "rename"
-      ? body.conflict_resolution
-      : "error";
-  const baseFolderId =
-    typeof body.base_folder_id === "string" && body.base_folder_id.trim()
-      ? body.base_folder_id.trim()
-      : null;
+  const path = parseFolderPath(body);
+  if (!path) return { ok: false, kind: "invalid_path" };
+  const { segments, conflictResolution, baseFolderId } = path;
 
   // This route reads like a lookup, but resolve_project_folder_path INSERTs
   // a project_subfolders row for every path segment that does not exist

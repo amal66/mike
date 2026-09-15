@@ -31,6 +31,7 @@ import {
 } from "../../lib/serviceResult";
 import {
     getUserModelSettings,
+    resolveUserChatSelection,
     persistLastSelectedChatModel,
     persistLastSelectedReasoningLevel,
 } from "../user/user.service";
@@ -590,27 +591,23 @@ export async function prepareTabularChat(
         }
     }
 
-    const modelSettings = await getUserModelSettings(userId, db);
-    const modelResolution = await resolveEffectiveChatModel({
-        requested: requestedModel,
-        chatModel,
-        lastSelectedModel: modelSettings.last_selected_chat_model,
-        apiKeys: modelSettings.api_keys,
+    const selection = await resolveUserChatSelection(db, {
         userId,
-        db,
-    });
-    if (!modelResolution.ok)
-        return statusFailure(modelResolution.status, {
-            code: modelResolution.code,
-            detail: modelResolution.detail,
-        });
-    const selectedChatModel = modelResolution.model;
-    const selectedReasoningLevel = resolveEffectiveReasoningLevel({
-        model: selectedChatModel,
-        requested: requestedReasoning,
+        chatModel,
         chatReasoningLevel,
-        lastSelectedReasoningLevel: modelSettings.last_selected_reasoning_level,
+        requestedModel,
+        requestedReasoning,
     });
+    if (!selection.ok)
+        return statusFailure(selection.status, {
+            code: selection.code,
+            detail: selection.detail,
+        });
+    const {
+        modelSettings,
+        selectedModel: selectedChatModel,
+        selectedReasoningLevel,
+    } = selection;
 
     if (
         chatId &&

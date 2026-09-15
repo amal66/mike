@@ -45,3 +45,6 @@ export {
     getTrackedChangeIds,
     resolveEdit,
 } from "./documents.edits";
+
+export { renameDocument } from "./documents.rename";
+export { deleteCollectionDocuments } from "./documents.cleanup";

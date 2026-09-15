@@ -6,8 +6,9 @@
 // client (`db`) plus request-derived primitives and RETURN typed results;
 // the thin route handlers in library.routes.ts map them onto HTTP responses.
 
+import { parseFolderPath, validateFolderMove, collectFolderSubtree } from "../../lib/folderTree";
+import { renameDocument, deleteCollectionDocuments } from "../documents/documents.service";
 import type { Db } from "../../lib/supabase";
-import { enqueueStorageCleanup } from "../../lib/dbq/enqueue";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -24,15 +25,6 @@ export function normalizeLibraryKind(value: unknown): LibraryKind | null {
   if (value === "file" || value === "files") return "file";
   if (value === "template" || value === "templates") return "template";
   return null;
-}
-
-function normalizeDocumentFilename(nextName: unknown, currentName: string) {
-  if (typeof nextName !== "string") return null;
-  const trimmed = nextName.trim().slice(0, 200);
-  if (!trimmed) return null;
-  if (/\.[a-z0-9]{1,6}$/i.test(trimmed)) return trimmed;
-  const ext = currentName.match(/\.[a-z0-9]{1,6}$/i)?.[0] ?? "";
-  return `${trimmed}${ext}`;
 }
 
 function mapLibraryDocument<T extends Record<string, unknown>>(doc: T) {
@@ -64,56 +56,15 @@ async function deleteLibraryDocumentsAndVersionFiles(
   kind: LibraryKind,
   documentIds: string[],
 ) {
-  if (documentIds.length === 0) return { error: null, deletedIds: [] };
-  let eligibleQuery = db
-    .from("documents")
-    .select("id")
-    .eq("user_id", userId)
-    .is("project_id", null);
-  eligibleQuery =
-    kind === "file"
-      ? eligibleQuery.or("library_kind.eq.file,library_kind.is.null")
-      : eligibleQuery.eq("library_kind", kind);
-  const { data: eligibleDocuments, error: eligibleError } =
-    await eligibleQuery.in("id", documentIds);
-  if (eligibleError) return { error: eligibleError, deletedIds: [] };
-  const eligibleIds = (eligibleDocuments ?? []).map(
-    (document) => document.id as string,
+  const result = await deleteCollectionDocuments(
+    db, { kind: "library", userId, libraryKind: kind }, documentIds,
   );
-  if (eligibleIds.length === 0) return { error: null, deletedIds: [] };
-
-  const { data: versions, error: versionsError } = await db
-    .from("document_versions")
-    .select("storage_path, pdf_storage_path")
-    .in("document_id", eligibleIds);
-  if (versionsError) return { error: versionsError, deletedIds: [] };
-
-  const paths = new Set<string>();
-  for (const version of versions ?? []) {
-    if (typeof version.storage_path === "string" && version.storage_path) {
-      paths.add(version.storage_path);
-    }
-    if (
-      typeof version.pdf_storage_path === "string" &&
-      version.pdf_storage_path
-    ) {
-      paths.add(version.pdf_storage_path);
-    }
-  }
-  let deleteQuery = db
-    .from("documents")
-    .delete()
-    .eq("user_id", userId)
-    .is("project_id", null);
-  deleteQuery =
-    kind === "file"
-      ? deleteQuery.or("library_kind.eq.file,library_kind.is.null")
-      : deleteQuery.eq("library_kind", kind);
-  const { error } = await deleteQuery.in("id", eligibleIds);
-  // Rows first, files second (durable storage.cleanup job) — previously each
-  // file delete was fire-and-forget, so one storage hiccup leaked the bytes.
-  if (!error) await enqueueStorageCleanup(db, [...paths]);
-  return { error: error ?? null, deletedIds: error ? [] : eligibleIds };
+  return result.ok
+    ? { error: null, deletedIds: result.data.deletedIds }
+    : {
+        error: result.kind === "error" ? result.error : result.detail,
+        deletedIds: [],
+      };
 }
 
 export type ServiceOk<T> = { ok: true; data: T };
@@ -438,30 +389,9 @@ export async function resolveLibraryFolderPath(
     conflict_resolution?: unknown;
   },
 ): Promise<ServiceResult<unknown>> {
-  const rawSegments = Array.isArray(body.segments) ? body.segments : [];
-  const segments = Array.isArray(body.segments)
-    ? body.segments
-        .filter((segment): segment is string => typeof segment === "string")
-        .map((segment) => segment.trim())
-    : [];
-  // A non-string segment is dropped by the filter above, so a length mismatch
-  // means the caller sent something that isn't a path at all.
-  if (
-    rawSegments.length !== segments.length ||
-    segments.length === 0 ||
-    segments.length > 100 ||
-    segments.some((segment) => !segment || segment.length > 255)
-  ) {
-    return err(400, "Invalid folder path");
-  }
-  const conflictResolution =
-    body.conflict_resolution === "reuse" || body.conflict_resolution === "rename"
-      ? body.conflict_resolution
-      : "error";
-  const baseFolderId =
-    typeof body.base_folder_id === "string" && body.base_folder_id.trim()
-      ? body.base_folder_id.trim()
-      : null;
+  const path = parseFolderPath(body);
+  if (!path) return err(400, "Invalid folder path");
+  const { segments, conflictResolution, baseFolderId } = path;
 
   if (baseFolderId) {
     const parent = await loadLibraryFolder(db, userId, kind, baseFolderId);
@@ -527,20 +457,13 @@ export async function updateLibraryFolder(
   }
   if ("parent_folder_id" in body) {
     if (body.parent_folder_id) {
-      // `visited` guards the walk against a pre-existing cycle among the
-      // ancestors (bad data, or a concurrent move): without it the loop never
-      // terminates and the request hangs holding a slot.
-      const visited = new Set<string>();
-      let cur: string | null = body.parent_folder_id;
-      while (cur) {
-        if (cur === folderId || visited.has(cur)) {
-          return err(400, "Cannot move a folder into itself or a descendant");
-        }
-        visited.add(cur);
-        const parent = await loadLibraryFolder(db, userId, kind, cur);
-        if (!parent) return err(404, "Parent folder not found");
-        cur = parent.parent_folder_id ?? null;
-      }
+      const moveError = await validateFolderMove(
+        folderId, body.parent_folder_id,
+        (id) => loadLibraryFolder(db, userId, kind, id),
+      );
+      if (moveError === "cycle")
+        return err(400, "Cannot move a folder into itself or a descendant");
+      if (moveError) return err(404, "Parent folder not found");
     }
     updates.parent_folder_id = body.parent_folder_id ?? null;
   }
@@ -573,23 +496,7 @@ export async function deleteLibraryFolder(
     return err(404, "Folder not found");
   }
 
-  const childrenByParent = new Map<string, string[]>();
-  for (const folder of allFolders ?? []) {
-    const parentId = folder.parent_folder_id as string | null;
-    if (!parentId) continue;
-    const children = childrenByParent.get(parentId) ?? [];
-    children.push(folder.id as string);
-    childrenByParent.set(parentId, children);
-  }
-
-  const folderIds = new Set<string>();
-  const stack = [folderId];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    if (folderIds.has(id)) continue;
-    folderIds.add(id);
-    stack.push(...(childrenByParent.get(id) ?? []));
-  }
+  const folderIds = collectFolderSubtree(folderId, allFolders ?? []);
 
   let documentsInFolderQuery = db
     .from("documents")
@@ -664,62 +571,13 @@ export async function renameLibraryDocument(
   documentId: string,
   rawFilename: unknown,
 ): Promise<ServiceResult<unknown>> {
-  let docQuery = db
-    .from("documents")
-    .select("id, current_version_id")
-    .eq("id", documentId)
-    .eq("user_id", userId)
-    .is("project_id", null);
-  docQuery =
-    kind === "file"
-      ? docQuery.or("library_kind.eq.file,library_kind.is.null")
-      : docQuery.eq("library_kind", kind);
-  const { data: doc } = await docQuery.single();
-  if (!doc) return err(404, "Document not found");
-  // The name being renamed lives on the active version row, so a document
-  // without one has nothing to rename.
-  if (!doc.current_version_id) return err(404, "Document not found");
-
-  const active = await db
-    .from("document_versions")
-    .select("filename")
-    .eq("id", doc.current_version_id)
-    .eq("document_id", documentId)
-    .single();
-  const currentName =
-    typeof active.data?.filename === "string" && active.data.filename.trim()
-      ? active.data.filename.trim()
-      : "Untitled document";
-  const filename = normalizeDocumentFilename(rawFilename, currentName);
-  if (!filename) return err(400, "filename is required");
-
-  let updateQuery = db
-    .from("documents")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", documentId)
-    .eq("user_id", userId)
-    .is("project_id", null);
-  updateQuery =
-    kind === "file"
-      ? updateQuery.or("library_kind.eq.file,library_kind.is.null")
-      : updateQuery.eq("library_kind", kind);
-  const { data: updated, error } = await updateQuery
-    .select("*")
-    .single();
-  if (error || !updated) return err(404, "Document not found");
-
-  // Read the stored name back instead of echoing the requested one — this
-  // update's error was never destructured, so an RLS denial was swallowed and
-  // the response still claimed the rename had happened.
-  const { data: renamed, error: renameError } = await db
-    .from("document_versions")
-    .update({ filename })
-    .eq("id", doc.current_version_id)
-    .eq("document_id", documentId)
-    .select("filename")
-    .single();
-  if (renameError) return err(500, renameError.message);
-  if (!renamed) return err(404, "Document not found");
-
-  return ok(mapLibraryDocument({ ...updated, filename: renamed.filename }));
+  const result = await renameDocument(db, {
+    userId,
+    documentId,
+    filename: rawFilename,
+    scope: { kind: "library", libraryKind: kind },
+  });
+  if (result.ok) return ok(mapLibraryDocument(result.data));
+  if (result.kind === "error") return internalErr(result.error);
+  return err(result.kind === "validation" ? 400 : 404, result.detail);
 }
