@@ -36,7 +36,7 @@ import {
 import { can, type ProjectRole } from "../../lib/permissions";
 import {
   deleteOrgAccessOverride,
-  findOrgMemberByEmail,
+  findAssignableOrgMember,
   isOrgAssignableRole,
   listOrgAccessPeople,
   setOrgAccessOverride,
@@ -1577,24 +1577,8 @@ export async function shareWorkflow(
         detail: "role must be owner, editor, viewer or deny",
       };
     for (const email of normalizedEmails) {
-      const target = await findOrgMemberByEmail(db, orgId, email);
-      if (!target.ok) {
-        if (target.kind === "not_found")
-          return { ok: false, kind: "validation", detail: target.detail };
-        return { ok: false, kind: "db_error", error: target.detail };
-      }
-      if (target.member.userId === wf.user_id)
-        return {
-          ok: false,
-          kind: "validation",
-          detail: "The creator is always an owner",
-        };
-      if (target.member.orgRole === "admin")
-        return {
-          ok: false,
-          kind: "validation",
-          detail: "Organization admins always have owner access",
-        };
+      const target = await findAssignableOrgMember(db, orgId, email, wf.user_id);
+      if (!target.ok) return target;
       const result = await setOrgAccessOverride(db, {
         kind: "workflow",
         resourceId: workflowId,

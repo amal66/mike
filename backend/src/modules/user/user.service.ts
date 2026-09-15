@@ -112,3 +112,5 @@ export {
     type ApiKeySource,
     type ApiKeyStatus,
 } from "./user.apiKeyStore";
+
+export { resolveUserChatSelection } from "./user.chatSelection";

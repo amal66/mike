@@ -8,21 +8,12 @@
 
 import type { Db } from "../../lib/supabase";
 export type { Db };
-import { enqueueStorageCleanup } from "../../lib/dbq/enqueue";
+import { deleteCollectionDocuments } from "../documents/documents.service";
 
 export function normalizeOptionalString(value: unknown) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-export function normalizeDocumentFilename(nextName: unknown, currentName: string) {
-  if (typeof nextName !== "string") return null;
-  const trimmed = nextName.trim().slice(0, 200);
-  if (!trimmed) return null;
-  if (/\.[a-z0-9]{1,6}$/i.test(trimmed)) return trimmed;
-  const ext = currentName.match(/\.[a-z0-9]{1,6}$/i)?.[0] ?? "";
-  return `${trimmed}${ext}`;
 }
 
 export async function attachProjectMemoryEnabled<
@@ -77,31 +68,10 @@ export async function deleteProjectDocumentsAndVersionFiles(
   projectId: string,
   documentIds: string[],
 ) {
-  if (documentIds.length === 0) return null;
-  const { data: versions, error: versionsError } = await db
-    .from("document_versions")
-    .select("storage_path, pdf_storage_path")
-    .in("document_id", documentIds);
-  if (versionsError) return versionsError;
-
-  const paths = new Set<string>();
-  for (const v of versions ?? []) {
-    if (typeof v.storage_path === "string" && v.storage_path.length > 0) {
-      paths.add(v.storage_path);
-    }
-    if (typeof v.pdf_storage_path === "string" && v.pdf_storage_path.length > 0) {
-      paths.add(v.pdf_storage_path);
-    }
-  }
-  const { error } = await db
-    .from("documents")
-    .delete()
-    .eq("project_id", projectId)
-    .in("id", documentIds);
-  // Rows first, files second (durable storage.cleanup job) — previously each
-  // file delete was fire-and-forget, so one storage hiccup leaked the bytes.
-  if (!error) await enqueueStorageCleanup(db, [...paths]);
-  return error ?? null;
+  const result = await deleteCollectionDocuments(
+    db, { kind: "project", projectId }, documentIds,
+  );
+  return result.ok ? null : result.kind === "error" ? result.error : result.detail;
 }
 
 // Shared core of the two attach*Labels helpers below: resolve the distinct

@@ -23,7 +23,7 @@ import {
     type ChatDocumentReference,
     type ChatMessage,
 } from "../../lib/chat";
-import { getUserModelSettings } from "../user/user.service";
+import { getUserModelSettings, resolveUserChatSelection } from "../user/user.service";
 import {
     checkProjectAccess,
     ensureChatAccess,
@@ -33,7 +33,6 @@ import {
 import { hasDirectContentGrants } from "../../lib/contentAccess";
 import { can, type ProjectRole } from "../../lib/permissions";
 import {
-    resolveEffectiveChatModel,
     resolveEffectiveReasoningLevel,
 } from "../../lib/modelSelection";
 import {
@@ -265,31 +264,15 @@ export async function prepareProjectChatStream(
             detail: "You do not have permission to write in this project.",
         };
 
-    const modelSettings = await getUserModelSettings(userId, db);
-    const modelResolution = await resolveEffectiveChatModel({
-        requested: args.requestedModel,
-        chatModel,
-        lastSelectedModel: modelSettings.last_selected_chat_model,
-        apiKeys: modelSettings.api_keys,
+    const selection = await resolveUserChatSelection(db, {
         userId,
-        db,
-    });
-    if (!modelResolution.ok) {
-        return {
-            ok: false,
-            status: modelResolution.status,
-            code: modelResolution.code,
-            detail: modelResolution.detail,
-        };
-    }
-    const selectedModel = modelResolution.model;
-    const selectedReasoningLevel = resolveEffectiveReasoningLevel({
-        model: selectedModel,
-        requested: args.requestedReasoning,
+        chatModel,
         chatReasoningLevel,
-        lastSelectedReasoningLevel:
-            modelSettings.last_selected_reasoning_level,
+        requestedModel: args.requestedModel,
+        requestedReasoning: args.requestedReasoning,
     });
+    if (!selection.ok) return selection;
+    const { modelSettings, selectedModel, selectedReasoningLevel } = selection;
 
     if (
         chatId &&

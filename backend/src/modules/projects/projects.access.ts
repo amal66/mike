@@ -19,6 +19,7 @@ import {
 import {
   deleteOrgAccessOverride,
   findOrgMemberByEmail,
+  findAssignableOrgMember,
   isOrgAssignableRole,
   listOrgAccessPeople,
   setOrgAccessOverride,
@@ -139,24 +140,10 @@ export async function grantProjectAccess(
         kind: "validation",
         detail: "role must be owner, editor, viewer or deny",
       };
-    const target = await findOrgMemberByEmail(db, access.project.org_id, email);
-    if (!target.ok) {
-      if (target.kind === "not_found")
-        return { ok: false, kind: "validation", detail: target.detail };
-      return { ok: false, kind: "db_error", error: target.detail };
-    }
-    if (target.member.userId === access.project.user_id)
-      return {
-        ok: false,
-        kind: "validation",
-        detail: "The creator is always an owner",
-      };
-    if (target.member.orgRole === "admin")
-      return {
-        ok: false,
-        kind: "validation",
-        detail: "Organization admins always have owner access",
-      };
+    const target = await findAssignableOrgMember(
+      db, access.project.org_id, email, access.project.user_id,
+    );
+    if (!target.ok) return target;
     const result = await setOrgAccessOverride(db, {
       kind: "project",
       resourceId: projectId,

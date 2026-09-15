@@ -114,6 +114,33 @@ handlers and the chat engine into modules too. Both are named follow-ups
 below; until then the boundary is: *a `lib/` file may move into a module only
 when nothing that stays in `lib/` imports it.*
 
+## Shared operations and caller-specific policy
+
+Reuse an existing operation before adding another service implementation. The
+following rules have a single implementation:
+
+| Operation | Owner | Caller responsibilities |
+|---|---|---|
+| Rename a project's or library's active document version | `modules/documents/documents.rename.ts`, exported as `renameDocument` | Supply the actor and explicit project/library scope; adapt the result to the existing endpoint shape. The operation checks project permissions and scopes both document queries. |
+| Delete collection documents and queue source/rendition cleanup | `modules/documents/documents.cleanup.ts`, exported as `deleteCollectionDocuments` | Project callers authorize `docs.organize` and select document IDs inside that project first. Library callers supply the authenticated user's ID and collection; the operation filters eligible IDs before reading version paths. Deletion repeats the scope predicates. |
+| Resolve a chat turn's model and reasoning level | `modules/user/user.chatSelection.ts`, exported as `resolveUserChatSelection` | Authorize the chat first; retain each surface's persistence, error mapping, and stream lifetime. Selection itself does not mutate chats or saved preferences. |
+| Validate folder paths and moves; collect a deletion subtree | `lib/folderTree.ts` | Supply a scoped folder list/loader and retain the endpoint's validation order and error messages. |
+| Resolve an assignable organization member | `lib/orgAccessOverrides.ts`, `findAssignableOrgMember` | Authorize the actor's access-management permission and validate the requested role before resolving the target. Creators and organization admins retain owner access. |
+
+Shared code must preserve meaningful differences. Library renames still expose
+`folder_id` and project renames still conceal denied project access as 404.
+Collection deletion retains its existing source/PDF cleanup policy; the
+single-document/version deletion paths additionally clean extracted-text
+caches. Queue scheduling remains after row deletion, not a new atomic
+transaction. Word's local chat mode remains free of chat persistence. Folder
+RPCs, scope checks, and copy/version-creation flows with different storage or
+transaction semantics remain separate.
+
+For changes to these rules, add a test of the shared operation and verify the
+caller-specific permissions and response contracts. The rename route and
+folder-service compatibility suites also pass against the pre-consolidation
+PR snapshot (`54d067d3`), so their assertions characterize existing behavior.
+
 ## Known debt and follow-ups
 
 - **`lib/maintenance/staleWork.ts` → `modules/tabular`** and
