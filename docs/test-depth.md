@@ -53,6 +53,14 @@ no-coverage mutants in
 score, so a run fails only on a genuine regression.
 When you kill survivors, raise `break` in the same PR — floors only go up.
 
+### Current tooling limitation
+
+With the backend's TypeScript 7 dependency, Stryker 10 currently aborts during
+sandbox setup because it calls the removed `parseConfigFileTextToJson` API.
+Its corrected mutation targets are discovered, but no mutation score is
+produced. The regular unit, coverage, typecheck, database, and browser checks
+remain separate; a green CI run does not imply this optional harness passed.
+
 ## SSE load harness (k6)
 
 The streaming chat endpoint (`POST /chat`) is the product's hot path and

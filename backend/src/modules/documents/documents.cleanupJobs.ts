@@ -1,6 +1,10 @@
 import { type Db, type DbJob, DbJobDeferredError } from "../../lib/dbq/types";
 
-import { assertStorageConfigured, deleteFile, extractedTextKey } from "../../lib/storage";
+import {
+  assertStorageConfigured,
+  deleteFile,
+  extractedTextKey,
+} from "../../lib/storage";
 
 /** The database trigger owns enqueueing; all deletion surfaces use this job. */
 export async function handleDocumentCleanup(
@@ -119,4 +123,50 @@ export async function completeInlineDocumentCleanup(
   keys: string[],
 ): Promise<void> {
   if (keys.length) await handleDocumentCleanup(db, { payload: { keys } });
+}
+
+/** Mirror the trigger's retired-key selection only when workers are disabled.
+ * The scoped snapshot happens before replacement; cleanup follows a successful
+ * write and rechecks live references before removing source/rendition objects. */
+export async function captureInlineVersionUpdateCleanup(
+  db: Db,
+  documentId: string,
+  versionId: string,
+  patch: {
+    storage_path?: string;
+    pdf_storage_path?: string | null;
+    content_sha256?: string | null;
+  },
+): Promise<string[]> {
+  if (process.env.DB_JOBS_ENABLED !== "false") return [];
+  if (
+    !["storage_path", "pdf_storage_path", "content_sha256"].some((key) =>
+      Object.hasOwn(patch, key),
+    )
+  )
+    return [];
+  const { data: previous, error } = await db
+    .from("document_versions")
+    .select("storage_path, pdf_storage_path, content_sha256")
+    .eq("id", versionId)
+    .eq("document_id", documentId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) throw error;
+  if (!previous) return [];
+  const keys = new Set<string>();
+  let invalidateCache = false;
+  for (const column of ["storage_path", "pdf_storage_path"] as const) {
+    if (patch[column] !== undefined && previous[column] !== patch[column]) {
+      if (previous[column]) keys.add(previous[column]);
+      if (column === "storage_path") invalidateCache = true;
+    }
+  }
+  if (
+    patch.content_sha256 !== undefined &&
+    previous.content_sha256 !== patch.content_sha256
+  )
+    invalidateCache = true;
+  if (invalidateCache) keys.add(extractedTextKey(versionId));
+  return [...keys];
 }

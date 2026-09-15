@@ -424,6 +424,9 @@ Apply `20260914_01_document_lifecycle.sql` before deploying the backend that use
 its version RPCs. Fresh installs include it in `backend/schema.sql`; Compose's
 `db-init` service applies it during upgrades. Do not remove pending
 `document.cleanup` jobs: they retain the object keys needed to finish erasure.
+The migration makes both queue claim paths recover failed cleanup jobs, including
+ones rejected by an older worker during rollout, and exhausted stale claims.
+Keep failed cleanup rows as well as pending ones; upgraded workers reclaim them.
 
 Backend and frontend Docker build contexts are now the repository root, so both
 can compile against `packages/contracts`. For a manual backend image build use

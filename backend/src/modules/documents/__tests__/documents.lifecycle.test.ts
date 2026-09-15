@@ -100,3 +100,73 @@ describe("document version persistence boundary", () => {
     fake.done();
   });
 });
+
+const storage = vi.hoisted(() => ({
+  deleteFile: vi.fn(),
+  assertStorageConfigured: vi.fn(),
+}));
+vi.mock("../../../lib/storage", () => ({
+  ...storage,
+  extractedTextKey: (id: string) => `extracted-text/${id}.txt`,
+}));
+import { afterEach } from "vitest";
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.clearAllMocks();
+});
+it("cleans replaced bytes and cache inline with workers disabled while retaining shared bytes", async () => {
+  vi.stubEnv("DB_JOBS_ENABLED", "false");
+  const fake = scriptedDb([
+    {
+      table: "document_versions",
+      data: {
+        storage_path: "old",
+        pdf_storage_path: "shared",
+        content_sha256: "old-hash",
+      },
+    },
+    { table: "document_versions", op: "update", data: { id: "v" } },
+    { table: "db_jobs", data: [] },
+    { table: "document_versions", data: [] },
+    { table: "document_versions", data: [{ pdf_storage_path: "shared" }] },
+  ]);
+  await updateDocumentVersion(fake.db, "doc", "v", {
+    storage_path: "new",
+    pdf_storage_path: null,
+    content_sha256: "new-hash",
+  });
+  expect(storage.deleteFile.mock.calls.flat()).toEqual([
+    "old",
+    "extracted-text/v.txt",
+  ]);
+  expect(fake.calls[0].filters).toEqual([
+    ["eq", "id", "v"],
+    ["eq", "document_id", "doc"],
+    ["is", "deleted_at", null],
+  ]);
+  fake.done();
+});
+it.each([{ data: null }, { error: { message: "write failed" } }])(
+  "does not clean bytes if the scoped replacement does not commit: %j",
+  async (result) => {
+    vi.stubEnv("DB_JOBS_ENABLED", "false");
+    const fake = scriptedDb([
+      { table: "document_versions", data: { storage_path: "old" } },
+      { table: "document_versions", op: "update", ...result },
+    ]);
+    await updateDocumentVersion(fake.db, "doc", "v", { storage_path: "new" });
+    expect(storage.deleteFile).not.toHaveBeenCalled();
+    fake.done();
+  },
+);
+it("preserves cached text when only the filename changes", async () => {
+  vi.stubEnv("DB_JOBS_ENABLED", "false");
+  const fake = scriptedDb([
+    { table: "document_versions", op: "update", data: { id: "v" } },
+  ]);
+  await updateDocumentVersion(fake.db, "doc", "v", {
+    filename: "renamed.docx",
+  });
+  expect(storage.deleteFile).not.toHaveBeenCalled();
+  fake.done();
+});

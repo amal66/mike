@@ -6709,3 +6709,123 @@ end;
 $$;
 revoke all on function public.activate_document_version(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.activate_document_version(uuid, uuid) to service_role;
+
+-- Cleanup intents survive stale claims and old workers rejecting a new kind
+-- during migration-before-code rollout. Both poll and Redis claim paths revive
+-- failed cleanup rows; ordinary jobs retain their finite attempt budgets.
+create or replace function public.claim_db_jobs(
+  p_limit integer default 5,
+  p_stale_seconds integer default 600
+)
+returns setof public.db_jobs
+language sql set search_path = ''
+as $$
+  with abandoned as (
+    update public.db_jobs
+       set status = 'failed',
+           finished_at = now(),
+           last_error = coalesce(
+             last_error,
+             'abandoned: worker died mid-run and attempts are exhausted'
+           )
+     where status = 'running'
+       and claimed_at < now() - make_interval(secs => p_stale_seconds)
+       and attempts >= max_attempts
+       and kind not in ('storage.cleanup', 'document.cleanup')
+    returning id
+  ), candidates as (
+    select id
+      from public.db_jobs
+     where (status = 'pending' and run_at <= now())
+        or (status = 'failed'
+            and kind in ('storage.cleanup', 'document.cleanup'))
+        or (status = 'running'
+            and claimed_at < now() - make_interval(secs => p_stale_seconds)
+            and (
+              attempts < max_attempts
+              or kind in ('storage.cleanup', 'document.cleanup')
+            ))
+     order by run_at
+     limit p_limit
+       for update skip locked
+  )
+  update public.db_jobs j
+     set status = 'running',
+         claimed_at = now(),
+         finished_at = null,
+         attempts = case
+           when j.kind in ('storage.cleanup', 'document.cleanup')
+             then least(j.attempts::bigint + 1, 2147483647)::integer
+           else j.attempts + 1
+         end,
+         max_attempts = case
+           when j.kind in ('storage.cleanup', 'document.cleanup')
+             then 2147483647
+           else j.max_attempts
+         end,
+         dedupe_key = case
+           when j.status = 'failed'
+             and j.kind in ('storage.cleanup', 'document.cleanup')
+             then null
+           else j.dedupe_key
+         end
+    from candidates c
+   where j.id = c.id
+  returning j.*;
+$$;
+
+-- Claim ONE job by id — the Redis-delivery path (transactional-outbox
+-- pattern). When Redis is configured, enqueue also adds a BullMQ "delivery"
+-- job carrying this row's id so pickup is instant; the worker still claims
+-- through Postgres via this function, so a duplicate delivery (BullMQ retry,
+-- poller backstop racing the delivery) can never double-run the job: the
+-- second claimer matches zero rows. Same stale-running recovery as the batch
+-- claim, including its attempt budget: a job that kills its worker must not be
+-- redelivered forever. Terminally failing a spent stale row is left to the
+-- batch claim above, which every deployment runs (as the delivery mechanism
+-- without Redis, as the lost-delivery backstop with it).
+create or replace function public.claim_db_job(
+  p_id uuid,
+  p_stale_seconds integer default 600
+)
+returns setof public.db_jobs
+language sql set search_path = ''
+as $$
+  update public.db_jobs j
+     set status = 'running',
+         claimed_at = now(),
+         finished_at = null,
+         attempts = case
+           when j.kind in ('storage.cleanup', 'document.cleanup')
+             then least(j.attempts::bigint + 1, 2147483647)::integer
+           else j.attempts + 1
+         end,
+         max_attempts = case
+           when j.kind in ('storage.cleanup', 'document.cleanup')
+             then 2147483647
+           else j.max_attempts
+         end,
+         dedupe_key = case
+           when j.status = 'failed'
+             and j.kind in ('storage.cleanup', 'document.cleanup')
+             then null
+           else j.dedupe_key
+         end
+   where j.id = p_id
+     and ((j.status = 'pending' and j.run_at <= now())
+       or (j.status = 'failed'
+           and j.kind in ('storage.cleanup', 'document.cleanup'))
+       or (j.status = 'running'
+           and j.claimed_at < now() - make_interval(secs => p_stale_seconds)
+           and (
+             j.attempts < j.max_attempts
+             or j.kind in ('storage.cleanup', 'document.cleanup')
+           )))
+  returning j.*;
+$$;
+
+drop index if exists public.db_jobs_failed_cleanup_run_at_idx;
+create index db_jobs_failed_cleanup_run_at_idx
+  on public.db_jobs(run_at)
+  where status = 'failed'
+    and kind in ('storage.cleanup', 'document.cleanup');
