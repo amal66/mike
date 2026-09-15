@@ -1,3 +1,4 @@
+import { openAssistantSse } from "../../lib/assistantSse";
 // HTTP layer for the word-chat module — the Word task pane's chat surface.
 //
 // Route handlers parse params/query/body, call the wordChat.service functions,
@@ -25,18 +26,18 @@ import {
   parseOptionalReasoning,
   createReservedAssistantMessageUpdater,
   createWordClientToolsAdapter,
-  openAssistantSse,
+
   reserveAssistantMessage,
   runLLMStream,
   stripTransientAssistantEvents,
   submitClientToolResult,
-} from "../../lib/chat";
+} from "../chat/chat.service";
 import { enqueueChatTurnAudit } from "../../lib/audit";
 import {
   persistWordDocumentEdits,
   WORD_EDIT_FORMATS,
   type WordEditApplyMode,
-} from "../../lib/chat/wordDocumentEdits";
+} from "../chat/chat.service";
 import {
   releaseMemoryConversationTurn,
   scheduleMemoryConsolidation,

@@ -123,6 +123,16 @@ helpers in `frontend/src/app/lib/userFacingError.ts` for unexpected failures.
 - `backend/src/__tests__/architecture.test.ts` checks these rules on every
   test run. If it fails, fix the layering rather than the test; allowlist
   entries need a comment explaining why.
+- Document-version creation, activation, replacement, and deletion belong to
+  `backend/src/modules/documents/`. Call its facade instead of writing version
+  rows or lifecycle RPCs from another module. Callers authorize destination and
+  copy-source scopes independently; the database trigger owns durable cleanup.
+- Domain job bodies live in their modules; `backend/src/jobs/registry.ts`
+  composes handlers and failure hooks. Keep queue transport in `lib/dbq/` and
+  `workers/`, and the assistant engine in `modules/chat/engine/`.
+- Shared serialized API/event declarations live in `packages/contracts/` and
+  are imported with `import type` from `@mike/contracts`. Keep client display
+  state local and update producer/consumer tests when changing a wire payload.
 - Authentication and other request middleware live in
   `backend/src/middleware/`.
 - LLM provider creation is centralized in

@@ -8,7 +8,7 @@ import {
 import {
   buildProjectExportManifest,
   projectManifestFilename,
-} from "../../lib/userDataExport";
+} from "../user/user.service";
 import {
   checkProjectAccess,
   getOrgRole,
@@ -20,7 +20,7 @@ import {
   listProjectGrants,
 } from "../../lib/projectAccess";
 import { listOrgAccessPeople } from "../../lib/orgAccessOverrides";
-import { deleteProjectsByIds } from "../../lib/userDataCleanup";
+import { deleteProjectsByIds } from "../user/user.service";
 import { loadProfileUsersByEmail } from "../../lib/userLookup";
 import { ensureResourceAccessSummaries } from "../../lib/resourceAccessSummary";
 import {

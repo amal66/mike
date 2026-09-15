@@ -1,5 +1,5 @@
+import { captureInlineDocumentCleanup, completeInlineDocumentCleanup } from "./documents.cleanupJobs";
 import type { Db } from "../../lib/supabase";
-import { enqueueStorageCleanup } from "../../lib/dbq/enqueue";
 import {
   ok,
   internalFailure,
@@ -11,12 +11,9 @@ type CollectionScope =
   | { kind: "library"; userId: string; libraryKind: "file" | "template" };
 
 /**
- * Delete a collection's documents, then enqueue source/rendition cleanup.
- * Project callers must first authorize docs.organize and select ids from that
- * project. Library callers pass the actor's userId; eligibility is rechecked
- * here because bulk-delete accepts arbitrary requested ids. The same scope is
- * applied again to the DELETE. This preserves the existing collection policy;
- * single-document/version deletion has a separate extracted-text-cache policy.
+ * Project callers authorize docs.organize and select ids within that project.
+ * Library eligibility is rechecked here. The DELETE repeats the same scope;
+ * the version trigger records cleanup within that transaction, including caches.
  */
 export async function deleteCollectionDocuments(
   db: Db,
@@ -40,17 +37,7 @@ export async function deleteCollectionDocuments(
     eligibleIds = (data ?? []).map((doc) => doc.id as string);
     if (!eligibleIds.length) return ok({ deletedIds: [] });
   }
-  const { data: versions, error: versionsError } = await db
-    .from("document_versions")
-    .select("storage_path, pdf_storage_path")
-    .in("document_id", eligibleIds);
-  if (versionsError) return internalFailure(versionsError);
-  const paths = new Set<string>();
-  for (const version of versions ?? []) {
-    for (const path of [version.storage_path, version.pdf_storage_path]) {
-      if (typeof path === "string" && path.length > 0) paths.add(path);
-    }
-  }
+  const keys = await captureInlineDocumentCleanup(db, { documentIds: eligibleIds });
   let query = db.from("documents").delete();
   if (scope.kind === "project") query = query.eq("project_id", scope.projectId);
   else {
@@ -62,6 +49,6 @@ export async function deleteCollectionDocuments(
   }
   const { error } = await query.in("id", eligibleIds);
   if (error) return internalFailure(error);
-  await enqueueStorageCleanup(db, [...paths]);
+  await completeInlineDocumentCleanup(db, keys);
   return ok({ deletedIds: eligibleIds });
 }

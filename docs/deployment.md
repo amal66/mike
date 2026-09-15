@@ -418,6 +418,17 @@ extra process management is needed. To run them on separate hardware, start
 and set `WORKERS_MODE=none` on the API process. The compose file contains a
 commented `worker` service demonstrating this.
 
+### Document lifecycle migration
+
+Apply `20260914_01_document_lifecycle.sql` before deploying the backend that uses
+its version RPCs. Fresh installs include it in `backend/schema.sql`; Compose's
+`db-init` service applies it during upgrades. Do not remove pending
+`document.cleanup` jobs: they retain the object keys needed to finish erasure.
+
+Backend and frontend Docker build contexts are now the repository root, so both
+can compile against `packages/contracts`. For a manual backend image build use
+`docker build -f backend/Dockerfile -t mike-backend .` from the root.
+
 ## Deployment safety
 
 - Generate unique, high-entropy signing and encryption secrets.

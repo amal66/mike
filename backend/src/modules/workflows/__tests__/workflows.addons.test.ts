@@ -86,7 +86,11 @@ function makeDb(results: Record<string, Result[]>) {
     };
     return builder;
   }
-  return { db: { from } as unknown as Db, calls };
+  return { db: { from, rpc: async (name: string, args: { p_document_id: string; p_version: Record<string, unknown> }) => {
+    expect(name).toBe("create_document_version");
+    calls.push({ table: "document_versions", op: "insert", payload: { ...args.p_version, document_id: args.p_document_id }, filters: [] });
+    return results.document_versions?.shift() ?? { data: null, error: null };
+  } } as unknown as Db, calls };
 }
 
 const filtersOf = (calls: Call[], table: string) =>

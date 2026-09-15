@@ -111,8 +111,8 @@ vi.mock("../../middleware/auth", () => ({
         next(),
 }));
 
-vi.mock("../../lib/chat", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../lib/chat")>();
+vi.mock("../../modules/chat/engine/index", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../modules/chat/engine/index")>();
     return {
         ...actual,
         buildProjectDocContext: (...args: unknown[]) =>
@@ -156,7 +156,7 @@ vi.mock("../../lib/access", () => ({
 }));
 
 import { app } from "../../app";
-import { spotlight } from "../../lib/chat";
+import { spotlight } from "../../modules/chat/engine/index";
 import { createServerSupabase } from "../../lib/supabase";
 
 const VALID_BODY = {

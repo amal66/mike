@@ -1,3 +1,4 @@
+import { createDocumentVersion } from "../documents/documents.service";
 // Business logic + data access for the workflow ADD-ON CATALOG — the
 // read-only `mike_workflows` rows (distribution = "addon") a user can browse
 // and import into their own `workflows` table.
@@ -292,9 +293,7 @@ export async function importWorkflowAddon(
         library_kind: "workflow_asset",
       });
       if (documentError) throw documentError;
-      const { error: versionError } = await db
-        .from("document_versions")
-        .insert({
+      const { error: versionError } = await createDocumentVersion(db, {
           id: versionId,
           document_id: documentId,
           storage_path: sourcePath,
@@ -310,7 +309,6 @@ export async function importWorkflowAddon(
       const { error: readyError } = await db
         .from("documents")
         .update({
-          current_version_id: versionId,
           status: "ready",
           updated_at: new Date().toISOString(),
         })

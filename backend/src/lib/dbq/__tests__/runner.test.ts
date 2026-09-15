@@ -381,6 +381,6 @@ describe("runDbJobRetentionSweep", () => {
         const failedPurge = db.deletes.find(
             (d) => d.status === "failed" && "lt:finished_at" in d,
         );
-        expect(failedPurge?.["neq:kind"]).toBe("storage.cleanup");
+        expect(failedPurge?.["neq:kind"]).toEqual(["storage.cleanup", "document.cleanup"]);
     });
 });

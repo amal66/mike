@@ -9,7 +9,7 @@ import {
     parseOptionalReasoning,
     type ChatMessage,
     type TabularCellStore,
-} from "../../lib/chat";
+} from "../chat/chat.service";
 import { type ReasoningLevel, type UserApiKeys } from "../../lib/llm";
 import { randomUUID } from "node:crypto";
 import {

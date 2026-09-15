@@ -274,8 +274,8 @@ vi.mock("../../middleware/auth", () => ({
 // Keep the real error helpers (the failure-path test relies on genuine
 // isAbortError + AssistantStreamError behavior) but stub the functions that
 // would otherwise hit the DB or the LLM.
-vi.mock("../../lib/chat", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("../../lib/chat")>();
+vi.mock("../../modules/chat/engine/index", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../modules/chat/engine/index")>();
     return {
         ...actual,
         buildDocContext: vi.fn(async () => ({
@@ -362,7 +362,7 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("streams SSE with a chat_id event on the happy path", async () => {
-        const chatLib = await import("../../lib/chat/index.js");
+        const chatLib = await import("../../modules/chat/engine/index.js");
         let reservationExistedBeforeStreaming = false;
         runLLMStream.mockImplementation(async () => {
             reservationExistedBeforeStreaming = !!findAssistantReservation();
@@ -603,7 +603,7 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("stores cloud Word chats only in the document-scoped Word tables", async () => {
-        const chatLib = await import("../../lib/chat/index.js");
+        const chatLib = await import("../../modules/chat/engine/index.js");
         const res = await request(app)
             .post("/word-chat")
             .set("Authorization", "Bearer test")
@@ -986,7 +986,7 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("uses the streamed assistant message id when persisting a cancelled partial response", async () => {
-        const { AssistantStreamAbortError } = await import("../../lib/chat/index.js");
+        const { AssistantStreamAbortError } = await import("../../modules/chat/engine/index.js");
         runLLMStream.mockRejectedValue(
             new AssistantStreamAbortError("partial", [
                 { type: "content", text: "partial" },
@@ -1252,7 +1252,7 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("makes document_context tool-readable without adding it to the system prompt", async () => {
-        const chatLib = await import("../../lib/chat/index.js");
+        const chatLib = await import("../../modules/chat/engine/index.js");
         const res = await request(app)
             .post("/word-chat")
             .set("Authorization", "Bearer test")
@@ -1287,7 +1287,7 @@ describe("POST /chat — streaming endpoint", () => {
     });
 
     it("keeps CourtListener disabled for Word chats even when legal research is enabled", async () => {
-        const chatLib = await import("../../lib/chat/index.js");
+        const chatLib = await import("../../modules/chat/engine/index.js");
         const userSettings = await import("../../modules/user/user.settings.js");
         vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
             title_model: "test-model",

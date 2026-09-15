@@ -34,13 +34,13 @@ vi.mock("../../../lib/llm", async () => ({
 
 vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn() }));
 vi.mock("../../../lib/userLookup", () => ({ findProfileUserByEmail: vi.fn() }));
-vi.mock("../../../lib/userDataCleanup", () => ({
+vi.mock("../user.dataCleanup", () => ({
     deleteAllUserChats: vi.fn(),
     deleteAllUserTabularReviews: vi.fn(),
     deleteUserAccountData: vi.fn(),
     deleteUserProjects: vi.fn(),
 }));
-vi.mock("../../../lib/userDataExport", () => ({
+vi.mock("../user.dataExport", () => ({
     buildUserAccountExport: vi.fn(),
     buildUserChatsExport: vi.fn(),
     buildUserTabularReviewsExport: vi.fn(),

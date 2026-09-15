@@ -15,7 +15,7 @@ import { downloadFilenameForVersion, type Db } from "./documents.shared";
 import { ensureDocumentAccess } from "./documents.access";
 // devLog comes from lib/chat/types (a leaf file — importing the whole chat
 // barrel here just for a logger would be a heavy dependency edge).
-import { devLog } from "../../lib/chat/types";
+import { devLog } from "../../lib/log";
 
 // ---------------------------------------------------------------------------
 // Tracked-change ids

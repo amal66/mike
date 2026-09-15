@@ -1,3 +1,4 @@
+import { createDocumentVersion, copyDocumentVersionFiles } from "../documents/documents.service";
 // Project document service functions: list, assign/copy an existing document
 // into a project, and rename.
 
@@ -234,31 +235,15 @@ export async function assignOrCopyDocument(
     );
     let newPdfPath: string | null = null;
     try {
-      const contentType = contentTypeForDocumentType(
-        (srcV.file_type as string | null) ?? doc.file_type,
-      );
-      await uploadFile(newKey, srcBytes, contentType);
+      ({ pdfStoragePath: newPdfPath } = await copyDocumentVersionFiles({
+        source: { storage_path: srcV.storage_path, pdf_storage_path: srcV.pdf_storage_path,
+          file_type: (srcV.file_type as string | null) ?? doc.file_type },
+        storagePath: newKey,
+        pdfStoragePath: convertedPdfKey(userId, copy.id as string),
+        transport: "download", rendition: "optional", sourceBytes: srcBytes,
+      }));
 
-      // PDFs share one object for source + display rendition. DOCX
-      // store the converted PDF at a separate `converted-pdfs/` key —
-      // copy that too if it exists so the copy renders without going
-      // back through libreoffice.
-      if (srcV.pdf_storage_path) {
-        if (srcV.pdf_storage_path === srcV.storage_path) {
-          newPdfPath = newKey;
-        } else {
-          const pdfBytes = await downloadFile(srcV.pdf_storage_path);
-          if (pdfBytes) {
-            const newPdfKey = convertedPdfKey(userId, copy.id as string);
-            await uploadFile(newPdfKey, pdfBytes, "application/pdf");
-            newPdfPath = newPdfKey;
-          }
-        }
-      }
-
-      const { data: newV, error: newVError } = await db
-        .from("document_versions")
-        .insert({
+      const { data: newV, error: newVError } = await createDocumentVersion(db, {
           document_id: copy.id,
           storage_path: newKey,
           pdf_storage_path: newPdfPath,
@@ -271,9 +256,7 @@ export async function assignOrCopyDocument(
           page_count:
             (srcV.page_count as number | null) ?? doc.page_count ?? null,
           content_sha256: contentSha256(srcBytes),
-        })
-        .select("id")
-        .single();
+        });
       const copyVersionRowId = (newV?.id as string | null) ?? null;
       if (newVError || !copyVersionRowId) {
         throw new Error(
@@ -283,11 +266,8 @@ export async function assignOrCopyDocument(
 
       const { data: updatedCopy, error: updateCopyError } = await db
         .from("documents")
-        .update({
-          current_version_id: copyVersionRowId,
-        })
-        .eq("id", copy.id)
         .select("*")
+        .eq("id", copy.id)
         .single();
       if (updateCopyError || !updatedCopy) {
         throw new Error(

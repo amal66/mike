@@ -51,7 +51,7 @@ vi.mock("../../lib/access", () => ({
     getOrgRole: (...args: unknown[]) => getOrgRole(...args),
 }));
 
-vi.mock("../../lib/userDataCleanup", () => ({
+vi.mock("../../modules/user/user.dataCleanup", () => ({
     deleteUserProjects: (...args: unknown[]) => deleteUserProjects(...args),
     deleteAllUserChats: vi.fn(async () => {}),
     deleteAllUserTabularReviews: vi.fn(async () => {}),

@@ -1,3 +1,4 @@
+import { openAssistantSse } from "../../lib/assistantSse";
 // HTTP layer for the chat module.
 //
 // Route handlers parse params/query/body, call the chat.service functions,
@@ -28,9 +29,9 @@ import {
     parseOptionalReasoning,
     parseOptionalProjectId,
     createReservedAssistantMessageUpdater,
-    openAssistantSse,
+
     reserveAssistantMessage,
-} from "../../lib/chat";
+} from "./engine/index";
 import { normalizeEmail } from "../../lib/access";
 import { can } from "../../lib/permissions";
 import { generateAssistantChatTitle } from "./chat.title";

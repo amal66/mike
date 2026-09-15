@@ -65,7 +65,7 @@ new code uses the shared one.
 ## The rules
 
 1. **`lib/` never imports from `modules/`.** The kernel does not know which
-   domains exist. (One documented edge remains — see "Known debt".)
+   domains exist. There are no dependency exceptions.
 2. **A module is reached from outside only through its facade.** Another
    module, a worker, a job, `app.ts` — none may import a module's topic files.
    The facade is where a module decides what it exposes.
@@ -78,6 +78,7 @@ new code uses the shared one.
 6. **`middleware/` depends on `lib/`, not on modules.** Request plumbing must
    not pull a domain into every request.
 7. **`src/routes/` does not exist.** A new HTTP surface is a new module.
+8. **Document version writes belong to `modules/documents/`.** Creation, activation, replacement, and deletion go through its facade. The architecture test also rejects direct lifecycle RPC calls from other modules.
 
 ## Enforcement
 
@@ -103,16 +104,23 @@ remaining inline queries per routes file and only ever goes down.
   `access` (project/document authorization), `audit` (audit-row writes),
   `documentTypes`, `documentVersions`, `modelSelection`, `routerModels`,
   `userLookup`, `workflowCatalog*` (used by the chat tools), `sourceDocuments`
-  and `chat/` (the assistant engine: prompts, tools, streaming, citations).
+  and pure shared utilities. Document-version reads can join across domains;
+  mutations have one owner in the documents module.
 
-The second group is domain-flavored. It stays in `lib/` for one concrete
-reason: `lib/dbq/handlers.ts` (the durable-job handler registry) and
-`lib/chat/` (the assistant engine, which the chat, project-chat, word-chat and
-tabular modules all drive) import it, and rule 1 forbids `lib/` from importing
-modules. Moving these files into modules would require first moving the job
-handlers and the chat engine into modules too. Both are named follow-ups
-below; until then the boundary is: *a `lib/` file may move into a module only
-when nothing that stays in `lib/` imports it.*
+The assistant engine lives in `modules/chat/engine/`. Other chat surfaces use
+named exports from `chat.service.ts`. HTTP framing lives in `lib/assistantSse.ts`;
+message reservation and persistence belong to the chat module.
+
+## Background jobs
+
+`jobs/registry.ts` composes domain handlers from module facades and supplies both
+handlers and terminal-failure hooks to the queue runner. Importing a module does
+not mutate a global handler map. `lib/dbq/` owns delivery, claiming, retries, and
+retention; domain job bodies live with documents, tabular, user, audit, and memory.
+BullMQ workers are transport adapters to those same domain operations.
+
+Stale-work sweeps live in documents and tabular. `jobs/maintenance.ts` composes
+them. Account erasure and export orchestration belong to the user module.
 
 ## Shared operations and caller-specific policy
 
@@ -122,43 +130,54 @@ following rules have a single implementation:
 | Operation | Owner | Caller responsibilities |
 |---|---|---|
 | Rename a project's or library's active document version | `modules/documents/documents.rename.ts`, exported as `renameDocument` | Supply the actor and explicit project/library scope; adapt the result to the existing endpoint shape. The operation checks project permissions and scopes both document queries. |
-| Delete collection documents and queue source/rendition cleanup | `modules/documents/documents.cleanup.ts`, exported as `deleteCollectionDocuments` | Project callers authorize `docs.organize` and select document IDs inside that project first. Library callers supply the authenticated user's ID and collection; the operation filters eligible IDs before reading version paths. Deletion repeats the scope predicates. |
+| Delete collection documents and durably clean all version artifacts | `modules/documents/documents.cleanup.ts`, exported as `deleteCollectionDocuments` | Project callers authorize `docs.organize` and select document IDs inside that project first. Library callers supply the authenticated user's ID and collection; the operation filters eligible IDs. Deletion repeats the scope predicates; database triggers capture source, PDF, and extracted-text keys in the same transaction. |
 | Resolve a chat turn's model and reasoning level | `modules/user/user.chatSelection.ts`, exported as `resolveUserChatSelection` | Authorize the chat first; retain each surface's persistence, error mapping, and stream lifetime. Selection itself does not mutate chats or saved preferences. |
 | Validate folder paths and moves; collect a deletion subtree | `lib/folderTree.ts` | Supply a scoped folder list/loader and retain the endpoint's validation order and error messages. |
 | Resolve an assignable organization member | `lib/orgAccessOverrides.ts`, `findAssignableOrgMember` | Authorize the actor's access-management permission and validate the requested role before resolving the target. Creators and organization admins retain owner access. |
 
 Shared code must preserve meaningful differences. Library renames still expose
 `folder_id` and project renames still conceal denied project access as 404.
-Collection deletion retains its existing source/PDF cleanup policy; the
-single-document/version deletion paths additionally clean extracted-text
-caches. Queue scheduling remains after row deletion, not a new atomic
-transaction. Word's local chat mode remains free of chat persistence. Folder
-RPCs, scope checks, and copy/version-creation flows with different storage or
-transaction semantics remain separate.
+Word's local chat mode remains free of chat persistence. Copy callers explicitly
+choose their transport and whether a missing rendition is optional or fatal.
+
+### Document lifecycle
+
+- `createDocumentVersion` atomically allocates the version number, inserts the
+  row, and activates it. Stable upload IDs are idempotent: a retry neither
+  overwrites metadata nor reactivates an older version.
+- `createDocumentVersions` commits a copy batch's versions and pointers together.
+- `activateDocumentVersion` validates that the version is live and belongs to the
+  document. Use deferred activation when dependent edit rows must be saved first.
+- `updateDocumentVersion` repeats the document scope and excludes tombstones.
+- `deleteVersion` retains its actor checks and uses a transaction that prevents
+  deleting the final live version, including concurrent deletes.
+- The `document_version_cleanup` trigger records source, PDF, and extracted-text
+  cleanup in the deletion/replacement transaction. Cascades use the same rule.
+  `document.cleanup` retries without a terminal attempt limit, protects surviving
+  storage references, and waits for an in-flight text-cache writer.
+- `DB_JOBS_ENABLED=false` uses the same cleanup implementation inline. The trigger
+  still retains a durable job if storage fails; normal deployments require no
+  application-level path enumeration before deletion.
+
+The lifecycle primitives are trusted persistence operations, not permission
+checks. Callers must authorize the destination and separately authorize a copy
+source. Project, library, workflow, and upload-session policies remain explicit.
 
 For changes to these rules, add a test of the shared operation and verify the
 caller-specific permissions and response contracts. The rename route and
 folder-service compatibility suites also pass against the pre-consolidation
 PR snapshot (`54d067d3`), so their assertions characterize existing behavior.
 
-## Known debt and follow-ups
+## Shared API contracts
 
-- **`lib/maintenance/staleWork.ts` → `modules/tabular`** and
-  **`lib/memory/curator.ts` → `modules/user`** are the two `lib → modules`
-  edges, allowlisted in the fitness test. The sweep's tabular half should move
-  into the tabular module and register itself with the sweeper; the memory
-  curator is a job handler that reads the actor's model settings through the
-  user facade, and it moves with the job-handler registry below.
-- **Job handlers live in `lib/dbq/handlers.ts`.** A cleaner shape is a
-  registry where each module registers its own handlers (`user.jobs.ts`,
-  `documents.jobs.ts`…), which would also let `userDataCleanup`,
-  `userDataExport`, `auditExport` and friends move into their modules.
-- **`lib/chat/` is the chat domain's engine.** It belongs in `modules/chat/`
-  behind the facade once the tabular and word-chat consumers import it that
-  way. It is left in place because several open PRs edit it heavily.
-- **Result shapes.** Modules created before `lib/serviceResult.ts` use their
-  own `kind` strings. Migrating them is mechanical and should happen module by
-  module, not in one sweep.
+`packages/contracts` is the common declaration package for serialized assistant
+activity, input requests/responses, source documents, and normalized Word edits.
+All three applications resolve `@mike/contracts` to the same authored declarations.
+Client event models add their rendering state locally. No client imports a backend
+implementation to obtain these types. See [the package guide](../packages/contracts/README.md).
+
+Existing module-local error unions remain supported. New operations use
+`ServiceResult<T>`; a feature PR does not need to normalize unrelated endpoints.
 
 ## Adding a new domain
 
@@ -172,3 +191,21 @@ PR snapshot (`54d067d3`), so their assertions characterize existing behavior.
    goes in `src/__tests__/integration/`.
 5. Run `npm test --prefix backend -- src/__tests__/architecture.test.ts`. If it
    fails, the layering is wrong, not the test.
+
+## Adding a feature within an existing domain
+
+1. Find the operation's owner and call its facade. Add a topic file when the
+   behavior is independently understandable; keep public exports named.
+2. State the actor and resource scope in the operation's parameters. Check read
+   and write permissions independently when a feature copies between scopes.
+3. Change a shared wire declaration with its producer and client adapters.
+4. Add the smallest useful regression test. Use the database lifecycle SQL tests
+   for transaction/cascade behavior; mocks cannot establish transaction safety.
+5. Run the architecture test, relevant unit/route tests, builds, and contract
+   typecheck. A feature that adds a job also supplies its handler and failure
+   hook through its domain facade to the composition root.
+
+For example, a new “copy a library document into a workflow” feature should need
+an authorized workflow operation, calls to `copyDocumentVersionFiles` and
+`createDocumentVersion`, a route adapter, and tests of scope and response behavior.
+It should not add another version counter, pointer update, or cleanup walker.

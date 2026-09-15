@@ -24,7 +24,7 @@ const deleteUserAccountData =
     vi.fn<
         (db: Db, userId: string, userEmail?: string | null) => Promise<void>
     >(async () => {});
-vi.mock("../../userDataCleanup", () => ({
+vi.mock("../../../modules/user/user.dataCleanup", () => ({
     deleteUserAccountData: (
         db: Db,
         userId: string,
@@ -40,9 +40,9 @@ const buildUserAccountExport =
             userEmail?: string | null,
         ) => Promise<{ hello: string }>
     >(async () => ({ hello: "world" }));
-vi.mock("../../userDataExport", async (importOriginal) => {
+vi.mock("../../../modules/user/user.dataExport", async (importOriginal) => {
     const actual =
-        await importOriginal<typeof import("../../userDataExport")>();
+        await importOriginal<typeof import("../../../modules/user/user.dataExport")>();
     return {
         ...actual,
         buildUserAccountExport: (
@@ -125,7 +125,7 @@ import {
     handleStorageCleanup,
     handleExportBuild,
     MAX_ZIP_EXPORT_DOCUMENTS,
-} from "../handlers";
+} from "../../../jobs/registry";
 import type { DbJob } from "../types";
 
 const JOB = (kind: string, payload: Record<string, unknown>): DbJob => ({

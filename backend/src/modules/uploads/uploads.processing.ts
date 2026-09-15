@@ -1,3 +1,7 @@
+import {
+  createDocumentVersion,
+  updateDocumentVersion,
+} from "../documents/documents.service";
 // Background processing for sealed upload-session files.
 //
 // The upload protocol has two halves: the HTTP control plane in
@@ -234,7 +238,10 @@ async function processCreatedDocument(
 ) {
   const destination = session.destination;
   const scope = destination.scope as
-    "standalone" | "project" | "library" | "workflow";
+    | "standalone"
+    | "project"
+    | "library"
+    | "workflow";
   const projectId =
     scope === "project" ? (destination.project_id as string) : null;
   const folderId =
@@ -308,28 +315,24 @@ async function processCreatedDocument(
   const pageCount =
     file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null;
 
-  const { error: versionError } = await db.from("document_versions").upsert(
-    {
-      id: versionId,
-      document_id: documentId,
-      storage_path: sourcePath,
-      pdf_storage_path: pdfPath,
-      source: "upload",
-      version_number: 1,
-      filename: file.filename,
-      file_type: file.file_type,
-      size_bytes: artifact.size,
-      page_count: pageCount,
-      content_sha256: artifact.sha256,
-    },
-    { onConflict: "id" },
-  );
+  const { error: versionError } = await createDocumentVersion(db, {
+    id: versionId,
+    document_id: documentId,
+    storage_path: sourcePath,
+    pdf_storage_path: pdfPath,
+    source: "upload",
+    version_number: 1,
+    filename: file.filename,
+    file_type: file.file_type,
+    size_bytes: artifact.size,
+    page_count: pageCount,
+    content_sha256: artifact.sha256,
+  });
   if (versionError) throw versionError;
 
   const { data: document, error: updateError } = await db
     .from("documents")
     .update({
-      current_version_id: versionId,
       status: "ready",
       updated_at: new Date().toISOString(),
     })
@@ -398,62 +401,42 @@ async function processNewDocumentVersion(
   const pageCount =
     file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null;
 
-  const { data: existing, error: existingError } = await db
-    .from("document_versions")
-    .select(
-      "id, version_number, source, created_at, filename, file_type, size_bytes, page_count",
-    )
-    .eq("id", versionId)
-    .eq("document_id", documentId)
-    .maybeSingle();
-  if (existingError) throw existingError;
+  const { data: version, error } = await createDocumentVersion(db, {
+    id: versionId,
+    document_id: documentId,
+    storage_path: sourcePath,
+    pdf_storage_path: pdfPath,
+    source: "user_upload",
 
-  let version = existing;
-  if (!version) {
-    const { data: maxRow, error: maxError } = await db
-      .from("document_versions")
-      .select("version_number")
-      .eq("document_id", documentId)
-      .in("source", ["upload", "user_upload", "assistant_edit"])
-      .order("version_number", { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
-    if (maxError) throw maxError;
-    const nextVersionNumber =
-      ((maxRow?.version_number as number | null) ?? 1) + 1;
-    const { data, error } = await db
-      .from("document_versions")
-      .insert({
-        id: versionId,
-        document_id: documentId,
-        storage_path: sourcePath,
-        pdf_storage_path: pdfPath,
-        source: "user_upload",
-        version_number: nextVersionNumber,
-        filename: requestedFilename,
-        file_type: file.file_type,
-        size_bytes: artifact.size,
-        page_count: pageCount,
-        content_sha256: artifact.sha256,
-      })
-      .select(
-        "id, version_number, source, created_at, filename, file_type, size_bytes, page_count",
-      )
-      .single();
-    if (error || !data)
-      throw error ?? new Error("version_insert_returned_no_data");
-    version = data;
-  }
+    filename: requestedFilename,
+    file_type: file.file_type,
+    size_bytes: artifact.size,
+    page_count: pageCount,
+    content_sha256: artifact.sha256,
+  });
+  if (error || !version)
+    throw error ?? new Error("version_insert_returned_no_data");
 
-  const { error: documentError } = await db
-    .from("documents")
-    .update({
-      current_version_id: versionId,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", documentId);
-  if (documentError) throw documentError;
-  return version;
+  const {
+    id,
+    version_number,
+    source,
+    created_at,
+    filename,
+    file_type,
+    size_bytes,
+    page_count,
+  } = version;
+  return {
+    id,
+    version_number,
+    source,
+    created_at,
+    filename,
+    file_type,
+    size_bytes,
+    page_count,
+  };
 }
 
 async function processReplacementDocumentVersion(
@@ -496,9 +479,11 @@ async function processReplacementDocumentVersion(
   });
   const pageCount =
     file.file_type === "pdf" ? await countPdfPages(artifact.filePath) : null;
-  const { data: updated, error } = await db
-    .from("document_versions")
-    .update({
+  const { data: updated, error } = await updateDocumentVersion(
+    db,
+    documentId,
+    versionId,
+    {
       storage_path: sourcePath,
       pdf_storage_path: pdfPath,
       filename: file.filename,
@@ -507,25 +492,11 @@ async function processReplacementDocumentVersion(
       page_count: pageCount,
       content_sha256: artifact.sha256,
       created_at: new Date().toISOString(),
-    })
-    .eq("id", versionId)
-    .eq("document_id", documentId)
-    .select(
-      "id, version_number, source, created_at, filename, file_type, size_bytes, page_count",
-    )
-    .single();
+    },
+  );
   if (error || !updated)
     throw error ?? new Error("version_update_returned_no_data");
 
-  const obsolete = new Set<string>([
-    current.storage_path as string,
-    current.pdf_storage_path as string,
-  ]);
-  obsolete.delete(sourcePath);
-  if (pdfPath) obsolete.delete(pdfPath);
-  for (const path of obsolete) {
-    if (path) await deleteFile(path).catch(() => {});
-  }
   return updated;
 }
 

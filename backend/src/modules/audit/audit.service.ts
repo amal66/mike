@@ -97,3 +97,5 @@ export async function exportAuditCsv(
     return internalFailure(err instanceof Error && err.cause ? err.cause : err);
   }
 }
+
+export { handleChatTurnAudit } from "./audit.jobs";

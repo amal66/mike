@@ -52,7 +52,7 @@ vi.mock("../../lib/access", async (importOriginal) => ({
 }));
 
 // user router imports all four cleanup helpers at module load.
-vi.mock("../../lib/userDataCleanup", () => ({
+vi.mock("../../modules/user/user.dataCleanup", () => ({
     deleteProjectsByIds: (...args: unknown[]) => deleteProjectsByIds(...args),
     deleteAllUserChats: vi.fn(async () => {}),
     deleteAllUserTabularReviews: vi.fn(async () => {}),

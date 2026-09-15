@@ -9,34 +9,21 @@ beforeEach(() => {
   cleanup.mockResolvedValue(undefined);
 });
 const scope = { kind: "project" as const, projectId: "p" };
-const versions = [
-  { storage_path: "source", pdf_storage_path: "pdf" },
-  { storage_path: "source", pdf_storage_path: "" },
-  { storage_path: null, pdf_storage_path: 123 },
-];
 
 describe("collection document cleanup", () => {
-  it("queues unique file paths only after the scoped row deletion succeeds", async () => {
+  it("deletes within project scope; the database owns atomic file cleanup", async () => {
     const fake = scriptedDb([
-      { table: "document_versions", data: versions },
       { table: "documents", op: "delete" },
     ]);
-    cleanup.mockImplementation(async () => {
-      expect(fake.calls.map((c) => [c.table, c.op])).toEqual([
-        ["document_versions", "select"],
-        ["documents", "delete"],
-      ]);
-    });
     expect(await deleteCollectionDocuments(fake.db, scope, ["doc"])).toEqual({
       ok: true,
       data: { deletedIds: ["doc"] },
     });
-    expect(fake.calls[0].filters).toEqual([["in", "document_id", ["doc"]]]);
-    expect(fake.calls[1].filters).toEqual([
+    expect(fake.calls[0].filters).toEqual([
       ["eq", "project_id", "p"],
       ["in", "id", ["doc"]],
     ]);
-    expect(cleanup).toHaveBeenCalledWith(fake.db, ["source", "pdf"]);
+    expect(cleanup).not.toHaveBeenCalled();
     fake.done();
   });
 
@@ -45,8 +32,7 @@ describe("collection document cleanup", () => {
     async (libraryKind) => {
       const fake = scriptedDb([
         { table: "documents", data: [{ id: "owned" }] },
-        { table: "document_versions", data: versions },
-        { table: "documents", op: "delete" },
+          { table: "documents", op: "delete" },
       ]);
       expect(
         await deleteCollectionDocuments(
@@ -66,8 +52,7 @@ describe("collection document cleanup", () => {
         ...filters,
         ["in", "id", ["owned", "foreign"]],
       ]);
-      expect(fake.calls[1].filters).toEqual([["in", "document_id", ["owned"]]]);
-      expect(fake.calls[2].filters).toEqual([
+      expect(fake.calls[1].filters).toEqual([
         ...filters,
         ["in", "id", ["owned"]],
       ]);
@@ -100,22 +85,9 @@ describe("collection document cleanup", () => {
     },
   );
 
-  it("does not delete rows or queue cleanup when the version lookup fails", async () => {
-    const error = { message: "version read failed" };
-    const fake = scriptedDb([{ table: "document_versions", error }]);
-    expect(await deleteCollectionDocuments(fake.db, scope, ["doc"])).toEqual({
-      ok: false,
-      kind: "error",
-      error,
-    });
-    expect(cleanup).not.toHaveBeenCalled();
-    fake.done();
-  });
-
   it("does not queue cleanup when the row deletion fails", async () => {
     const error = { message: "delete failed" };
     const fake = scriptedDb([
-      { table: "document_versions", data: versions },
       { table: "documents", op: "delete", error },
     ]);
     expect(await deleteCollectionDocuments(fake.db, scope, ["doc"])).toEqual({
@@ -127,15 +99,4 @@ describe("collection document cleanup", () => {
     fake.done();
   });
 
-  it("propagates an enqueue failure rather than reporting successful cleanup", async () => {
-    const fake = scriptedDb([
-      { table: "document_versions", data: versions },
-      { table: "documents", op: "delete" },
-    ]);
-    cleanup.mockRejectedValueOnce(new Error("queue unavailable"));
-    await expect(
-      deleteCollectionDocuments(fake.db, scope, ["doc"]),
-    ).rejects.toThrow("queue unavailable");
-    fake.done();
-  });
 });

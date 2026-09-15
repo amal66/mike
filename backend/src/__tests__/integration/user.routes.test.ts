@@ -195,7 +195,7 @@ vi.mock("../../modules/user/user.apiKeyStore", () => ({
     getUserApiKeys: vi.fn(async () => ({})),
 }));
 
-vi.mock("../../lib/userDataCleanup", () => ({
+vi.mock("../../modules/user/user.dataCleanup", () => ({
     deleteAllUserChats: (...args: unknown[]) => deleteAllUserChats(...args),
     deleteAllUserTabularReviews: (...args: unknown[]) =>
         deleteAllUserTabularReviews(...args),
@@ -209,7 +209,7 @@ vi.mock("../../lib/memory/bulk", () => ({
         deleteUserPrivateMemories(...args),
 }));
 
-vi.mock("../../lib/userDataExport", () => ({
+vi.mock("../../modules/user/user.dataExport", () => ({
     buildUserAccountExport: (...args: unknown[]) =>
         buildUserAccountExport(...args),
     buildUserChatsExport: (...args: unknown[]) => buildUserChatsExport(...args),
