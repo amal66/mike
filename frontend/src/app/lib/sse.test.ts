@@ -79,6 +79,26 @@ describe("readSseFrames", () => {
         ).resolves.toEqual([{ n: 1 }]);
     });
 
+    // Cancelling a body that already delivered [DONE] makes Chromium record
+    // the completed request as net::ERR_ABORTED — every chat turn looked
+    // aborted in DevTools. Read it to EOF instead.
+    it("drains to EOF, not cancel, when the stream ends with [DONE]", async () => {
+        const response = sseResponse(['data: {"n":1}\n\n', "data: [DONE]\n\n"]);
+        const reader = response.body!.getReader();
+        const cancel = vi.spyOn(reader, "cancel");
+        vi.spyOn(response, "body", "get").mockReturnValue({
+            getReader: () => reader,
+        } as unknown as Response["body"]);
+
+        const frames: unknown[] = [];
+        for await (const frame of readSseFrames(response)) frames.push(frame);
+
+        expect(frames).toEqual([{ n: 1 }]);
+        expect(cancel).not.toHaveBeenCalled();
+        // Fully consumed: the next read reports EOF.
+        await expect(reader.read()).resolves.toMatchObject({ done: true });
+    });
+
     it("cancels the reader when the consumer stops early", async () => {
         const response = sseResponse(['data: {"n":1}\n\n', 'data: {"n":2}\n\n']);
         const reader = response.body!.getReader();

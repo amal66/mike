@@ -20,10 +20,40 @@ function abortError() {
  * Yields each parsed `data:` payload of an SSE response, in order.
  *
  * - Malformed JSON is warned about and skipped; the stream keeps going.
- * - `data: [DONE]` ends the iteration and is never yielded.
- * - The underlying reader is always cancelled — on abort, on an early
+ * - `data: [DONE]` ends the iteration and is never yielded. The server
+ *   closes the body right after it, so the reader is drained to EOF rather
+ *   than cancelled: a cancel makes the browser record a request that
+ *   completed normally as `net::ERR_ABORTED`, which is noise in DevTools
+ *   and in any monitoring that counts aborted requests.
+ * - Otherwise the underlying reader is cancelled — on abort, on an early
  *   `break` at the call site, and on a throw from the consumer's body.
  */
+
+/** Read the remaining body to EOF; true when it ended within the budget. */
+async function drainToEnd(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    budgetMs: number,
+): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), budgetMs);
+    });
+    const drained = (async () => {
+        try {
+            while (!(await reader.read()).done) {
+                /* discard: nothing follows [DONE] */
+            }
+        } catch {
+            /* a torn-down connection has nothing left to release */
+        }
+        return true;
+    })();
+    try {
+        return await Promise.race([drained, budget]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
 export async function* readSseFrames(
     response: Response,
     opts?: { signal?: AbortSignal },
@@ -33,6 +63,7 @@ export async function* readSseFrames(
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let finished = false;
 
     try {
         while (true) {
@@ -58,7 +89,10 @@ export async function* readSseFrames(
 
                 const payload = trimmed.slice(5).trim();
                 if (!payload) continue;
-                if (payload === "[DONE]") return;
+                if (payload === "[DONE]") {
+                    finished = true;
+                    return;
+                }
 
                 let parsed: unknown;
                 try {
@@ -76,8 +110,13 @@ export async function* readSseFrames(
             if (done) break;
         }
     } finally {
-        // Releases the connection when the consumer breaks out early, when
-        // the signal aborts, and when a handler throws.
-        await reader.cancel().catch(() => {});
+        // A stream that ended with [DONE] is read to EOF so the request
+        // completes normally; anything else — an early break, an abort, a
+        // throw from the consumer — releases the connection with a cancel.
+        // The drain has a budget so a server that never closes cannot hold
+        // the caller: past it, cancel after all.
+        if (!finished || !(await drainToEnd(reader, 2_000))) {
+            await reader.cancel().catch(() => {});
+        }
     }
 }
