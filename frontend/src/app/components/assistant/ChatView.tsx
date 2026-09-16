@@ -64,7 +64,13 @@ interface Props {
             >;
         },
     ) => Promise<string | null>;
+    /** Stop control: aborts the turn in flight. */
     cancel: () => void;
+    /**
+     * Leave the turn in flight running (New chat). The server persists the
+     * finished answer; only `cancel` may cut it short.
+     */
+    detach: () => void;
     /**
      * Whether the caller may write in this chat. The server serves the
      * standing on GET /chat/:id; surfaces that know it must pass it, so a
@@ -108,6 +114,7 @@ export function ChatView({
     isResponseLoading,
     handleChat,
     cancel,
+    detach,
     canSend,
     accessResolved = true,
     onInitialSubmit,
@@ -677,7 +684,7 @@ export function ChatView({
     }, [panelMounted]);
 
     const handleNewChat = () => {
-        cancel();
+        detach();
         setCurrentChatId(null);
         setNewChatMessages(null);
         router.push("/assistant");
