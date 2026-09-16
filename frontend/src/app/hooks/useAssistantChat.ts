@@ -124,8 +124,12 @@ export function useAssistantChat({
     adoptedThreadKeyRef.current = null;
     // A new chat receiving its persisted id is still the same live turn.
     if (isAdoptedThread) return;
+    // Detach — never abort. Aborting closes the socket, which the backend
+    // treats as Stop: it persists a truncated "Cancelled by user." answer in
+    // the thread the user just left. Retiring the generation is enough to
+    // keep the old turn from writing into the new thread; the request itself
+    // runs to completion and the server stores the whole answer.
     requestGenerationRef.current += 1;
-    abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset request status when the host selects another thread
     setIsResponseLoading(false);
@@ -213,6 +217,21 @@ export function useAssistantChat({
       ...cancelledEvents,
       { type: "content" as const, text: "Cancelled by user." },
     ];
+  };
+
+  /**
+   * Stop listening to the turn in flight without cancelling it. For leaving a
+   * thread (switching chats, starting a new one): the request keeps running
+   * and the server persists the complete answer, while this hook stops
+   * repainting a list it no longer owns. Only `cancel` — the Stop control —
+   * aborts the request.
+   */
+  const detach = () => {
+    if (!abortControllerRef.current) return;
+    requestGenerationRef.current += 1;
+    abortControllerRef.current = null;
+    setIsResponseLoading(false);
+    setIsLoadingCitations(false);
   };
 
   const cancel = () => {
@@ -433,10 +452,6 @@ export function useAssistantChat({
             signal: controller.signal,
           }));
 
-      if (!isCurrentRequest()) {
-        await response.body?.cancel().catch(() => {});
-        return null;
-      }
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
         throw new Error(`Chat request failed with status ${response.status}`);
@@ -444,13 +459,23 @@ export function useAssistantChat({
 
       // One shared reader (lib/sse.ts) owns the wire format: CRLF, the
       // decoder flush for a body that closes without a trailing newline, and
-      // [DONE]. Leaving this loop cancels the underlying reader.
+      // [DONE]. Leaving this loop cancels the underlying reader, so a turn
+      // that has been superseded keeps draining it instead of breaking out.
+      let superseded = !isCurrentRequest();
       for await (const frame of readSseFrames(response, {
         signal: controller.signal,
       })) {
         // A newer turn — or another thread — owns eventsRef and the message
-        // list now, so this stream must stop writing to them.
-        if (!isCurrentRequest()) return null;
+        // list now, so this stream must stop writing to them. It must not
+        // stop reading them: an early break cancels the reader, the backend
+        // reads the closed socket as a user cancellation (`res.on("close")`
+        // in lib/chat/routeStreaming.ts) and persists whatever text had
+        // arrived, labelled "Cancelled by user." Draining costs a few
+        // kilobytes and lets the server finish and store the whole answer.
+        // Stop is the one exit that still aborts: readSseFrames throws on
+        // its signal, and the socket is already closing.
+        if (!isCurrentRequest()) superseded = true;
+        if (superseded) continue;
 
         const data = frame as Record<string, unknown>;
 
@@ -1359,7 +1384,7 @@ export function useAssistantChat({
         }
       }
 
-      if (!isCurrentRequest()) return null;
+      if (superseded || !isCurrentRequest()) return null;
 
       finalizeStreamingReasoning();
       setIsResponseLoading(false);
@@ -1448,8 +1473,9 @@ export function useAssistantChat({
     handleNewChat,
     setMessages,
     cancel,
+    detach,
     resetChat: () => {
-      cancel();
+      detach();
       setChatId(undefined);
       setCurrentChatId(null);
       setMessages([]);

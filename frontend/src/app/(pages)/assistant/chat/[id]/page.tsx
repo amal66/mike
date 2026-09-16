@@ -26,6 +26,7 @@ export default function AssistantChatPage() {
         cancel,
         rejectedApiKey,
         dismissInvalidApiKey,
+        detach,
     } = useAssistantChat({ initialMessages, chatId: id });
 
     const hasAutoSent = useRef(false);
@@ -120,6 +121,7 @@ export default function AssistantChatPage() {
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}
             cancel={cancel}
+            detach={detach}
             canSend={canSend}
             accessResolved={accessResolved}
         />
