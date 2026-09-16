@@ -228,6 +228,9 @@ describe("resolving a tracked edit", () => {
     const result = await run(fake.db);
 
     expect(result.ok).toBe(false);
+    // Carries the cause so the route answers 500, not the 404 a missing
+    // edit gets: a client that retries on 5xx should retry this.
+    expect(!result.ok && result.error).toEqual({ message: "write failed" });
     expect(storage.uploadFile).not.toHaveBeenCalled();
     expect(
       fake.calls.filter((call) => call.table === "document_edits" && call.op === "update"),

@@ -27,6 +27,7 @@ import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 async function main(): Promise<void> {
   await enforceDocumentLifecycleMigration();
   startAllWorkers();
+  console.log("Mike worker process running");
 }
 
 void main();
@@ -41,7 +42,6 @@ void main();
 // not handles — so the entrypoint needs one ref'd handle of its own. This is
 // it, and it is cleared on shutdown so the process can still exit promptly.
 const keepAlive = setInterval(() => {}, 60_000);
-console.log("Mike worker process running");
 
 let shuttingDown = false;
 async function shutdown(signal: string) {

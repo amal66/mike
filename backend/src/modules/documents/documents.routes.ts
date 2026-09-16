@@ -431,8 +431,10 @@ async function handleEditResolution(
         userEmail,
         db,
     );
-    if (!result.ok)
+    if (!result.ok) {
+        if (result.error) return void sendInternalError(res, result.error);
         return void res.status(404).json({ detail: result.detail });
+    }
     res.json(result.body);
 }
 

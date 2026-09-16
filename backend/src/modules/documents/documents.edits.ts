@@ -54,7 +54,7 @@ export async function resolveEdit(
     db: Db,
 ): Promise<
     | { ok: true; body: Record<string, unknown> }
-    | { ok: false; detail: string }
+    | { ok: false; detail: string; error?: unknown }
 > {
     devLog(`[edit-resolution] incoming ${mode}`, {
         userId,
@@ -224,7 +224,10 @@ export async function resolveEdit(
         devLog(`[edit-resolution] pre-write clear failed; leaving bytes alone`, {
             clearErr,
         });
-        return { ok: false, detail: "Failed to resolve edit" };
+        // Not a missing edit: the database refused the write. Carry the
+        // cause so the route answers 500 (a retrying client should retry)
+        // instead of the 404 every other failure here maps to.
+        return { ok: false, detail: "Failed to resolve edit", error: clearErr };
     }
 
     devLog(`[edit-resolution] overwriting bytes in place`, {

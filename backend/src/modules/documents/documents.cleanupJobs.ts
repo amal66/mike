@@ -1,4 +1,5 @@
 import { type Db, type DbJob, DbJobDeferredError } from "../../lib/dbq/types";
+import { jobErrorMessage } from "../../lib/dbq/jobError";
 import { retryDelayMs, STALE_SECONDS } from "../../lib/dbq/runner";
 import { requestDocumentCleanupDelivery } from "../../lib/dbq/enqueue";
 import { logError } from "../../lib/log";
@@ -136,7 +137,9 @@ export async function handleDocumentCleanup(
     for (const row of siblings)
       await settleCoalescedJob(db, row, {
         done: false,
-        message: err instanceof Error ? err.message : "cleanup_failed",
+        // The same reason the runner records for the row it owns; siblings
+        // must not be left with a placeholder while the owner keeps the cause.
+        message: jobErrorMessage(err, "cleanup_failed"),
         runAt: deferred
           ? err.runAt
           : new Date(Date.now() + retryDelayMs(row.attempts)).toISOString(),

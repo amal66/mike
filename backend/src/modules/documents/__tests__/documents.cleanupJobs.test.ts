@@ -235,6 +235,28 @@ describe("document cleanup job", () => {
     fake.done();
   });
 
+  // PostgREST failures are plain objects; the sibling rows used to be handed
+  // back with a "cleanup_failed" placeholder while the owner row kept the
+  // real reason.
+  it("hands siblings back with the real reason when the lookup fails", async () => {
+    const fake = coalescingDb([
+      { rpc: "claim_db_jobs", data: [sibling("j2", ["b"])] },
+      {
+        rpc: "document_cleanup_referenced_keys",
+        error: { code: "42501", message: "permission denied for function" },
+      },
+      { table: "db_jobs" },
+    ]);
+    await expect(
+      handleDocumentCleanup(fake.db, { id: "j1", payload: { keys: ["a"] } }),
+    ).rejects.toEqual({ code: "42501", message: "permission denied for function" });
+    expect(fake.calls[2].payload).toMatchObject({
+      status: "pending",
+      last_error: "permission denied for function",
+    });
+    fake.done();
+  });
+
   it("keeps draining one row at a time when the claim has no kind filter", async () => {
     const fake = coalescingDb([
       { rpc: "claim_db_jobs", error: { code: "PGRST202", message: "not found" } },
