@@ -874,6 +874,9 @@ export function TRChatPanel({
     async function handleDeleteChat(chatId: string) {
         setChats((prev) => prev.filter((c) => c.id !== chatId));
         if (chatId === currentChatId) {
+            // Same exit as New chat / Load chat: retire the in-flight stream's
+            // generation so its late events cannot land in the emptied list.
+            detachActiveStream();
             setCurrentChatId(null);
             setCurrentChatTitle(null);
             setCurrentChatModel(null);

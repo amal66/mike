@@ -28,6 +28,7 @@ on:
       - "word-addin/**"
       - "frontend/src/shared/**"
       - "frontend/public/icons/**"
+      - "packages/**"
       - ".github/workflows/word-addin.yml"
   pull_request:
     # `main` is the destination upstream; `upstream-main` is the fork's mirror
@@ -37,6 +38,7 @@ on:
       - "word-addin/**"
       - "frontend/src/shared/**"
       - "frontend/public/icons/**"
+      - "packages/**"
       - ".github/workflows/word-addin.yml"
 
 # Don't pile up runs on rapid pushes to the same PR; pushes to main each get
