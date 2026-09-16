@@ -123,7 +123,13 @@ begin
       values(failed_id, kind_name, '{}', 'failed', 8, 8, now(), 'unknown job kind: ' || kind_name);
     select * into row_data from public.claim_db_job(failed_id);
     assert row_data.status = 'running' and row_data.attempts = 9 and row_data.finished_at is null, 'rollout rejection must be recoverable';
+    -- The single-row claim backed the revived row off (run_at in the future),
+    -- so an old runner failing it straight back cannot hot-loop the poll path.
     update public.db_jobs set status = 'failed' where id = failed_id;
+    perform public.claim_db_jobs(1000);
+    assert (select status = 'failed' and run_at > now() from public.db_jobs where id = failed_id), 'poll path must honour the revived row backoff';
+    -- Once that backoff elapses the poll path recovers it like any pending row.
+    update public.db_jobs set run_at = now() where id = failed_id;
     perform public.claim_db_jobs(1000);
     assert (select status = 'running' from public.db_jobs where id = failed_id), 'poll path must recover failed cleanup too';
     insert into public.db_jobs(id, kind, payload, status, attempts, max_attempts, claimed_at)
