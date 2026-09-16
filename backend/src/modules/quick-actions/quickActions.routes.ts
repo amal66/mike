@@ -49,10 +49,20 @@ quickActionsRouter.post(
   }),
 );
 
+// A malformed id reached Postgres as `uuid = 'not-a-uuid'` (22P02) and
+// surfaced as a 500; an id that cannot exist is simply not found.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 quickActionsRouter.patch(
   "/:quickActionId",
   requireAuth,
   asyncRoute(async (req, res) => {
+    if (!isUuid(req.params.quickActionId))
+      return void res.status(404).json({ detail: "Quick action not found" });
     const result = await updateQuickAction(createServerSupabase(), {
       userId: res.locals.userId as string,
       userEmail: res.locals.userEmail as string | undefined,
@@ -68,6 +78,8 @@ quickActionsRouter.delete(
   "/:quickActionId",
   requireAuth,
   asyncRoute(async (req, res) => {
+    if (!isUuid(req.params.quickActionId))
+      return void res.status(404).json({ detail: "Quick action not found" });
     const result = await deleteQuickAction(createServerSupabase(), {
       userId: res.locals.userId as string,
       quickActionId: req.params.quickActionId,

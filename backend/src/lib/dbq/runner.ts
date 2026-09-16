@@ -134,8 +134,16 @@ export async function processClaimedJob(
             }),
         );
     } catch (err) {
+        // PostgREST failures are plain objects, not Errors; String() would
+        // record "[object Object]" as the job's last_error and log the same.
         const message =
-            err instanceof Error ? err.message : String(err ?? "unknown");
+            err instanceof Error
+                ? err.message
+                : typeof (err as { message?: unknown } | null)?.message === "string"
+                  ? ((err as { message: string }).message)
+                  : typeof err === "object" && err !== null
+                    ? JSON.stringify(err)
+                    : String(err ?? "unknown");
         // Destructive memory operations remove version metadata only after a
         // cleanup job owns the object path. That job is the last durable
         // pointer, so storage cleanup must retry until success rather than
