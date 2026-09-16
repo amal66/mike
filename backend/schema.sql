@@ -6753,6 +6753,8 @@ as $$
       from public.db_jobs
      where (p_kind is null or kind = p_kind)
        and ((status = 'pending' and run_at <= now())
+        -- Cleanup intents are retried forever, but politely: a revived
+        -- `failed` row waits for its own run_at like everything else.
         or (status = 'failed'
             and kind in ('storage.cleanup', 'document.cleanup')
             and run_at <= now())
@@ -6780,6 +6782,9 @@ as $$
              then 2147483647
            else j.max_attempts
          end,
+         -- Back the revived row off before running it, so a claimant that
+         -- fails the row back to `failed` (an old runner rejecting an unknown
+         -- kind) cannot re-enter this branch on the next tick.
          run_at = case
            when j.status = 'failed'
              and j.kind in ('storage.cleanup', 'document.cleanup')
