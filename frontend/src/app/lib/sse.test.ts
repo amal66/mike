@@ -99,6 +99,67 @@ describe("readSseFrames", () => {
         await expect(reader.read()).resolves.toMatchObject({ done: true });
     });
 
+    // A server that sends [DONE] but never closes the body must not hold the
+    // caller: past the drain budget the reader is cancelled after all.
+    it("cancels after the drain budget when the body never closes", async () => {
+        vi.useFakeTimers();
+        try {
+            const encoder = new TextEncoder();
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                    // never closes
+                },
+            });
+            const response = new Response(stream, { status: 200 });
+            const reader = response.body!.getReader();
+            const cancel = vi.spyOn(reader, "cancel");
+            vi.spyOn(response, "body", "get").mockReturnValue({
+                getReader: () => reader,
+            } as unknown as Response["body"]);
+
+            const frames: unknown[] = [];
+            const run = (async () => {
+                for await (const frame of readSseFrames(response)) frames.push(frame);
+            })();
+            // Let the generator reach the drain, then expire its budget.
+            await vi.advanceTimersByTimeAsync(0);
+            await vi.advanceTimersByTimeAsync(2_000);
+            await run;
+
+            expect(frames).toEqual([]);
+            expect(cancel).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    // A connection torn down between [DONE] and EOF makes the drain's read
+    // reject; there is nothing left to release, so no cancel and no throw.
+    it("treats a read error during the drain as drained", async () => {
+        const encoder = new TextEncoder();
+        let reads = 0;
+        const stream = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                reads += 1;
+                if (reads === 1) controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                else controller.error(new Error("connection reset"));
+            },
+        });
+        const response = new Response(stream, { status: 200 });
+        const reader = response.body!.getReader();
+        const cancel = vi.spyOn(reader, "cancel");
+        vi.spyOn(response, "body", "get").mockReturnValue({
+            getReader: () => reader,
+        } as unknown as Response["body"]);
+
+        const frames: unknown[] = [];
+        for await (const frame of readSseFrames(response)) frames.push(frame);
+
+        expect(frames).toEqual([]);
+        expect(cancel).not.toHaveBeenCalled();
+    });
+
     it("cancels the reader when the consumer stops early", async () => {
         const response = sseResponse(['data: {"n":1}\n\n', 'data: {"n":2}\n\n']);
         const reader = response.body!.getReader();
