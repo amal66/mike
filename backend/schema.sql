@@ -851,6 +851,9 @@ create table if not exists public.upload_session_files (
   status text not null default 'pending_upload',
   error_code text,
   result jsonb,
+  -- Set once the worker has written the destination documents row, so a
+  -- retry can tell "never created" from "created, then deleted by the user".
+  document_created_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint upload_session_files_client_id_check

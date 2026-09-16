@@ -66,6 +66,12 @@ type UploadFileRow = {
   target_folder_id: string | null;
   status: string;
   error_code: string | null;
+  /**
+   * When the worker wrote the destination documents row for this file. Null
+   * until then, so a retry can tell "never created" from "created, then
+   * deleted by the user" — the attempt counter cannot make that distinction.
+   */
+  document_created_at: string | null;
 };
 
 type UploadJobRow = {
@@ -275,7 +281,6 @@ async function processCreatedDocument(
   session: UploadSessionRow,
   file: UploadFileRow,
   artifact: SealedFileArtifact,
-  isRetry: boolean,
 ) {
   const destination = session.destination;
   const scope = destination.scope as
@@ -329,9 +334,13 @@ async function processCreatedDocument(
 
   // The upsert below is what makes a retry idempotent — and, on a retry, what
   // would silently RESURRECT a document the user deleted while this job was
-  // running. The first attempt legitimately creates the row; from the second
-  // attempt on, a row that is not there is not there because it was removed.
-  if (isRetry) {
+  // running. Only a row this job already wrote can have been deleted: the
+  // marker on the file row is set right after a successful upsert, so
+  // "marker set, row missing" means removed, while "marker unset, row
+  // missing" means an earlier attempt failed before it got this far (a
+  // storage read, the org lookup, the upsert itself) and the row is still
+  // ours to create. The attempt counter cannot tell those two apart.
+  if (file.document_created_at) {
     const { data: existing, error: existingError } = await db
       .from("documents")
       .select("id")
@@ -360,6 +369,19 @@ async function processCreatedDocument(
     { onConflict: "id" },
   );
   if (documentError) throw documentError;
+
+  // Remember that the row now exists before writing anything else, so a
+  // retry after any later failure checks for deletion instead of recreating.
+  // (Re-stamping on a retry that had the marker already is harmless.)
+  if (!file.document_created_at) {
+    const stampedAt = new Date().toISOString();
+    const { error: markerError } = await db
+      .from("upload_session_files")
+      .update({ document_created_at: stampedAt, updated_at: stampedAt })
+      .eq("id", file.id)
+      .eq("session_id", session.id);
+    if (markerError) throw markerError;
+  }
 
   const sourcePath = storageKey(session.user_id, documentId, file.filename);
   await copyFile(file.sealed_storage_path, sourcePath);
@@ -571,19 +593,12 @@ export async function processUploadFile(
   db: Db,
   session: UploadSessionRow,
   file: UploadFileRow,
-  isRetry = false,
 ) {
   const artifact = await requireSealedFile(file);
   try {
     switch (session.purpose) {
       case "document_create":
-        return await processCreatedDocument(
-          db,
-          session,
-          file,
-          artifact,
-          isRetry,
-        );
+        return await processCreatedDocument(db, session, file, artifact);
       case "document_version_create":
         return await processNewDocumentVersion(db, session, file, artifact);
       case "document_version_replace":
@@ -608,7 +623,6 @@ export async function processUploadFile(
           },
           file,
           artifact,
-          isRetry,
         );
       case "workflow_reference_replace":
         // A former replacement is retained as a new version so history is not
@@ -768,12 +782,7 @@ export async function processUploadJob(
 
       let result: unknown;
       try {
-        result = await processUploadFile(
-          db,
-          typedSession,
-          file,
-          typedJob.attempts > 1,
-        );
+        result = await processUploadFile(db, typedSession, file);
       } catch (error) {
         // A failed timer heartbeat makes ownership uncertain. Re-prove the
         // lease before recording even a failure result.

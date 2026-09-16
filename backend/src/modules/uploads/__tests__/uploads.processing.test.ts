@@ -217,6 +217,13 @@ const baseFile = {
   target_folder_id: null,
   status: "uploaded",
   error_code: null,
+  document_created_at: null as string | null,
+};
+
+// A file row whose first attempt already wrote the destination document.
+const createdFile = {
+  ...baseFile,
+  document_created_at: "2026-09-16T00:00:00.000Z",
 };
 
 const baseSession = {
@@ -439,12 +446,13 @@ describe("upload processing", () => {
   });
 
   // The upsert that makes a retry idempotent is also what brings a document
-  // the user deleted mid-processing back from the dead.
+  // the user deleted mid-processing back from the dead. Only a row this
+  // upload already wrote (marker set) can have been deleted.
   it("refuses to recreate a document deleted while the upload was processing", async () => {
     const db = scriptedDb([{ data: null, error: null }]);
 
     await expect(
-      processUploadFile(db as never, baseSession, baseFile, true),
+      processUploadFile(db as never, baseSession, createdFile),
     ).rejects.toThrow(/document_deleted/);
 
     expect(db.calls.some((call) => call.operation === "upsert")).toBe(false);
@@ -461,8 +469,56 @@ describe("upload processing", () => {
     } as never);
 
     await expect(
-      processUploadFile(db as never, baseSession, baseFile, false),
+      processUploadFile(db as never, baseSession, baseFile),
     ).rejects.toThrow(/document_deleted/);
+  });
+
+  // The other half of the same race, which the attempt counter got wrong: a
+  // first attempt that failed BEFORE the row existed (storage read, org
+  // lookup, the upsert itself) leaves nothing to delete. The retry must
+  // create the document, not report it deleted and give up.
+  it("creates the document on a retry whose first attempt never wrote the row", async () => {
+    const document = {
+      id: baseFile.resource_id,
+      user_id: baseSession.user_id,
+      folder_id: null,
+      library_folder_id: null,
+    };
+    // No marker on the file row, and no documents row either: the lookup
+    // must not even be consulted, so the only scripted `documents` result is
+    // the post-upsert update.
+    const db = fakeDb({ documents: [{ data: document, error: null }] });
+
+    const result = await processUploadFile(db as never, baseSession, {
+      ...baseFile,
+      document_created_at: null,
+    });
+
+    expect(result).toMatchObject({ id: baseFile.resource_id });
+    // The row was written, and the marker recorded so the NEXT retry checks
+    // for deletion instead of recreating.
+    expect(db.from).toHaveBeenCalledWith("documents");
+    expect(db.from).toHaveBeenCalledWith("upload_session_files");
+    expect(mocks.enqueueStorageCleanup).not.toHaveBeenCalled();
+  });
+
+  it("stamps the marker only after the documents upsert succeeded", async () => {
+    const db = scriptedDb([
+      // documents.upsert fails (transient database error).
+      { error: { code: "57P01", message: "terminating connection" } },
+    ]);
+
+    await expect(
+      processUploadFile(db as never, baseSession, baseFile),
+    ).rejects.toMatchObject({ code: "57P01" });
+
+    const stamped = db.calls.some(
+      (call) =>
+        call.table === "upload_session_files" &&
+        call.operation === "update" &&
+        "document_created_at" in ((call.payload as object) ?? {}),
+    );
+    expect(stamped).toBe(false);
   });
 
   it("marks a failed created document and safely queues the job for retry", async () => {
@@ -537,7 +593,8 @@ describe("upload processing", () => {
         error: null,
       },
       { data: baseSession, error: null },
-      { data: baseFile, error: null },
+      // The first attempt wrote the row before the user deleted it.
+      { data: createdFile, error: null },
       { data: { id: "job-1" }, error: null },
       { error: null },
       // The destination document lookup: gone.
