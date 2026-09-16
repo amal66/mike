@@ -125,6 +125,34 @@ function makeDb(
     };
     const db = {
         async rpc(name: string, args: Record<string, unknown>) {
+            // The cleanup worker's reference checks are body-based RPCs (a
+            // GET `in(...)` with hundreds of keys drew a gateway 414).
+            if (name === "document_cache_writer_active") {
+                const ids = args.p_version_ids as string[];
+                return {
+                    data: (tables.db_jobs ?? []).some(
+                        (row) =>
+                            row.kind === "document.precompute_text" &&
+                            row.status === "running" &&
+                            ids.includes(
+                                String((row.payload as Record<string, unknown> | undefined)?.versionId),
+                            ),
+                    ),
+                    error: null,
+                };
+            }
+            if (name === "document_cleanup_referenced_keys") {
+                const keys = args.p_keys as string[];
+                const referenced = new Set<string>();
+                for (const row of tables.document_versions ?? []) {
+                    if (row.deleted_at) continue;
+                    for (const column of ["storage_path", "pdf_storage_path"]) {
+                        const key = row[column];
+                        if (typeof key === "string" && keys.includes(key)) referenced.add(key);
+                    }
+                }
+                return { data: [...referenced].map((key) => ({ key })), error: null };
+            }
             if (name !== "wipe_memory_file") {
                 return { data: null, error: { message: `unknown rpc: ${name}` } };
             }
