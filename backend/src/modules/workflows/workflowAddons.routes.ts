@@ -44,6 +44,18 @@ workflowAddonsRouter.get(
   }),
 );
 
+// A malformed add-on id used to reach Postgres as `uuid = 'nope'` (22P02).
+// The lookup helpers stopped swallowing lookup errors — a failed lookup is
+// not a missing add-on — so that path became a 500 where main answered
+// 404. An id that cannot exist is simply not found, before any query runs.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+workflowAddonsRouter.param("addonId", (req, res, next, value: string) => {
+  if (!UUID_RE.test(value))
+    return void res.status(404).json({ detail: "Add-on not found" });
+  next();
+});
+
 // GET /workflow-addons/:addonId/assets/:assetId/display
 workflowAddonsRouter.get(
   "/:addonId/assets/:assetId/display",
