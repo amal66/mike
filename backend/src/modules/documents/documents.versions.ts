@@ -47,7 +47,8 @@ export async function listVersions(
         userEmail,
         db,
         {
-            select: "id, current_version_id, user_id, project_id, workflow_id",
+            select:
+                "id, current_version_id, user_id, project_id, org_id, workflow_id",
         },
     );
     if (!access.ok) return { ok: false, detail: "Document not found" };

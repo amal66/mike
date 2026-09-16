@@ -591,7 +591,7 @@ export async function prepareWordChatStream(
   },
 ): Promise<
   | { ok: true; prepared: PreparedWordChatStream }
-  | { ok: false; status: number; code?: string; detail: string }
+  | { ok: false; status: number; code?: string; detail: string; error?: unknown }
 > {
   const {
     userId,
@@ -727,8 +727,16 @@ export async function prepareWordChatStream(
         actorUserId: userId,
       });
     } catch (activityError) {
-      console.error("[word-chat] failed to begin memory turn", activityError);
-      return { ok: false, status: 500, detail: INTERNAL_ERROR_MESSAGE };
+      // Hand the cause to the route so it answers through sendInternalError:
+      // the client gets the `internal_error` code and a request_id it can
+      // quote, and the structured [http/internal-error] log carries the
+      // cause — the same shape every other 500 in the API has.
+      return {
+        ok: false,
+        status: 500,
+        detail: INTERNAL_ERROR_MESSAGE,
+        error: activityError,
+      };
     }
   }
 

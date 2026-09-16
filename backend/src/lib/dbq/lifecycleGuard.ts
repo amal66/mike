@@ -39,6 +39,25 @@ const ACTIONABLE = [
 ].join(" ");
 
 /**
+ * The contract version this build needs. 1 = the five lifecycle RPCs
+ * (20260914_01); 2 = those plus `upload_session_files.document_created_at`
+ * (20260916_01), which the upload worker stamps after every documents upsert
+ * and treats a failed stamp as a failed upload. A database one version behind
+ * would pass a "functions exist" probe and then fail every new-document
+ * upload, so the probe has to be asked for the version the code was written
+ * against, not merely whether the subsystem exists.
+ */
+export const REQUIRED_LIFECYCLE_VERSION = 2;
+
+const BEHIND = [
+  "[startup] The database is behind the document-lifecycle contract this build",
+  `needs (found version %d, need ${REQUIRED_LIFECYCLE_VERSION}).`,
+  "Every new-document upload would fail. Apply the newer migrations in",
+  "backend/migrations (see docs/deployment.md) and restart. To start anyway,",
+  "set DOCUMENT_LIFECYCLE_GUARD=off.",
+].join(" ");
+
+/**
  * The decision, separated from the call so it can be tested directly.
  *
  * An unknown error is deliberately NOT fatal. The guard exists to catch a
@@ -64,8 +83,13 @@ export function evaluateLifecycleProbe(
   // absence of an answer has to be ruled out before the value is read.
   const raw = Array.isArray(probe.data) ? probe.data[0] : probe.data;
   const version = typeof raw === "number" ? raw : Number.NaN;
-  if (version >= 1) return { status: "ok" };
+  if (version >= REQUIRED_LIFECYCLE_VERSION) return { status: "ok" };
   if (version === 0) return { status: "missing", message: ACTIONABLE };
+  if (version >= 1)
+    return {
+      status: "missing",
+      message: BEHIND.replace("%d", String(version)),
+    };
   return {
     status: "inconclusive",
     message:

@@ -94,12 +94,11 @@ const sibling = (id: string, keys: string[], attempts = 1) => ({
 
 describe("document cleanup job", () => {
   it("deletes unreferenced source/PDF/cache keys once and keeps surviving shared bytes", async () => {
-    const fake = scriptedDb([
-      { table: "db_jobs", data: [] },
-      { table: "document_versions", data: [{ storage_path: "shared" }] },
+    const fake = coalescingDb([
+      { rpc: "document_cache_writer_active", data: false },
       {
-        table: "document_versions",
-        data: [{ pdf_storage_path: "shared-pdf" }],
+        rpc: "document_cleanup_referenced_keys",
+        data: [{ key: "shared" }, { key: "shared-pdf" }],
       },
     ]);
     await handleDocumentCleanup(
@@ -120,14 +119,20 @@ describe("document cleanup job", () => {
       "pdf",
       "extracted-text/v.txt",
     ]);
-    for (const call of fake.calls.slice(1))
-      expect(call.filters).toContainEqual(["is", "deleted_at", null]);
+    // Both lookups are RPCs: the key list rides in the POST body, never in
+    // the request URL (500 keys in an `in(...)` filter drew a gateway 414).
+    expect(fake.calls[0].args).toEqual({ p_version_ids: ["v"] });
+    expect(fake.calls[1].args).toEqual({
+      p_keys: ["source", "pdf", "shared", "shared-pdf", "extracted-text/v.txt"],
+    });
     fake.done();
   });
 
   it("does no destructive work when reference lookup fails", async () => {
     const error = { message: "database unavailable" };
-    const fake = scriptedDb([{ table: "document_versions", error }]);
+    const fake = coalescingDb([
+      { rpc: "document_cleanup_referenced_keys", error },
+    ]);
     await expect(
       handleDocumentCleanup(fake.db, job(["source"])),
     ).rejects.toEqual(error);
@@ -136,9 +141,8 @@ describe("document cleanup job", () => {
   });
 
   it("attempts every key but reports failure so the job retries", async () => {
-    const fake = scriptedDb([
-      { table: "document_versions", data: [] },
-      { table: "document_versions", data: [] },
+    const fake = coalescingDb([
+      { rpc: "document_cleanup_referenced_keys", data: [] },
     ]);
     storage.deleteFile.mockRejectedValueOnce(new Error("storage unavailable"));
     await expect(
@@ -148,18 +152,14 @@ describe("document cleanup job", () => {
   });
 
   it("defers cache cleanup while a worker can still produce its output", async () => {
-    const fake = scriptedDb([
-      { table: "db_jobs", data: [{ id: "running-precompute" }] },
+    const fake = coalescingDb([
+      { rpc: "document_cache_writer_active", data: true },
     ]);
     await expect(
       handleDocumentCleanup(fake.db, job(["extracted-text/v.txt"])),
     ).rejects.toBeInstanceOf(DbJobDeferredError);
     expect(storage.deleteFile).not.toHaveBeenCalled();
-    expect(fake.calls[0].filters).toContainEqual([
-      "in",
-      "payload->>versionId",
-      ["v"],
-    ]);
+    expect(fake.calls[0].args).toEqual({ p_version_ids: ["v"] });
   });
 
   it("lets the database collect cleanup in the normal worker mode", async () => {
@@ -176,8 +176,7 @@ describe("document cleanup job", () => {
   it("drains the whole pending backlog in one run and marks each row done", async () => {
     const fake = coalescingDb([
       { rpc: "claim_db_jobs", data: [sibling("j2", ["b"]), sibling("j3", ["c", "a"], 2)] },
-      { table: "document_versions", data: [] },
-      { table: "document_versions", data: [] },
+      { rpc: "document_cleanup_referenced_keys", data: [] },
       { table: "db_jobs" },
       { table: "db_jobs" },
     ]);
@@ -189,7 +188,7 @@ describe("document cleanup job", () => {
       p_stale_seconds: 600,
       p_kind: "document.cleanup",
     });
-    const settled = fake.calls.slice(3);
+    const settled = fake.calls.slice(2);
     expect(settled.map((call) => (call.payload as { status: string }).status)).toEqual(["done", "done"]);
     // Fenced to the claim we hold, exactly like the runner's own writes.
     expect(settled[0].filters).toEqual([
@@ -204,8 +203,7 @@ describe("document cleanup job", () => {
   it("retries only the rows whose own keys failed", async () => {
     const fake = coalescingDb([
       { rpc: "claim_db_jobs", data: [sibling("j2", ["b"])] },
-      { table: "document_versions", data: [] },
-      { table: "document_versions", data: [] },
+      { rpc: "document_cleanup_referenced_keys", data: [] },
       { table: "db_jobs" },
     ]);
     storage.deleteFile.mockImplementation((key: string) =>
@@ -213,7 +211,7 @@ describe("document cleanup job", () => {
     );
     // "a" is this row's key and it succeeded, so this job is done.
     await handleDocumentCleanup(fake.db, { id: "j1", payload: { keys: ["a"] } });
-    expect(fake.calls[3].payload).toMatchObject({
+    expect(fake.calls[2].payload).toMatchObject({
       status: "pending",
       last_error: "document_cleanup_failed:1",
     });
@@ -223,7 +221,7 @@ describe("document cleanup job", () => {
   it("hands claimed rows back when the run cannot proceed", async () => {
     const fake = coalescingDb([
       { rpc: "claim_db_jobs", data: [sibling("j2", ["b"])] },
-      { table: "db_jobs", data: [{ id: "running-precompute" }] },
+      { rpc: "document_cache_writer_active", data: true },
       { table: "db_jobs" },
     ]);
     await expect(
@@ -240,8 +238,7 @@ describe("document cleanup job", () => {
   it("keeps draining one row at a time when the claim has no kind filter", async () => {
     const fake = coalescingDb([
       { rpc: "claim_db_jobs", error: { code: "PGRST202", message: "not found" } },
-      { table: "document_versions", data: [] },
-      { table: "document_versions", data: [] },
+      { rpc: "document_cleanup_referenced_keys", data: [] },
     ]);
     await handleDocumentCleanup(fake.db, { id: "j1", payload: { keys: ["a"] } });
     expect(storage.deleteFile.mock.calls.flat()).toEqual(["a"]);
@@ -271,8 +268,7 @@ describe("document cleanup job", () => {
   it("never fails the request when inline deletion fails", async () => {
     vi.stubEnv("DB_JOBS_ENABLED", "false");
     const fake = coalescingDb([
-      { table: "document_versions", data: [] },
-      { table: "document_versions", data: [] },
+      { rpc: "document_cleanup_referenced_keys", data: [] },
     ]);
     storage.deleteFile.mockRejectedValue(new Error("storage unavailable"));
     await expect(

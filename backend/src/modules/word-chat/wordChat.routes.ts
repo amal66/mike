@@ -1,3 +1,4 @@
+import { sendInternalError } from "../../lib/httpError";
 import { openAssistantSse } from "../../lib/assistantSse";
 // HTTP layer for the word-chat module — the Word task pane's chat surface.
 //
@@ -569,6 +570,8 @@ wordChatRouter.post("/", requireAuth, asyncRoute(async (req, res) => {
     requestedReasoning: parsedReasoning.value,
   });
   if (!prep.ok) {
+    if (prep.status === 500 && "error" in prep)
+      return void sendInternalError(res, prep.error);
     return void res.status(prep.status).json({
       ...(prep.code ? { code: prep.code } : {}),
       detail: prep.detail,

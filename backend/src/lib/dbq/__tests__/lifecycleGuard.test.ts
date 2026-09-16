@@ -19,12 +19,28 @@ const probeDb = (result: LifecycleProbe) =>
 
 describe("document lifecycle boot guard", () => {
   it("passes when the database reports the lifecycle contract", () => {
-    expect(evaluateLifecycleProbe({ data: 1, error: null })).toEqual({
+    expect(evaluateLifecycleProbe({ data: 2, error: null })).toEqual({
       status: "ok",
     });
     // PostgREST hands back a scalar RPC result as a bare value or a one-row
     // array depending on the client; both mean the same thing.
-    expect(evaluateLifecycleProbe({ data: [1], error: null }).status).toBe("ok");
+    expect(evaluateLifecycleProbe({ data: [2], error: null }).status).toBe("ok");
+    // A newer database than the build is fine: the contract only grows.
+    expect(evaluateLifecycleProbe({ data: 3, error: null }).status).toBe("ok");
+  });
+
+  // 20260914_01 applied but not 20260916_01: the RPCs exist, the upload
+  // marker column does not. Code that stamps the marker would fail every
+  // new-document upload while a "functions exist" probe still said healthy.
+  it("fails when the database is behind the version this build needs", () => {
+    const verdict = evaluateLifecycleProbe({ data: 1, error: null });
+    expect(verdict.status).toBe("missing");
+    expect(verdict.status === "missing" && verdict.message).toMatch(
+      /found version 1, need 2/,
+    );
+    expect(verdict.status === "missing" && verdict.message).toMatch(
+      /new-document upload/,
+    );
   });
 
   it("fails when the probe reports the lifecycle RPCs are absent", () => {

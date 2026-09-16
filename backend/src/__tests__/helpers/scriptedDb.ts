@@ -5,14 +5,23 @@ export type Query = {
   table: string;
   op: string;
   payload?: unknown;
+  /** RPC arguments, for `op: "rpc"` calls (table is the function name). */
+  args?: unknown;
   filters: Array<[string, ...unknown[]]>;
 };
-type Step = {
-  table: string;
-  op?: string;
-  data?: unknown;
-  error?: unknown;
-};
+type Step =
+  | {
+      table: string;
+      op?: string;
+      data?: unknown;
+      error?: unknown;
+    }
+  | {
+      /** A `db.rpc(name, args)` call; the function name stands in for the table. */
+      rpc: string;
+      data?: unknown;
+      error?: unknown;
+    };
 
 /** Strict query script: an unexpected query or changed mutation order fails.
  * Filters are recorded separately so tests can assert scope and ownership.
@@ -26,10 +35,11 @@ export function scriptedDb(steps: Step[]) {
       calls.push(call);
       const step = steps[cursor++];
       expect(step, `Unexpected ${call.op} on ${table}`).toBeDefined();
-      expect({ table, op: call.op }).toEqual({
-        table: step.table,
-        op: step.op ?? "select",
-      });
+      expect({ table, op: call.op }).toEqual(
+        "rpc" in step
+          ? { table: step.rpc, op: "rpc" }
+          : { table: step.table, op: step.op ?? "select" },
+      );
       return Promise.resolve({
         data: step.data ?? null,
         error: step.error ?? null,
@@ -59,8 +69,21 @@ export function scriptedDb(steps: Step[]) {
     }
     return builder;
   };
+  const rpc = (name: string, args?: unknown) => {
+    const call: Query = { table: name, op: "rpc", args, filters: [] };
+    calls.push(call);
+    const step = steps[cursor++];
+    expect(step, `Unexpected rpc ${name}`).toBeDefined();
+    expect(
+      "rpc" in step ? { rpc: step.rpc } : { table: step.table, op: step.op },
+    ).toEqual({ rpc: name });
+    return Promise.resolve({
+      data: step.data ?? null,
+      error: step.error ?? null,
+    });
+  };
   return {
-    db: { from } as unknown as Db,
+    db: { from, rpc } as unknown as Db,
     calls,
     done: () =>
       expect(cursor, "Not all expected queries ran").toBe(steps.length),

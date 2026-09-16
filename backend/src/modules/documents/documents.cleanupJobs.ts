@@ -165,39 +165,33 @@ async function deleteCleanupKeys(
   const cacheVersions = keys
     .filter((key) => key.startsWith("extracted-text/") && key.endsWith(".txt"))
     .map((key) => key.slice("extracted-text/".length, -4));
-  for (let start = 0; start < cacheVersions.length; start += 500) {
-    const { data, error } = await db
-      .from("db_jobs")
-      .select("id")
-      .eq("kind", "document.precompute_text")
-      .eq("status", "running")
-      .in("payload->>versionId", cacheVersions.slice(start, start + 500))
-      .limit(1);
+  if (cacheVersions.length) {
+    const { data, error } = await db.rpc("document_cache_writer_active", {
+      p_version_ids: cacheVersions,
+    });
     if (error) throw error;
-    if (data?.length)
+    if (data === true)
       throw new DbJobDeferredError(
         new Date(Date.now() + 10_000).toISOString(),
         "document_cache_writer_active",
       );
   }
   // Legacy data can share object paths. Never delete bytes a surviving
-  // version still references, and fail closed if either lookup fails.
-  // Chunked like the probe above: a coalesced run carries far more keys than
-  // one row's worth, and `in(...)` travels in the request URL.
+  // version still references, and fail closed if the lookup fails.
+  //
+  // Both lookups are RPCs so the key list travels in the POST body. A
+  // coalesced run carries hundreds of keys, and a PostgREST `in(...)` filter
+  // puts every one of them in the request URL: the deployment gateway
+  // answered 414 at about 100 ordinary paths, so the run failed before
+  // deleting anything and each retry rebuilt the same oversized batch.
   const referenced = new Set<string>();
-  for (const column of ["storage_path", "pdf_storage_path"] as const) {
-    for (let start = 0; start < keys.length; start += 500) {
-      const { data, error } = await db
-        .from("document_versions")
-        .select(column)
-        .in(column, keys.slice(start, start + 500))
-        .is("deleted_at", null);
-      if (error) throw error;
-      for (const row of data ?? []) {
-        const key = (row as unknown as Record<string, unknown>)[column];
-        if (typeof key === "string") referenced.add(key);
-      }
-    }
+  const { data: referencedRows, error: referencedError } = await db.rpc(
+    "document_cleanup_referenced_keys",
+    { p_keys: keys },
+  );
+  if (referencedError) throw referencedError;
+  for (const row of (referencedRows ?? []) as { key?: unknown }[]) {
+    if (typeof row.key === "string") referenced.add(row.key);
   }
   const failed = new Set<string>();
   for (const key of keys) {
@@ -264,13 +258,15 @@ export async function captureInlineDocumentCleanup(
       ids = (data ?? []).map((row) => row.id as string);
     }
     const keys = new Set<string>();
-    for (let start = 0; start < ids.length; start += 500) {
+    // `in(...)` travels in the request URL; 50 uuids stay well under the
+    // gateway's limit (500 did not — see deleteCleanupKeys).
+    for (let start = 0; start < ids.length; start += 50) {
       const { data, error } = await db
         .from("document_versions")
         .select("id, storage_path, pdf_storage_path")
         .in(
           "versionIds" in scope ? "id" : "document_id",
-          ids.slice(start, start + 500),
+          ids.slice(start, start + 50),
         );
       if (error) throw error;
       for (const row of data ?? []) {

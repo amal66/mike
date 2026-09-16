@@ -21,9 +21,15 @@ import { enforceDocumentLifecycleMigration } from "./lib/dbq/lifecycleGuard";
 import { startAllWorkers, stopAllWorkers } from "./workerRuntime";
 
 // A worker against an unmigrated database cannot run the cleanup kind at all,
-// so it would fail every row it claims. Say so once, loudly, and stop.
-void enforceDocumentLifecycleMigration();
-startAllWorkers();
+// so it would fail every row it claims. Say so once, loudly, and stop — and
+// only start claiming rows once the answer is in, so no job is touched by a
+// worker the database cannot back.
+async function main(): Promise<void> {
+  await enforceDocumentLifecycleMigration();
+  startAllWorkers();
+}
+
+void main();
 
 // KEEPALIVE. Everything startAllWorkers() creates is deliberately unref'd —
 // it has to be, because the same code runs inside the API process and its
