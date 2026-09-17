@@ -10,6 +10,11 @@ import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
+import {
+  UserVisibleError,
+  notifyError,
+  notifySuccess,
+} from "@/app/lib/userFacingError";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
 export function ApiKeyField({
@@ -54,13 +59,23 @@ export function ApiKeyField({
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       } else {
-        alert(`Failed to save ${label}.`);
+        // The caller reports failure as `false`, with no error to classify.
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't save your ${label}. The key was not changed.`,
+            { retryable: true },
+          ),
+          { action: `save your ${label}`, onRetry: () => void handleSave() },
+        );
       }
     } catch (error) {
       if (isMfaRequiredError(error)) {
         setPendingMfaAction("save");
       } else {
-        alert(`Failed to save ${label}.`);
+        notifyError(error, {
+          action: `save your ${label}`,
+          onRetry: () => void handleSave(),
+        });
       }
     } finally {
       setIsSaving(false);
@@ -75,12 +90,28 @@ export function ApiKeyField({
         return;
       }
       const ok = await onRemove();
-      if (!ok) alert(`Failed to remove ${label}.`);
+      if (ok) {
+        notifySuccess(`${label} removed.`);
+      } else {
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't remove your ${label}. The key is still saved.`,
+            { retryable: true },
+          ),
+          {
+            action: `remove your ${label}`,
+            onRetry: () => void handleRemove(),
+          },
+        );
+      }
     } catch (error) {
       if (isMfaRequiredError(error)) {
         setPendingMfaAction("remove");
       } else {
-        alert(`Failed to remove ${label}.`);
+        notifyError(error, {
+          action: `remove your ${label}`,
+          onRetry: () => void handleRemove(),
+        });
       }
     } finally {
       setIsSaving(false);

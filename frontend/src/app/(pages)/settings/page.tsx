@@ -16,6 +16,7 @@ import {
 } from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
+import { describeError, notifyError } from "@/app/lib/userFacingError";
 import {
   SettingsDescription,
   SettingsLabel,
@@ -33,6 +34,24 @@ interface EmailWarning {
   title: string;
   message: string;
 }
+
+/** Keyed by the `code` GoTrue returns from `PATCH /api/auth/email`. */
+const EMAIL_ERROR_MESSAGES = {
+  email_address_invalid: "Enter a valid email address.",
+  email_address_not_authorized:
+    "Mike can't send email to this address. Use a different one.",
+  validation_failed: "Enter a valid email address.",
+  invalid_request: "Enter a valid email address.",
+  reauthentication_needed: "Log in again before changing your email.",
+  session_expired: "Your session has expired. Log in again.",
+  cookie_session_required: "Your session has expired. Log in again.",
+} as const;
+
+const EMAIL_TAKEN_CODES = new Set(["email_exists", "user_already_exists"]);
+const EMAIL_RATE_LIMIT_CODES = new Set([
+  "over_email_send_rate_limit",
+  "over_request_rate_limit",
+]);
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -122,7 +141,11 @@ export default function SettingsPage() {
         return;
       }
       setDeleteConfirm(false);
-      alert("Failed to delete account. Please try again.");
+      notifyError(error, {
+        action: "delete your account",
+        onRetry: () => void handleDeleteAccount(),
+        supportNote: "Account deletion failed.",
+      });
     }
   };
 
@@ -156,12 +179,15 @@ export default function SettingsPage() {
       setTimeout(() => setEmailSaved(false), 2000);
     } catch (error: unknown) {
       devLog("[account/mfa] save email failed", { error });
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to update email. Please try again.";
+      // The backend passes GoTrue's `code` through, so the outcome is decided
+      // by that code rather than by matching English in the message.
+      const described = describeError(error, {
+        action: "update your email",
+        codeMessages: EMAIL_ERROR_MESSAGES,
+        fallback: "Unable to update your email. Try again.",
+      });
 
-      if (isAlreadyRegisteredEmailError(message)) {
+      if (described.code && EMAIL_TAKEN_CODES.has(described.code)) {
         setEmail(user?.pendingEmail || user?.email || "");
         setEmailWarning({
           title: "Email already registered",
@@ -170,17 +196,20 @@ export default function SettingsPage() {
         return;
       }
 
-      if (isEmailRateLimitError(message)) {
+      if (
+        (described.code && EMAIL_RATE_LIMIT_CODES.has(described.code)) ||
+        described.kind === "rate_limited"
+      ) {
         setEmail(user?.pendingEmail || user?.email || "");
         setEmailWarning({
           title: "Email change unavailable",
           message:
-            "You can’t change your email this often. Please wait before trying again.",
+            "You can’t change your email this often. Wait a few minutes before trying again.",
         });
         return;
       }
 
-      setEmailStatus("Failed to update email. Please try again.");
+      setEmailStatus(described.message);
     } finally {
       setIsSavingEmail(false);
     }
@@ -451,14 +480,4 @@ export default function SettingsPage() {
       />
     </div>
   );
-}
-
-function isAlreadyRegisteredEmailError(message: string) {
-  return message
-    .toLowerCase()
-    .includes("a user with this email address has already been registered");
-}
-
-function isEmailRateLimitError(message: string) {
-  return /email.*rate limit|rate limit.*email/i.test(message);
 }

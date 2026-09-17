@@ -35,13 +35,32 @@ import {
   needsMfaVerification,
 } from "@/app/components/popups/MfaVerificationPopup";
 import {
-  knownErrorCodeMessage,
-  userFacingApiError,
+  describeError,
+  supportMailtoFor,
+  type UserFacingError,
 } from "@/app/lib/userFacingError";
 
-const MFA_VERIFICATION_ERROR_MESSAGES = {
-  mfa_verification_failed: "The verification code is invalid or expired.",
-  otp_expired: "The verification code is invalid or expired.",
+/** Keyed by the `code` GoTrue returns from the `/api/auth/mfa/*` routes. */
+const MFA_ERROR_MESSAGES = {
+  mfa_verification_failed:
+    "That code is incorrect. Enter the current six-digit code from your authenticator app.",
+  mfa_verification_rejected:
+    "That code was rejected. Enter the current six-digit code from your authenticator app.",
+  mfa_challenge_expired:
+    "That code expired. Enter the current six-digit code from your authenticator app.",
+  otp_expired:
+    "That code expired. Enter the current six-digit code from your authenticator app.",
+  mfa_factor_not_found: "This authenticator is no longer registered.",
+  too_many_enrolled_mfa_factors:
+    "You already have the maximum number of authenticators. Remove one first.",
+  mfa_totp_enroll_not_enabled:
+    "Authenticator apps are turned off for this workspace.",
+  insufficient_aal: "Verify your identity again before changing this setting.",
+  reauthentication_needed:
+    "Verify your identity again before changing this setting.",
+  over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
+  session_expired: "Your session has expired. Log in again.",
+  cookie_session_required: "Your session has expired. Log in again.",
 } as const;
 
 type MfaFactor = {
@@ -71,17 +90,14 @@ function summarizeFactors(factors: MfaFactor[]) {
   }));
 }
 
+/**
+ * GoTrue names this conflict, so the code decides — matching English in the
+ * message broke as soon as the provider reworded it.
+ */
 function isDuplicateFriendlyNameError(error: unknown) {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "object" &&
-          error !== null &&
-          "message" in error &&
-          typeof error.message === "string"
-        ? error.message
-        : "";
-  return message.toLowerCase().includes("a factor with the friendly name");
+  return (
+    error instanceof AuthApiError && error.code === "mfa_factor_name_conflict"
+  );
 }
 
 function VerificationCodeInput({
@@ -191,6 +207,18 @@ export default function SecurityPage() {
   const [verificationCode, setVerificationCode] = useState("");
   const [setupKeyCopied, setSetupKeyCopied] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<UserFacingError | null>(null);
+
+  /** Show one failure in the status line, classified rather than echoed. */
+  function failStatus(error: unknown, action: string) {
+    const described = describeError(error, {
+      action,
+      codeMessages: MFA_ERROR_MESSAGES,
+      fallback: `Mike couldn't ${action}. Try again.`,
+    });
+    setStatus(described.message);
+    setStatusError(described);
+  }
   const [busy, setBusy] = useState(false);
   const [savingLoginPreference, setSavingLoginPreference] = useState(false);
   const [pendingUnenrollFactorId, setPendingUnenrollFactorId] = useState<
@@ -203,6 +231,7 @@ export default function SecurityPage() {
   async function refreshMfaState() {
     setLoading(true);
     setStatus(null);
+    setStatusError(null);
     traceMfa("[security/mfa] refreshing state");
     try {
       const [factorResult, aalResult] = await Promise.all([
@@ -227,7 +256,7 @@ export default function SecurityPage() {
       traceMfa("[security/mfa] state load failed", {
         error: error instanceof Error ? error.message : String(error),
       });
-      setStatus("MFA settings could not be loaded. Please try again.");
+      failStatus(error, "load your security settings");
       setFactors([]);
       setCurrentLevel(null);
       setNextLevel(null);
@@ -238,6 +267,8 @@ export default function SecurityPage() {
   useEffect(() => {
     traceMfa("[security/mfa] page mounted");
     void refreshMfaState();
+    // Mount-only load; every mutation below calls refreshMfaState itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -253,6 +284,7 @@ export default function SecurityPage() {
   async function startEnrollment() {
     setBusy(true);
     setStatus(null);
+    setStatusError(null);
     try {
       traceMfa("[security/mfa] enrollment requested");
 
@@ -288,7 +320,7 @@ export default function SecurityPage() {
       traceMfa("[security/mfa] setup failed", {
         errorType: error instanceof Error ? error.name : typeof error,
       });
-      setStatus("Failed to start MFA setup. Please try again.");
+      failStatus(error, "start authenticator setup");
     } finally {
       setBusy(false);
     }
@@ -315,6 +347,7 @@ export default function SecurityPage() {
 
     setBusy(true);
     setStatus(null);
+    setStatusError(null);
     try {
       traceMfa("[security/mfa] verifying enrollment", {
         factorId: enrollment.factorId,
@@ -336,13 +369,7 @@ export default function SecurityPage() {
       setStatus("MFA enabled.");
       await refreshMfaState();
     } catch (error) {
-      setStatus(
-        knownErrorCodeMessage(
-          error,
-          MFA_VERIFICATION_ERROR_MESSAGES,
-          "Failed to verify the MFA code. Please try again.",
-        ),
-      );
+      failStatus(error, "verify that code");
     } finally {
       setBusy(false);
     }
@@ -368,6 +395,7 @@ export default function SecurityPage() {
 
   async function requestUnenroll(factorId: string) {
     setStatus(null);
+    setStatusError(null);
     let data;
     try {
       data = await getMfaAssurance();
@@ -375,7 +403,7 @@ export default function SecurityPage() {
       traceMfa("[security/mfa] state verification failed", {
         errorType: error instanceof Error ? error.name : typeof error,
       });
-      setStatus("MFA settings could not be verified. Please try again.");
+      failStatus(error, "check your security settings");
       return;
     }
 
@@ -390,22 +418,19 @@ export default function SecurityPage() {
   async function unenrollFactor(factorId: string) {
     setBusy(true);
     setStatus(null);
+    setStatusError(null);
     try {
       await unenrollMfa(factorId);
     } catch (error) {
       setBusy(false);
-      if (
-        (error instanceof Error &&
-          error.message.toLowerCase().includes("aal")) ||
-        (error instanceof AuthApiError && error.code === "insufficient_aal")
-      ) {
+      if (error instanceof AuthApiError && error.code === "insufficient_aal") {
         setPendingUnenrollFactorId(factorId);
         return;
       }
       traceMfa("[security/mfa] disable failed", {
         errorType: error instanceof Error ? error.name : typeof error,
       });
-      setStatus("MFA could not be disabled. Please try again.");
+      failStatus(error, "turn off two-factor authentication");
       return;
     }
     setBusy(false);
@@ -422,6 +447,7 @@ export default function SecurityPage() {
     const enabled = !(profile?.mfaOnLogin === true);
     setSavingLoginPreference(true);
     setStatus(null);
+    setStatusError(null);
     try {
       if (await needsMfaVerification()) {
         setPendingLoginPreference(enabled);
@@ -429,12 +455,7 @@ export default function SecurityPage() {
       }
       await saveLoginPreference(enabled);
     } catch (error) {
-      setStatus(
-        userFacingApiError(
-          error,
-          "Failed to update login authentication preference.",
-        ),
-      );
+      failStatus(error, "update your login verification setting");
     } finally {
       setSavingLoginPreference(false);
     }
@@ -443,21 +464,20 @@ export default function SecurityPage() {
   async function saveLoginPreference(enabled: boolean) {
     setSavingLoginPreference(true);
     setStatus(null);
+    setStatusError(null);
     try {
       const success = await updateMfaOnLogin(enabled);
       if (!success) {
-        setStatus("Failed to update login authentication preference.");
+        // The profile context reports failure as `false`, with no error.
+        setStatus(
+          "Mike couldn't update your login verification setting. Try again.",
+        );
       }
     } catch (error) {
       if (isMfaRequiredError(error)) {
         setPendingLoginPreference(enabled);
       } else {
-        setStatus(
-          userFacingApiError(
-            error,
-            "Failed to update login authentication preference.",
-          ),
-        );
+        failStatus(error, "update your login verification setting");
       }
     } finally {
       setSavingLoginPreference(false);
@@ -540,7 +560,20 @@ export default function SecurityPage() {
           )}
 
           {status && (
-            <p className="px-4 py-3 text-xs text-gray-500">{status}</p>
+            <p className="px-4 py-3 text-xs text-gray-500">
+              {status}
+              {statusError?.supportable && (
+                <a
+                  href={supportMailtoFor(
+                    statusError,
+                    "Failed to change a security setting.",
+                  )}
+                  className="ml-2 underline underline-offset-2"
+                >
+                  Contact support
+                </a>
+              )}
+            </p>
           )}
         </SettingsCard>
       </section>

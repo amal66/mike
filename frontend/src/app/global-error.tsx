@@ -3,11 +3,14 @@
 import { useEffect } from "react";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { reportError } from "@/app/lib/errorReporting";
+import { buildSupportMailto, describeError } from "@/shared/lib/userError";
 
 export default function GlobalError({
     error,
+    reset,
 }: {
     error: Error & { digest?: string };
+    reset?: () => void;
 }) {
     useEffect(() => {
         // The root layout itself failed: nothing else can report this one.
@@ -17,6 +20,15 @@ export default function GlobalError({
         });
         console.error("Global error:", error);
     }, [error]);
+
+    // The whole document failed to render, so the only thing safe to show is
+    // the digest; the raw message stays in the console and the support email.
+    const described = describeError(error, { action: "load this page" });
+    const supportHref = buildSupportMailto(described, {
+        page: typeof window !== "undefined" ? window.location.href : undefined,
+        product: "web",
+        note: `Error reference: ${error.digest ?? "unavailable"}`,
+    });
 
     return (
         <html lang="en">
@@ -59,23 +71,62 @@ export default function GlobalError({
                     }
 
                     .btn-back { font-family: 'Inter', sans-serif; }
+
+                    .error-actions {
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 0.75rem;
+                        justify-content: center;
+                    }
+
+                    .error-support {
+                        margin-top: 1.5rem;
+                        font-size: 0.875rem;
+                        color: #6b7280;
+                    }
+
+                    .error-support a { color: inherit; font-weight: 500; }
+
+                    .error-reference { margin-left: 0.5rem; color: #9ca3af; }
                 `}</style>
             </head>
             <body>
                 <div className="error-container">
                     <h1 className="error-title">Something went wrong</h1>
                     <p className="error-message">
-                        We encountered an unexpected error. This has been logged
-                        and our team will look into it.
+                        Mike couldn&apos;t load this page. Try again, and
+                        contact support if it keeps happening.
                     </p>
-                    <PillButtonUI
-                        tone="blue"
-                        size="normal"
-                        className="btn-back"
-                        onClick={() => window.history.back()}
-                    >
-                        Back
-                    </PillButtonUI>
+                    <div className="error-actions">
+                        {reset && (
+                            <PillButtonUI
+                                type="button"
+                                tone="blue"
+                                size="normal"
+                                className="btn-back"
+                                onClick={() => reset()}
+                            >
+                                Try again
+                            </PillButtonUI>
+                        )}
+                        <PillButtonUI
+                            type="button"
+                            tone="white"
+                            size="normal"
+                            className="btn-back"
+                            onClick={() => window.history.back()}
+                        >
+                            Back
+                        </PillButtonUI>
+                    </div>
+                    <p className="error-support">
+                        <a href={supportHref}>Contact support</a>
+                        {error.digest && (
+                            <span className="error-reference">
+                                Error reference: {error.digest}
+                            </span>
+                        )}
+                    </p>
                 </div>
             </body>
         </html>

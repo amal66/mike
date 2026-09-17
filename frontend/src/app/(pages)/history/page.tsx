@@ -13,6 +13,7 @@ import { DayPicker, type Matcher } from "@daypicker/react";
 import dayPickerStyles from "@daypicker/react/style.module.css";
 import { getAuditHistory, type AuditEvent } from "@/app/lib/mikeApi";
 import { runUserExport } from "@/app/lib/asyncExport";
+import { notifyError } from "@/app/lib/userFacingError";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
   SkeletonLine,
@@ -245,8 +246,11 @@ export default function HistoryPage() {
       anchor.download = filename ?? "history-export.csv";
       anchor.click();
       URL.revokeObjectURL(url);
-    } catch {
-      alert("Export failed.");
+    } catch (error) {
+      notifyError(error, {
+        action: "export your history",
+        onRetry: () => void handleExport(),
+      });
     } finally {
       setExporting(false);
     }

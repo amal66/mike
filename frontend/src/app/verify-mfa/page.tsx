@@ -13,6 +13,31 @@ import {
     VerificationCodeInput,
 } from "@/app/components/popups/MfaVerificationPopup";
 import { markMfaVerifiedForGate } from "@/app/components/shared/MfaLoginGate";
+import {
+    UserVisibleError,
+    describeError,
+    supportMailtoFor,
+    type UserFacingError,
+} from "@/app/lib/userFacingError";
+
+const MFA_ERROR_MESSAGES = {
+    mfa_verification_failed:
+        "That code is incorrect. Enter the current six-digit code from your authenticator app.",
+    mfa_verification_rejected:
+        "That code was rejected. Enter the current six-digit code from your authenticator app.",
+    mfa_challenge_expired:
+        "That code expired. Enter the current six-digit code from your authenticator app.",
+    mfa_factor_not_found:
+        "This authenticator is no longer registered. Contact support to regain access.",
+    mfa_ip_address_mismatch:
+        "Your network changed mid-verification. Start again from the login page.",
+    over_request_rate_limit:
+        "Too many attempts. Wait a moment and try again.",
+    validation_failed: "Enter the six-digit code from your authenticator app.",
+    invalid_request: "Enter the six-digit code from your authenticator app.",
+    session_expired: "Your session has expired. Log in again.",
+    cookie_session_required: "Your session has expired. Log in again.",
+} as const;
 
 type MfaFactor = {
     id: string;
@@ -29,7 +54,7 @@ export default function VerifyMfaPage() {
     const [code, setCode] = useState("");
     const [loading, setLoading] = useState(true);
     const [verifying, setVerifying] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<UserFacingError | null>(null);
     const isMfaPreview =
         process.env.NODE_ENV !== "production" &&
         searchParams.get("preview") === "mfa";
@@ -85,12 +110,25 @@ export default function VerifyMfaPage() {
                 setSelectedFactorId(verified[0]?.id ?? "");
                 if (verified.length === 0) {
                     setError(
-                        "No verified authenticator factor is available for this account.",
+                        describeError(
+                            new UserVisibleError(
+                                "No verified authenticator is registered for this account. Contact support to regain access.",
+                                { kind: "forbidden" },
+                            ),
+                            { action: "verify your identity" },
+                        ),
                     );
                 }
-            } catch {
+            } catch (caught) {
                 if (cancelled) return;
-                setError("Unable to load authenticator verification.");
+                setError(
+                    describeError(caught, {
+                        action: "load your authenticator",
+                        codeMessages: MFA_ERROR_MESSAGES,
+                        fallback:
+                            "Unable to load authenticator verification. Try again.",
+                    }),
+                );
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -110,9 +148,15 @@ export default function VerifyMfaPage() {
         setError(null);
         try {
             await challengeAndVerifyMfa(displayedFactorId, code.trim());
-        } catch {
+        } catch (caught) {
             setVerifying(false);
-            setError("The verification code is invalid or expired.");
+            setError(
+                describeError(caught, {
+                    action: "verify that code",
+                    codeMessages: MFA_ERROR_MESSAGES,
+                    fallback: "That code is invalid or expired.",
+                }),
+            );
             return;
         }
 
@@ -127,8 +171,13 @@ export default function VerifyMfaPage() {
         try {
             await signOut();
             router.replace("/login");
-        } catch {
-            setError("Unable to sign out. Please try again.");
+        } catch (caught) {
+            setError(
+                describeError(caught, {
+                    action: "sign out",
+                    fallback: "Unable to sign out. Try again.",
+                }),
+            );
         }
     }
 
@@ -191,7 +240,22 @@ export default function VerifyMfaPage() {
                         </>
                     )}
 
-                    {error && <p className="text-sm text-red-600">{error}</p>}
+                    {error && (
+                        <p role="alert" className="text-sm text-red-600">
+                            {error.message}
+                            {error.supportable && (
+                                <a
+                                    href={supportMailtoFor(
+                                        error,
+                                        "Failed two-factor verification at login.",
+                                    )}
+                                    className="ml-2 underline underline-offset-2"
+                                >
+                                    Contact support
+                                </a>
+                            )}
+                        </p>
+                    )}
 
                     <div className="flex items-center justify-end gap-2 pt-4">
                         <button

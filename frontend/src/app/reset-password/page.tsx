@@ -18,6 +18,30 @@ import {
 } from "@/app/components/auth/passwordPolicy";
 import { getAuthSession, updateAuthPassword } from "@/app/lib/authApi";
 import { FieldLabel } from "@/app/components/ui/form-field";
+import {
+    describeError,
+    supportMailtoFor,
+    type UserFacingError,
+} from "@/app/lib/userFacingError";
+
+/** bcrypt truncates past 72 bytes, so GoTrue refuses anything longer. */
+const MAX_PASSWORD_LENGTH = 72;
+
+const RESET_ERROR_MESSAGES = {
+    weak_password: `Choose a stronger password: at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers, and symbols.`,
+    same_password: "Choose a password you haven't used on Mike before.",
+    validation_failed: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
+    invalid_request: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
+    otp_expired: "This password-reset link has expired. Request a new one.",
+    session_expired: "This password-reset link has expired. Request a new one.",
+    session_not_found:
+        "This password-reset link is invalid or has expired. Request a new one.",
+    cookie_session_required:
+        "This password-reset link is invalid or has expired. Request a new one.",
+    over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
+    reauthentication_needed:
+        "Log in again before changing your password.",
+} as const;
 
 function ResetPasswordContent() {
     const searchParams = useSearchParams();
@@ -27,6 +51,7 @@ function ResetPasswordContent() {
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [failure, setFailure] = useState<UserFacingError | null>(null);
     const preview =
         process.env.NODE_ENV !== "production"
             ? searchParams.get("preview")
@@ -55,9 +80,23 @@ function ResetPasswordContent() {
                 }
                 setReady(true);
             })
-            .catch(() => {
+            .catch((caught: unknown) => {
                 if (cancelled) return;
-                setError("This password-reset link is invalid or has expired.");
+                // A 401 means the link is spent; a dropped connection does
+                // not, and telling the user to request a new link then would
+                // send them round a loop that cannot work.
+                const described = describeError(caught, {
+                    action: "check your reset link",
+                    fallback:
+                        "This password-reset link is invalid or has expired.",
+                });
+                setError(
+                    described.kind === "unauthenticated" ||
+                        described.kind === "not_found" ||
+                        described.kind === "validation"
+                        ? "This password-reset link is invalid or has expired."
+                        : described.message,
+                );
                 setReady(true);
             });
         return () => {
@@ -68,8 +107,13 @@ function ResetPasswordContent() {
     async function handleSubmit(event: React.FormEvent) {
         event.preventDefault();
         setError(null);
+        setFailure(null);
         if (password.length < MIN_PASSWORD_LENGTH) {
             setError(`${minimumPasswordMessage}.`);
+            return;
+        }
+        if (password.length > MAX_PASSWORD_LENGTH) {
+            setError(`Password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
             return;
         }
         if (password !== confirmPassword) {
@@ -81,8 +125,14 @@ function ResetPasswordContent() {
         try {
             await updateAuthPassword(password, true);
             setSuccess(true);
-        } catch {
-            setError("Unable to update your password. Please try again.");
+        } catch (caught) {
+            const described = describeError(caught, {
+                action: "update your password",
+                codeMessages: RESET_ERROR_MESSAGES,
+                fallback: "Unable to update your password. Try again.",
+            });
+            setFailure(described);
+            setError(described.message);
         } finally {
             setLoading(false);
         }
@@ -197,8 +247,22 @@ function ResetPasswordContent() {
                                     />
                                 </div>
                                 {error && (
-                                    <div className="rounded bg-red-50 p-3 text-sm text-red-600">
+                                    <div
+                                        role="alert"
+                                        className="rounded bg-red-50 p-3 text-sm text-red-600"
+                                    >
                                         {error}
+                                        {failure?.supportable && (
+                                            <a
+                                                href={supportMailtoFor(
+                                                    failure,
+                                                    "Failed to update a password from a reset link.",
+                                                )}
+                                                className="ml-2 underline underline-offset-2"
+                                            >
+                                                Contact support
+                                            </a>
+                                        )}
                                     </div>
                                 )}
                                 <PillButtonUI
