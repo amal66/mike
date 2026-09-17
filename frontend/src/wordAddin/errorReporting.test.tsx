@@ -104,7 +104,7 @@ describe("network failures", () => {
 describe("add-in notify", () => {
     beforeEach(() => {
         clearToasts();
-        vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.spyOn(console, "warn").mockImplementation(() => {});
     });
     afterEach(() => {
         clearToasts();

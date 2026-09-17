@@ -76,8 +76,11 @@ export function notifyError(
   const described = describeError(error, options);
   if (described.kind === "aborted") return null;
 
+  // warn, not error: Sentry's console bridge forwards console.error, and a
+  // 4xx or a cancellation the user just saw is not an incident. Real faults
+  // were already reported where they were caught (5xx, transport).
   if (process.env.NODE_ENV !== "production") {
-    console.error("[user-error]", described.title, described.cause);
+    console.warn("[user-error]", described.title, described.cause);
   }
 
   const actions: ToastAction[] = [...(options.actions ?? [])];
