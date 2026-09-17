@@ -12,6 +12,7 @@
 // lib/authSession and lib/authHandoff because middleware/auth depends on them.
 
 import { z } from "zod";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./auth.messages";
 import type { Session, SupabaseClient, User } from "@supabase/supabase-js";
 import { consumeAuthHandoff, issueAuthHandoff } from "../../lib/authHandoff";
 
@@ -22,7 +23,11 @@ import { consumeAuthHandoff, issueAuthHandoff } from "../../lib/authHandoff";
 export const emailSchema = z.string().trim().email().max(320);
 export const credentialsSchema = z.object({
   email: emailSchema,
-  password: z.string().min(1).max(4096),
+  password: z.string().min(1).max(PASSWORD_MAX_LENGTH),
+});
+/** Sign-up applies the length policy; login accepts whatever was set. */
+export const signupSchema = credentialsSchema.extend({
+  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
 });
 export const handoffRequestIdSchema = z
   .string()
@@ -44,7 +49,7 @@ export const handoffSchema = z.object({
   requestId: handoffRequestIdSchema,
 });
 export const passwordSchema = z.object({
-  password: z.string().min(8).max(4096),
+  password: z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH),
   signOut: z.boolean().optional(),
 });
 export const factorSchema = z.object({ factorId: z.string().uuid() });
