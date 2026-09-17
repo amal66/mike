@@ -60,10 +60,10 @@ const BEHIND = [
 /**
  * The decision, separated from the call so it can be tested directly.
  *
- * An unknown error is deliberately NOT fatal. The guard exists to catch a
- * deployment-ordering mistake, which is a permanent condition; a database
- * that is merely slow or briefly unreachable at boot would otherwise turn
- * into a crash loop, which is a worse outage than the one being prevented.
+ * An unknown error is inconclusive for one probe. The boot gate retries that
+ * verdict, but never turns it into permission to serve: once the retry budget
+ * is exhausted it fails closed because an unverified schema can orphan
+ * document storage after the database recovers.
  */
 export function evaluateLifecycleProbe(
   probe: LifecycleProbe,
@@ -97,7 +97,9 @@ export function evaluateLifecycleProbe(
   };
 }
 
-export async function probeDocumentLifecycle(db: Db): Promise<LifecycleVerdict> {
+export async function probeDocumentLifecycle(
+  db: Db,
+): Promise<LifecycleVerdict> {
   try {
     const { data, error } = await db.rpc("document_lifecycle_version");
     return evaluateLifecycleProbe({ data, error });
@@ -110,20 +112,56 @@ export async function probeDocumentLifecycle(db: Db): Promise<LifecycleVerdict> 
 }
 
 /**
- * Boot gate. Stops the process when the migration is provably absent, warns
- * and continues when the answer is merely unavailable.
+ * Boot gate. A temporarily unavailable database gets a short bounded retry
+ * window. The process exits unless one probe proves that the required
+ * contract is installed; serving after an inconclusive answer would make a
+ * transient startup failure permanently bypass the lifecycle protection.
  */
+const DEFAULT_PROBE_ATTEMPTS = 6;
+const BASE_RETRY_DELAY_MS = 250;
+const MAX_RETRY_DELAY_MS = 4_000;
+
+type LifecycleGuardOptions = {
+  attempts?: number;
+  sleep?: (delayMs: number) => Promise<void>;
+};
+
+const wait = (delayMs: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, delayMs));
+
 export async function enforceDocumentLifecycleMigration(
   db: Db = createServerSupabase(),
   exit: (code: number) => never = process.exit as (code: number) => never,
+  options: LifecycleGuardOptions = {},
 ): Promise<LifecycleVerdict> {
   if (process.env.DOCUMENT_LIFECYCLE_GUARD === "off") return { status: "ok" };
-  const verdict = await probeDocumentLifecycle(db);
-  if (verdict.status === "missing") {
-    console.error(verdict.message);
-    exit(1);
-  } else if (verdict.status === "inconclusive") {
-    console.warn(verdict.message);
+  const attempts = Math.max(
+    1,
+    Math.floor(options.attempts ?? DEFAULT_PROBE_ATTEMPTS),
+  );
+  const sleep = options.sleep ?? wait;
+  let verdict: LifecycleVerdict = {
+    status: "inconclusive",
+    message: "[startup] The document-lifecycle migration was not verified.",
+  };
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    verdict = await probeDocumentLifecycle(db);
+    if (verdict.status === "ok") return verdict;
+    if (verdict.status === "missing") break;
+    if (attempt < attempts) {
+      console.warn(`${verdict.message} Retrying (${attempt}/${attempts})...`);
+      await sleep(
+        Math.min(BASE_RETRY_DELAY_MS * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS),
+      );
+    }
   }
+
+  const message =
+    verdict.status === "inconclusive"
+      ? `${verdict.message} Refusing to start without confirming lifecycle contract version ${REQUIRED_LIFECYCLE_VERSION}.`
+      : verdict.message;
+  console.error(message);
+  exit(1);
   return verdict;
 }

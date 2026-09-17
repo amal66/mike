@@ -422,6 +422,34 @@ function pickEditRevisionSubset(
   return subset.length > 0 ? subset : null;
 }
 
+/**
+ * A Word batch may reject after sending none, some, or all of its commands.
+ * Re-read the exact target ranges before describing a failed sync as applied.
+ * A document-wide text match is not enough: another identical edit elsewhere
+ * could otherwise turn this failure into a false success.
+ */
+async function verifyQueuedMutationApplied(
+  context: Word.RequestContext,
+  ranges: readonly Word.Range[],
+  edit: RedlineEdit,
+): Promise<boolean> {
+  for (const range of ranges) {
+    try {
+      const collection = range.getTrackedChanges();
+      collection.load("items");
+      await context.sync();
+      if (collection.items.length === 0) continue;
+      for (const change of collection.items) change.load(["type", "text"]);
+      await context.sync();
+      if (pickEditRevisionSubset(collection.items, edit)) return true;
+    } catch {
+      // A stale range cannot prove that the mutation landed. Try the next
+      // exact range; if none can prove it, the caller reports an error.
+    }
+  }
+  return false;
+}
+
 /** Which revision kinds an operation still has to account for. */
 interface EditRevisionSides {
   added: boolean;
@@ -2330,7 +2358,9 @@ export function useWordDoc() {
                 matches: 0,
                 appliedMatches: 0,
               };
+              let mutationQueued = false;
               let mutationApplied = false;
+              let mutationVerificationRanges: Word.Range[] = [];
               let trackingQueued = false;
               let candidateCollections: Word.TrackedChangeCollection[] = [];
               let candidateChanges: Word.TrackedChange[] = [];
@@ -2513,6 +2543,7 @@ export function useWordDoc() {
                   ? ""
                   : toWordText(edit.replacement);
                 const insertedRanges: Word.Range[] = [];
+                mutationVerificationRanges = targetItems;
                 const generatedCollections = targetItems.map((match) => {
                   if (formatOnly) {
                     // Restyling under TrackAll produces a "Formatted"
@@ -2578,10 +2609,12 @@ export function useWordDoc() {
                   collection.load("items");
                   return collection;
                 });
-                // The replacement is queued from here on, so any failure at or
-                // after this sync may still leave the edit in the document.
-                mutationApplied = true;
+                // A rejected sync is ambiguous: Office may fail before sending
+                // the commands or after Word applied them. The catch path
+                // re-reads these exact ranges before claiming success.
+                mutationQueued = true;
                 await context.sync();
+                mutationApplied = true;
 
                 result.appliedMatches = targetItems.length;
 
@@ -2808,6 +2841,13 @@ export function useWordDoc() {
                 result.handle = handle;
                 report.edits.push(result);
               } catch (error) {
+                if (mutationQueued && !mutationApplied) {
+                  mutationApplied = await verifyQueuedMutationApplied(
+                    context,
+                    mutationVerificationRanges,
+                    edit,
+                  );
+                }
                 if (trackingQueued) {
                   try {
                     for (const change of candidateChanges) change.untrack();

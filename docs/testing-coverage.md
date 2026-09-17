@@ -29,28 +29,28 @@ need a real local Supabase stack are explicitly gated.
 
 Per-area statement coverage from `npm run test:coverage`:
 
-| Lib area | % statements | Tested? |
-| --- | ---: | :---: |
-| `modules/user/user.dataCleanup.ts`, `lib/manifestSigning.ts`, `lib/supabase.ts` | 100 | ✓ |
-| `lib/llm/models.ts` | 96 | ✓ |
-| `modules/chat/engine/types.ts` | 95 | ✓ |
-| `lib/documentVersions.ts` | 98 | ✓ |
-| `modules/chat/engine/citations.ts` | 98 | ✓ |
-| `lib/userLookup.ts` | 91 | ✓ |
-| `lib/docxTrackedChanges.ts` | 89 | ✓ |
-| `lib/downloadTokens.ts` | 87 | ✓ |
-| `lib/access.ts` | 76 | ✓ |
-| `lib/storage.ts`, `lib/upload.ts` | 58 | partial |
-| `lib/workflowCatalog.ts` | 69 | partial |
-| `lib/workflowCatalogSource.ts`, `lib/workflowCatalogSync.ts` | 74–96 | ✓ |
-| `modules/user/user.dataExport.ts` | 43 | partial |
-| `modules/chat/engine/contextBuilders.ts`, `modules/chat/engine/tools/toolDispatcher.ts` | 37–38 | partial |
-| `lib/userApiKeys.ts` | 13 | partial — provider/env helpers only |
-| `modules/chat/engine/tools/documentOps.ts` | 10 | partial |
-| `lib/convert.ts`, `modules/chat/engine/streaming.ts`, `lib/courtlistener.ts` | 2–5 | minimal |
-| `lib/llm/**` | 5 | minimal outside `models.ts` |
-| `lib/mcp/**` | 6 | minimal |
-| `lib/userSettings.ts`, `lib/officeText.ts`, `lib/spreadsheet.ts` | 0 | ✗ |
+| Lib area                                                                                | % statements |               Tested?               |
+| --------------------------------------------------------------------------------------- | -----------: | :---------------------------------: |
+| `modules/user/user.dataCleanup.ts`, `lib/manifestSigning.ts`, `lib/supabase.ts`         |          100 |                  ✓                  |
+| `lib/llm/models.ts`                                                                     |           96 |                  ✓                  |
+| `modules/chat/engine/types.ts`                                                          |           95 |                  ✓                  |
+| `lib/documentVersions.ts`                                                               |           98 |                  ✓                  |
+| `modules/chat/engine/citations.ts`                                                      |           98 |                  ✓                  |
+| `lib/userLookup.ts`                                                                     |           91 |                  ✓                  |
+| `lib/docxTrackedChanges.ts`                                                             |           89 |                  ✓                  |
+| `lib/downloadTokens.ts`                                                                 |           87 |                  ✓                  |
+| `lib/access.ts`                                                                         |           76 |                  ✓                  |
+| `lib/storage.ts`, `lib/upload.ts`                                                       |           58 |               partial               |
+| `lib/workflowCatalog.ts`                                                                |           69 |               partial               |
+| `lib/workflowCatalogSource.ts`, `lib/workflowCatalogSync.ts`                            |        74–96 |                  ✓                  |
+| `modules/user/user.dataExport.ts`                                                       |           43 |               partial               |
+| `modules/chat/engine/contextBuilders.ts`, `modules/chat/engine/tools/toolDispatcher.ts` |        37–38 |               partial               |
+| `lib/userApiKeys.ts`                                                                    |           13 | partial — provider/env helpers only |
+| `modules/chat/engine/tools/documentOps.ts`                                              |           10 |               partial               |
+| `lib/convert.ts`, `modules/chat/engine/streaming.ts`, `lib/courtlistener.ts`            |          2–5 |               minimal               |
+| `lib/llm/**`                                                                            |            5 |     minimal outside `models.ts`     |
+| `lib/mcp/**`                                                                            |            6 |               minimal               |
+| `lib/userSettings.ts`, `lib/officeText.ts`, `lib/spreadsheet.ts`                        |            0 |                  ✗                  |
 
 Global, measured over the full `src/**` scope (modules, workers, middleware and
 jobs, not `src/lib/**` alone): **60.59% statements / 51.98% branches / 64.77%
@@ -123,6 +123,12 @@ better exercised by the e2e suite.
 `backend/vitest.config.mts` enforces global coverage **floors** (currently
 statements 60 / branches 51 / functions 64 / lines 63). They are a
 no-regression ratchet, not a target:
+
+CI runs `npm run test:coverage` in the backend job of `ci.yml`, so a drop
+below a floor fails the build. That was not always true: from 2026-07-22 to
+2026-09-14 the job ran plain `npm test`, so the floors existed but nothing
+enforced them, and coverage drifted up unnoticed — which is why the floors
+jumped when the gate was finally wired up. Rules:
 
 - **Floors only go up.** Never lower them to get a PR green — that means your
   change removed tested behavior or added a large untested lib; add tests

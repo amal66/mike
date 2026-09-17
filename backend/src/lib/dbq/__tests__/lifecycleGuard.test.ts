@@ -24,7 +24,9 @@ describe("document lifecycle boot guard", () => {
     });
     // PostgREST hands back a scalar RPC result as a bare value or a one-row
     // array depending on the client; both mean the same thing.
-    expect(evaluateLifecycleProbe({ data: [2], error: null }).status).toBe("ok");
+    expect(evaluateLifecycleProbe({ data: [2], error: null }).status).toBe(
+      "ok",
+    );
     // A newer database than the build is fine: the contract only grows.
     expect(evaluateLifecycleProbe({ data: 3, error: null }).status).toBe("ok");
   });
@@ -60,9 +62,10 @@ describe("document lifecycle boot guard", () => {
     }
   });
 
-  // A database that is briefly unreachable at boot must not become a crash
-  // loop — that is a worse outage than the one this guard prevents.
-  it("is inconclusive, not fatal, for any other failure", () => {
+  // One probe cannot distinguish a transient startup outage from a database
+  // that will recover without the required migration. The boot gate retries
+  // this verdict and ultimately fails closed.
+  it("marks any other failure inconclusive for the retrying boot gate", () => {
     expect(
       evaluateLifecycleProbe({
         data: null,
@@ -74,7 +77,7 @@ describe("document lifecycle boot guard", () => {
     );
   });
 
-  it("stops the process only on a missing migration", async () => {
+  it("stops the process on a missing migration", async () => {
     const exit = vi.fn();
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     await enforceDocumentLifecycleMigration(
@@ -85,15 +88,48 @@ describe("document lifecycle boot guard", () => {
     expect(error).toHaveBeenCalled();
   });
 
-  it("warns and keeps serving when the answer is unavailable", async () => {
+  it("retries an unavailable probe and serves once the contract is confirmed", async () => {
     const exit = vi.fn();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await enforceDocumentLifecycleMigration(
-      probeDb({ data: null, error: { code: "57P03", message: "starting up" } }),
-      exit as never,
-    );
+    const sleep = vi.fn(async () => {});
+    const db = {
+      rpc: vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: null,
+          error: { code: "57P03", message: "starting up" },
+        })
+        .mockResolvedValueOnce({ data: 2, error: null }),
+    } as never;
+    await enforceDocumentLifecycleMigration(db, exit as never, {
+      attempts: 2,
+      sleep,
+    });
     expect(exit).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when every retry is inconclusive", async () => {
+    const exit = vi.fn();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sleep = vi.fn(async () => {});
+    const db = probeDb({
+      data: null,
+      error: { code: "57P03", message: "starting up" },
+    });
+
+    await enforceDocumentLifecycleMigration(db, exit as never, {
+      attempts: 3,
+      sleep,
+    });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/Refusing to start.*version 2/),
+    );
   });
 
   it("can be switched off for a deployment that accepts the risk", async () => {
