@@ -85,6 +85,14 @@ interface Props {
      * the standing at mount leave this alone.
      */
     accessResolved?: boolean;
+    /**
+     * Whether this chat's history is still loading. Separate from `canSend`
+     * so the composer can say which of the two is closing it: once the
+     * standing is resolved the composer stays on the page, and a thread switch
+     * (or the wait for a detached answer) reads "still arriving", not
+     * "needs edit access".
+     */
+    chatLoading?: boolean;
     /** Shares document previews with the initial composer before a chat exists. */
     onInitialSubmit?: (message: Message) => void;
 }
@@ -117,6 +125,7 @@ export function ChatView({
     detach,
     canSend,
     accessResolved = true,
+    chatLoading,
     onInitialSubmit,
 }: Props) {
     const router = useRouter();
@@ -1016,6 +1025,7 @@ export function ChatView({
                                             messages={messages}
                                             chatKey={chatId}
                                             canSend={canSend}
+                                            chatLoading={chatLoading}
                                             onSubmit={(response, content, files) => {
                                                 void handleChat(
                                                     { role: "user", content, files },
@@ -1027,6 +1037,7 @@ export function ChatView({
                                             <ChatInput
                                                 ref={chatInputRef}
                                                 canSend={canSend}
+                                                chatLoading={chatLoading}
                                                 onSubmit={handleChat}
                                                 onCancel={cancel}
                                                 isLoading={isResponseLoading}

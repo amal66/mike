@@ -1974,6 +1974,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                 messages={messages}
                                 chatKey={activeChatId}
                                 canSend={canSendChat}
+                                chatLoading={!chatLoaded}
                                 onSubmit={(response, content, files) => {
                                     void handleSubmit(
                                         { role: "user", content, files },
@@ -1991,7 +1992,8 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     chatKey={activeChatId}
                                     chatModel={chatModel}
                                     chatReasoningLevel={chatReasoningLevel}
-                                    canSend={canSendChat && chatLoaded}
+                                    canSend={canSendChat}
+                                    chatLoading={!chatLoaded}
                                     enableGlobalFileDrop={false}
                                     dropUploadsToProject={false}
                                     projectId={projectId}

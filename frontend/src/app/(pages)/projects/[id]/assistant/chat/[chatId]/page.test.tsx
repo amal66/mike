@@ -100,6 +100,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
     ChatInput: ({
         onSubmit,
         canSend,
+        chatLoading,
         chatKey,
         isLoading,
         chatModel,
@@ -108,6 +109,7 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
     }: {
         onSubmit: (message: Message) => void;
         canSend: boolean;
+        chatLoading?: boolean;
         chatKey: string;
         isLoading: boolean;
         chatModel?: string | null;
@@ -127,10 +129,12 @@ vi.mock("@/app/components/assistant/ChatInput", () => ({
                 Open attached Excel
             </button>
             <button
-                disabled={!canSend || isLoading}
+                disabled={!canSend || !!chatLoading || isLoading}
                 onClick={() =>
                     onSubmit({ role: "user", content: "First question", model: "gpt-5.6-sol", reasoning: "xhigh" })
                 }
+                data-can-send={String(canSend)}
+                data-chat-loading={String(!!chatLoading)}
                 data-chat-key={chatKey}
                 data-chat-model={chatModel}
                 data-chat-reasoning={chatReasoningLevel}
@@ -720,7 +724,17 @@ describe("leaving a project chat mid-stream", () => {
         await body.send('data: {"type":"content_delta","text":" and the rest"}\n\n');
         await body.close();
         await waitFor(() => expect(state.getChat).toHaveBeenCalledWith("created-chat"));
-        expect(screen.getByRole("button", { name: "Send question" })).toBeDisabled();
+        // The two reasons a composer can be closed must stay apart: the reader
+        // may write here, the history is simply still on its way. Folding both
+        // into canSend made the composer claim a missing edit grant. On this
+        // surface #339's `composerReady` gate now keeps the composer off the
+        // page for that whole window -- chatOwnerId, and so canSendChat, is
+        // only known once the chat loads -- so the misleading copy cannot be
+        // reached here at all. ChatInput.canSend.test.tsx pins the message
+        // priority that covers the surfaces which do render through the wait.
+        expect(
+            screen.queryByRole("button", { name: "Send question" }),
+        ).toBeNull();
         await act(async () => finishHistory(completedHistory));
         expect(await screen.findByText("First answer and the rest")).toBeVisible();
         expect(screen.getByRole("button", { name: "Send question" })).toBeEnabled();

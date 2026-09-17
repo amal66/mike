@@ -37,12 +37,21 @@ export default function AssistantChatPage() {
     const [canSend, setCanSend] = useState<boolean>(
         initialMessages.length > 0,
     );
-    // Until the served role lands, the standing is unknown rather than
-    // denied. Keep the composer off the page for that window so a caller who
-    // does have edit access never reads the read-only placeholder; arriving
-    // from "new chat" already knows the answer.
+    // Until the served role lands for the FIRST time, the standing is unknown
+    // rather than denied. Keep the composer off the page for that window so a
+    // caller who does have edit access never reads the read-only placeholder;
+    // arriving from "new chat" already knows the answer.
     const [accessResolved, setAccessResolved] = useState<boolean>(
         initialMessages.length > 0,
+    );
+    // Separate from canSend: while this is true the composer is closed because
+    // the thread's messages have not arrived, not because the caller lacks a
+    // grant. A detached response holds the load open until the server has
+    // stored it, and the composer must say that rather than blame permissions.
+    // This is the switch-to-another-thread case, where the standing is already
+    // resolved and the composer stays on the page while the history lands.
+    const [chatLoading, setChatLoading] = useState<boolean>(
+        initialMessages.length === 0,
     );
     const [chat, setChat] = useState<Chat | null>(null);
     const [chatModel, setChatModel] = useState<string | null | undefined>(
@@ -70,8 +79,13 @@ export default function AssistantChatPage() {
         if (loadedChatId.current === id) return;
         loadedChatId.current = id;
         let cancelled = false;
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- a newly selected chat must load its permissions before sending
-        setCanSend(false);
+        // The composer stays closed until the load resolves, but through
+        // chatLoading rather than canSend: retiring the grant here made the
+        // read-only copy ("needs edit access") the message a reader saw while
+        // simply waiting for a thread — including the seconds a detached
+        // response holds the load open.
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- a newly selected chat must load before sending
+        setChatLoading(true);
         setMessages([]);
 
         loadAssistantChat(id)
@@ -82,6 +96,7 @@ export default function AssistantChatPage() {
                 setChatReasoningLevel(chat.reasoning_level ?? null);
                 setCanSend(can(roleFrom(chat), "content.edit"));
                 setAccessResolved(true);
+                setChatLoading(false);
                 if (loaded.length > 0) {
                     setMessages(loaded);
                 } else {
@@ -126,6 +141,7 @@ export default function AssistantChatPage() {
             detach={detach}
             canSend={canSend}
             accessResolved={accessResolved}
+            chatLoading={chatLoading}
         />
     );
 }
