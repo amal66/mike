@@ -9,6 +9,7 @@ import {
     type TRChat,
 } from "@/app/lib/mikeApi";
 import { TRChatPanel } from "./TRChatPanel";
+import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 
 vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     ...(await importOriginal<typeof import("@/app/lib/mikeApi")>()),
@@ -23,6 +24,7 @@ vi.mock("../assistant/ChatInput", () => ({
 
 describe("TRChatPanel header", () => {
     beforeEach(() => {
+        clearToasts();
         vi.clearAllMocks();
         vi.stubGlobal(
             "ResizeObserver",
@@ -49,6 +51,7 @@ describe("TRChatPanel header", () => {
         vi.mocked(deleteTabularChat).mockResolvedValue(undefined);
     });
     afterEach(() => {
+        clearToasts();
         vi.unstubAllGlobals();
         vi.restoreAllMocks();
     });
@@ -277,5 +280,91 @@ describe("TRChatPanel header", () => {
         );
         expect(screen.queryByRole("button", { name: "Actions" })).toBeNull();
         expect(screen.getByRole("button", { name: "New Chat" })).toBeVisible();
+    });
+
+    it("puts the chat back and explains when deleting it fails", async () => {
+        const user = userEvent.setup();
+        vi.mocked(deleteTabularChat).mockRejectedValue(new Error("boom"));
+        render(
+            <>
+                <TRChatPanel
+                    reviewId="review-1"
+                    initialChatId="chat-1"
+                    onCitationClick={vi.fn()}
+                />
+                <ToastViewportUI />
+            </>,
+        );
+        await screen.findByRole("button", { name: "Current draft" });
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't delete this chat");
+        // The optimistic removal is undone: the thread is open again.
+        expect(
+            await screen.findByRole("button", { name: "Current draft" }),
+        ).toBeVisible();
+        expect(
+            within(alert).getByRole("button", { name: "Retry" }),
+        ).toBeVisible();
+    });
+
+    it("restores the old title and explains when renaming fails", async () => {
+        const user = userEvent.setup();
+        vi.mocked(renameTabularChat).mockRejectedValue(new Error("boom"));
+        render(
+            <>
+                <TRChatPanel
+                    reviewId="review-1"
+                    initialChatId="chat-1"
+                    onCitationClick={vi.fn()}
+                />
+                <ToastViewportUI />
+            </>,
+        );
+        await screen.findByRole("button", { name: "Current draft" });
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+        const input = await screen.findByRole("textbox");
+        await user.clear(input);
+        await user.type(input, "Renamed thread{Enter}");
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't rename this chat");
+        expect(
+            await screen.findByRole("button", { name: "Current draft" }),
+        ).toBeVisible();
+    });
+
+    it("reports a chat history that could not be loaded", async () => {
+        vi.mocked(getTabularChats).mockRejectedValue(new Error("boom"));
+        render(
+            <>
+                <TRChatPanel reviewId="review-1" onCitationClick={vi.fn()} />
+                <ToastViewportUI />
+            </>,
+        );
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't load your chat history");
+        expect(
+            within(alert).getByRole("button", { name: "Retry" }),
+        ).toBeVisible();
+    });
+
+    it("reports a transcript that could not be loaded instead of showing an empty chat", async () => {
+        vi.mocked(getTabularChatMessages).mockRejectedValue(new Error("boom"));
+        render(
+            <>
+                <TRChatPanel
+                    reviewId="review-1"
+                    initialChatId="chat-1"
+                    onCitationClick={vi.fn()}
+                />
+                <ToastViewportUI />
+            </>,
+        );
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't load this chat");
     });
 });

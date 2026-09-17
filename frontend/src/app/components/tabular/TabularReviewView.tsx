@@ -79,6 +79,10 @@ import { TRChatPanel } from "./TRChatPanel";
 import { TabularReviewDetailsModal } from "./TabularReviewDetailsModal";
 import { exportTabularReviewToExcel } from "./exportToExcel";
 import { readSseFrames } from "@/app/lib/sse";
+import {
+    UserVisibleError,
+    notifyError,
+} from "@/app/lib/userFacingError";
 import { useSidebar } from "@/app/contexts/SidebarContext";
 import { PageHeader } from "../shared/PageHeader";
 import { TableToolbar } from "../shared/TableToolbar";
@@ -148,9 +152,6 @@ export function TRView({ reviewId, projectId }: Props) {
     const [uploadingDroppedFilenames, setUploadingDroppedFilenames] = useState<
         string[]
     >([]);
-    const [dropUploadWarning, setDropUploadWarning] = useState<string | null>(
-        null,
-    );
     const searchParams = useSearchParams();
     const initialChatParamRef = useRef<string | null>(searchParams.get("chat"));
     const [chatOpen, setChatOpen] = useState(!!initialChatParamRef.current);
@@ -248,11 +249,35 @@ export function TRView({ reviewId, projectId }: Props) {
                         cells.some((c) => c.status === "generating")
                     ) {
                         resumeGenerationStream().catch((err) =>
-                            console.error("Generation resume failed", err),
+                            notifyError(err, {
+                                action: "reconnect to the running review",
+                                fallback:
+                                    "Mike lost contact with the run in progress. Results already saved are still here.",
+                                dedupeKey: `tr-resume:${reviewId}`,
+                                onRetry: () => {
+                                    void resumeGenerationStream().catch(
+                                        () => {
+                                            // Reported by the toast the retry raises.
+                                        },
+                                    );
+                                },
+                            }),
                         );
                     }
                 },
-            ),
+            )
+                // Without this the rejection was unhandled: the spinner
+                // cleared and the review read as empty rather than unloaded.
+                .catch((error) => {
+                    if (cancelled) return;
+                    notifyError(error, {
+                        action: "load this review",
+                        dedupeKey: `tr-review:${reviewId}`,
+                        onRetry: () => {
+                            void loadLatestReview();
+                        },
+                    });
+                }),
         ];
         if (projectId) {
             fetches.push(
@@ -260,7 +285,16 @@ export function TRView({ reviewId, projectId }: Props) {
                     .then((loaded) => {
                         if (!cancelled) setProject(loaded);
                     })
-                    .catch(() => {}),
+                    .catch((error) => {
+                        if (cancelled) return;
+                        // The project supplies the breadcrumb and the admin
+                        // contacts shown on permission refusals, so silence
+                        // here reads as "this review has no project".
+                        notifyError(error, {
+                            action: "load this review's project",
+                            dedupeKey: `tr-project:${projectId}`,
+                        });
+                    }),
             );
         } else {
             fetches.push(
@@ -268,8 +302,15 @@ export function TRView({ reviewId, projectId }: Props) {
                     .then((loaded) => {
                         if (!cancelled) setAvailableProjects(loaded);
                     })
-                    .catch(() => {
-                        if (!cancelled) setAvailableProjects([]);
+                    .catch((error) => {
+                        if (cancelled) return;
+                        setAvailableProjects([]);
+                        // An empty picker is indistinguishable from "you have
+                        // no projects", which is the wrong thing to conclude.
+                        notifyError(error, {
+                            action: "load your projects",
+                            dedupeKey: "tr-project-list",
+                        });
                     }),
             );
         }
@@ -307,8 +348,16 @@ export function TRView({ reviewId, projectId }: Props) {
             const access = await getTabularReviewAccess(reviewId);
             setGrants(access.grants);
         } catch (error) {
-            console.error("[tabular review] failed to load access", error);
             setGrants([]);
+            // An empty grant list looks like "shared with nobody", which
+            // would invite re-sharing a review that is already shared.
+            notifyError(error, {
+                action: "load who this review is shared with",
+                dedupeKey: `tr-access:${reviewId}`,
+                onRetry: () => {
+                    void refreshGrants();
+                },
+            });
         }
     }, [reviewId]);
 
@@ -352,6 +401,10 @@ export function TRView({ reviewId, projectId }: Props) {
                 setReviewContacts(people.owner ? [people.owner] : []);
             })
             .catch(() => {
+                // Deliberately silent: this only decorates a refusal popup
+                // that is already on screen with a name to ask. Stacking a
+                // second failure on top of a refusal the user is reading
+                // would bury the refusal itself.
                 if (!cancelled) setReviewContacts([]);
             });
         return () => {
@@ -414,6 +467,7 @@ export function TRView({ reviewId, projectId }: Props) {
         setUploadingDroppedFilenames(files.map((file) => file.name));
         const uploaded: Document[] = [];
         let failedNames: string[] = [];
+        let dropUploadError: unknown = null;
         try {
             const documentIds = documents.map((document) => document.id);
             for (const file of files) {
@@ -426,8 +480,8 @@ export function TRView({ reviewId, projectId }: Props) {
                 documentIds.push(document.id);
             }
         } catch (err) {
-            console.error("Tabular review document drop upload failed", err);
             failedNames = files.slice(uploaded.length).map((f) => f.name);
+            dropUploadError = err;
         }
         try {
             // Each successful upload already attached itself server-side, so
@@ -435,15 +489,36 @@ export function TRView({ reviewId, projectId }: Props) {
             // files stay invisible until a manual reload.
             if (uploaded.length > 0) await handleAddDocuments(uploaded);
         } catch (err) {
-            console.error("Refreshing review documents failed", err);
+            notifyError(err, {
+                action: "add the uploaded files to this review",
+                fallback:
+                    "The files uploaded, but the review could not be refreshed. Reload to see them.",
+                onRetry: () => {
+                    void handleAddDocuments(uploaded).catch(() => {
+                        // Reported by the toast the retry raises.
+                    });
+                },
+            });
         } finally {
             setUploadingDroppedFilenames([]);
         }
         if (failedNames.length > 0) {
-            setDropUploadWarning(
-                failedNames.length === 1
-                    ? `"${failedNames[0]}" could not be uploaded. Please try again.`
-                    : `${failedNames.length} files could not be uploaded. Please try again.`,
+            const failedFiles = files.slice(files.length - failedNames.length);
+            notifyError(
+                new UserVisibleError(
+                    failedNames.length === 1
+                        ? `“${failedNames[0]}” could not be uploaded.`
+                        : `${failedNames.length} files could not be uploaded: ${failedNames.join(", ")}.`,
+                    { kind: "unknown", retryable: true, cause: dropUploadError },
+                ),
+                {
+                    action: `upload ${failedNames.length === 1 ? "that file" : "those files"}`,
+                    // Retry only the files that never landed, so the ones
+                    // already attached are not uploaded twice.
+                    onRetry: () => {
+                        void handleDropReviewFiles(failedFiles);
+                    },
+                },
             );
         }
     }
@@ -486,7 +561,12 @@ export function TRView({ reviewId, projectId }: Props) {
                 // cell "generating" and pick up the terminal state from the
                 // resumable stream.
                 resumeGenerationStream().catch((err) =>
-                    console.error("Generation resume failed", err),
+                    notifyError(err, {
+                        action: "follow this cell's regeneration",
+                        fallback:
+                            "The cell is still being generated, but Mike lost contact with the run. Reload to see the result.",
+                        dedupeKey: `tr-resume:${reviewId}`,
+                    }),
                 );
                 return;
             }
@@ -510,7 +590,12 @@ export function TRView({ reviewId, projectId }: Props) {
                 await loadLatestReview();
                 return;
             }
-            console.error("Regeneration failed", err);
+            notifyError(err, {
+                action: "regenerate this cell",
+                onRetry: () => {
+                    void handleRegenerateCell(rowId, colIndex);
+                },
+            });
             setCells((prev) =>
                 prev.map((c) =>
                     c.row_id === rowId && c.column_index === colIndex
@@ -563,11 +648,14 @@ export function TRView({ reviewId, projectId }: Props) {
                     );
                 }
             } catch (err) {
-                console.warn(
-                    "[TabularReviewView] failed to apply cell_update:",
-                    frame,
-                    err,
-                );
+                // One notice per review: a cell update we could not apply
+                // leaves that cell showing stale text while the run goes on.
+                notifyError(err, {
+                    action: "show a generated cell",
+                    fallback:
+                        "A result arrived that Mike couldn't display. Reload to see it.",
+                    dedupeKey: `tr-cell-update:${reviewId}`,
+                });
             }
         }
     }
@@ -711,7 +799,10 @@ export function TRView({ reviewId, projectId }: Props) {
                 // Otherwise the stream dropped on its own while the run keeps
                 // executing server-side: reconnect once before giving up. The
                 // resume borrows this run's controller, so a stop still stops.
-                console.error(
+                // Not reported: the run is still executing server-side and
+                // the reconnect below picks it up. If the reconnect also
+                // fails it throws on to the outer catch, which does report.
+                console.warn(
                     "Generation stream interrupted, reconnecting",
                     streamErr,
                 );
@@ -719,7 +810,15 @@ export function TRView({ reviewId, projectId }: Props) {
             }
         } catch (err) {
             if (!generationAbort.signal.aborted) {
-                console.error("Generation failed", err);
+                // Cells left "generating" used to be the only sign of this,
+                // and they look identical to a run still in progress.
+                notifyError(err, {
+                    action: "run this review",
+                    dedupeKey: `tr-generate:${reviewId}`,
+                    onRetry: () => {
+                        void handleGenerate();
+                    },
+                });
             }
         } finally {
             if (generationAbortRef.current === generationAbort) {
@@ -727,10 +826,15 @@ export function TRView({ reviewId, projectId }: Props) {
                     try {
                         await refreshAfterStoppedGeneration();
                     } catch (err) {
-                        console.error(
-                            "Failed to refresh the stopped tabular review",
-                            err,
-                        );
+                        notifyError(err, {
+                            action: "refresh the review after stopping it",
+                            fallback:
+                                "The run was stopped, but the table may be out of date. Reload to see where it got to.",
+                            dedupeKey: `tr-refresh:${reviewId}`,
+                            onRetry: () => {
+                                void loadLatestReview();
+                            },
+                        });
                     }
                 }
                 generationAbortRef.current = null;
@@ -749,10 +853,25 @@ export function TRView({ reviewId, projectId }: Props) {
         // ownership model: it refused org admins and members a change the
         // server accepts, and mislabelled the refusal admin-tier.
         if (!requireContent("change the tabular review model")) return;
-        const updated = await updateTabularReview(reviewId, { model });
-        setReview((current) =>
-            current ? { ...current, model: updated.model } : current,
-        );
+        const previousModel = review.model;
+        try {
+            const updated = await updateTabularReview(reviewId, { model });
+            setReview((current) =>
+                current ? { ...current, model: updated.model } : current,
+            );
+        } catch (err) {
+            // Without this the rejection was unhandled and the picker kept
+            // showing a model the review was never switched to.
+            setReview((current) =>
+                current ? { ...current, model: previousModel } : current,
+            );
+            notifyError(err, {
+                action: "change the model",
+                onRetry: () => {
+                    void handleReviewModelChange(model);
+                },
+            });
+        }
     }
 
     async function loadLatestReview() {
@@ -766,7 +885,15 @@ export function TRView({ reviewId, projectId }: Props) {
             setColumns(detail.review.columns_config || []);
             setGenerationGuard(detail.review.is_running ? "running" : null);
         } catch (err) {
-            console.error("Failed to load the latest tabular review", err);
+            // Both callers are "Check again"/"Load latest" buttons in a
+            // blocking popup that otherwise just stops responding.
+            notifyError(err, {
+                action: "load the latest version of this review",
+                dedupeKey: `tr-latest:${reviewId}`,
+                onRetry: () => {
+                    void loadLatestReview();
+                },
+            });
         } finally {
             setReloadingLatestReview(false);
         }
@@ -848,7 +975,10 @@ export function TRView({ reviewId, projectId }: Props) {
                         ),
                 ),
             );
-            console.error("Failed to save column", err);
+            notifyError(err, {
+                action: "add the column",
+                fallback: "This column could not be saved. Try again.",
+            });
         } finally {
             setSavingColumn(false);
         }
@@ -865,7 +995,13 @@ export function TRView({ reviewId, projectId }: Props) {
             await saveColumnsConfig(nextColumns);
         } catch (err) {
             setColumns(previousColumns);
-            console.error("Failed to update column", err);
+            notifyError(err, {
+                action: "save the column",
+                fallback: "This column could not be saved. Try again.",
+                onRetry: () => {
+                    void handleUpdateColumn(nextColumn);
+                },
+            });
         }
     }
 
@@ -880,7 +1016,12 @@ export function TRView({ reviewId, projectId }: Props) {
             await saveColumnsConfig(nextColumns);
         } catch (err) {
             setColumns(previousColumns);
-            console.error("Failed to delete column", err);
+            notifyError(err, {
+                action: "delete the column",
+                onRetry: () => {
+                    void handleDeleteColumn(columnIndex);
+                },
+            });
         }
     }
 
@@ -951,7 +1092,14 @@ export function TRView({ reviewId, projectId }: Props) {
             setRows(previousRows);
             setCells(previousCells);
             setSelectedRowIds(rowIdsToDelete);
-            console.error("Failed to delete tabular review documents", err);
+            notifyError(err, {
+                action:
+                    rowIdsToDelete.length === 1
+                        ? "remove the document"
+                        : "remove those documents",
+                fallback:
+                    "The documents were not removed and are still selected.",
+            });
         }
     }
 
@@ -984,7 +1132,12 @@ export function TRView({ reviewId, projectId }: Props) {
             }
             setCells(previousCells);
             setSelectedRowIds(previousSelectedRowIds);
-            console.error("Failed to clear tabular review results", err);
+            notifyError(err, {
+                action: "clear the results",
+                onRetry: () => {
+                    void clearResultsForRows(rowIds);
+                },
+            });
         }
     }
 
@@ -1105,7 +1258,10 @@ export function TRView({ reviewId, projectId }: Props) {
             }, 250);
         } catch (err) {
             setDeleteReviewStatus("idle");
-            console.error("Failed to delete tabular review", err);
+            // The confirm dialog stays open, so its button is the retry.
+            notifyError(err, {
+                action: "delete this review",
+            });
         }
     }
 
@@ -1134,7 +1290,13 @@ export function TRView({ reviewId, projectId }: Props) {
                         rows.map((row) => row.id),
                     );
                 } catch (err) {
-                    console.error("Failed to clear old tabular cells", err);
+                    // The new columns are saved either way; say so rather
+                    // than leaving stale answers under new questions.
+                    notifyError(err, {
+                        action: "clear the previous results",
+                        fallback:
+                            "The workflow's columns were applied, but the old results could not be cleared. Clear them from the Actions menu.",
+                    });
                 }
             }
             const detail = await getTabularReview(reviewId);
@@ -1145,7 +1307,13 @@ export function TRView({ reviewId, projectId }: Props) {
         } catch (err) {
             setColumns(previousColumns);
             setCells(previousCells);
-            console.error("Failed to apply workflow", err);
+            notifyError(err, {
+                action: "apply the workflow",
+                supportNote: `Workflow ${workflow.metadata.title}`,
+                onRetry: () => {
+                    void handleApplyWorkflow(workflow);
+                },
+            });
         } finally {
             setApplyingWorkflow(false);
         }
@@ -1851,12 +2019,6 @@ export function TRView({ reviewId, projectId }: Props) {
             <PermissionDeniedPopup
                 {...permissionDeniedProps(ownerOnlyAction, deniedContacts)}
                 onClose={() => setOwnerOnlyAction(null)}
-            />
-
-            <WarningPopup
-                open={dropUploadWarning !== null}
-                onClose={() => setDropUploadWarning(null)}
-                message={dropUploadWarning}
             />
 
             <ApiKeyMissingPopup

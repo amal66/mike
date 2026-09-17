@@ -35,6 +35,7 @@ import {
 import { HistorySkeuoIcon } from "@/app/components/shared/HistorySkeuoIcon";
 import { ProjectSvgIcon } from "@/app/components/shared/FolderSvgIcon";
 import { listProjectSummaries } from "@/app/lib/mikeApi";
+import { notifyError } from "@/app/lib/userFacingError";
 import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import {
@@ -103,6 +104,10 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     const [loadingMoreRecentProjects, setLoadingMoreRecentProjects] =
         useState(false);
     const loadingMoreRecentProjectsRef = useRef(false);
+    const [recentProjectsAttempt, setRecentProjectsAttempt] = useState(0);
+    // "Retry" re-enters the latest paging callback; a callback cannot
+    // reference itself.
+    const retryLoadMoreRecentProjectsRef = useRef<() => void>(() => {});
     const displayedRecentProjects =
         recentProjects ??
         (userId ? recentProjectsCache.get(userId)?.projects : undefined) ??
@@ -141,14 +146,22 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 setRecentProjects(next);
                 setHasMoreRecentProjects(hasMore);
             })
-            .catch(() => {
+            .catch((error) => {
                 if (controller.signal.aborted) return;
                 setRecentProjects([]);
                 setHasMoreRecentProjects(false);
+                // An empty Projects section reads as "you have no projects",
+                // which is the one thing this failure does not mean.
+                notifyError(error, {
+                    action: "load your recent projects",
+                    dedupeKey: "sidebar-recent-projects",
+                    onRetry: () =>
+                        setRecentProjectsAttempt((attempt) => attempt + 1),
+                });
             });
 
         return () => controller.abort();
-    }, [userId]);
+    }, [recentProjectsAttempt, userId]);
 
     const loadMoreRecentProjects = useCallback(async () => {
         if (
@@ -185,13 +198,24 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
             setHasMoreRecentProjects(
                 projects.length > RECENT_PROJECT_PAGE_SIZE,
             );
-        } catch {
-            // Keep the current page and allow the next scroll to retry.
+        } catch (error) {
+            // The current page survives; the user is told the next one did
+            // not arrive instead of scrolling at a list that stopped growing.
+            notifyError(error, {
+                action: "load more projects",
+                dedupeKey: "sidebar-recent-projects-more",
+                onRetry: () => retryLoadMoreRecentProjectsRef.current(),
+            });
         } finally {
             loadingMoreRecentProjectsRef.current = false;
             setLoadingMoreRecentProjects(false);
         }
     }, [hasMoreRecentProjects, recentProjects, userId]);
+
+    useEffect(() => {
+        retryLoadMoreRecentProjectsRef.current = () =>
+            void loadMoreRecentProjects();
+    }, [loadMoreRecentProjects]);
 
     const handleRecentProjectsScroll = useCallback(
         (event: UIEvent<HTMLDivElement>) => {
@@ -215,6 +239,21 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         if (isOpen) setShouldAnimate(true);
         onToggle();
     };
+
+    // A failed sign-out leaves the session live, which the user must know
+    // about — on a shared machine especially. Signing out again is safe, so
+    // the toast carries a real Retry.
+    function handleSignOut() {
+        void signOut()
+            .then(() => router.push("/"))
+            .catch((error) => {
+                notifyError(error, {
+                    action: "sign out",
+                    dedupeKey: "sign-out",
+                    onRetry: handleSignOut,
+                });
+            });
+    }
 
     useEffect(() => {
         const handleClickOutside = () => setIsDropdownOpen(false);
@@ -660,13 +699,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         type="button"
                                         onClick={() => {
                                             setIsDropdownOpen(false);
-                                            void signOut()
-                                                .then(() => router.push("/"))
-                                                .catch(() => {
-                                                    window.alert(
-                                                        "Unable to sign out. Please try again.",
-                                                    );
-                                                });
+                                            handleSignOut();
                                         }}
                                         className={cn(
                                             "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-gray-700",

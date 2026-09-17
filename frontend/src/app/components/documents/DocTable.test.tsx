@@ -1,0 +1,194 @@
+import { useState } from "react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import {
+    DocTable,
+    type DocTableFolder,
+    type DocTableSelectionActions,
+} from "./DocTable";
+import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
+import type { Document } from "@/app/components/shared/types";
+
+vi.mock("@/app/contexts/AuthContext", () => ({
+    useAuth: () => ({ user: { id: "user-1", email: "me@example.com" } }),
+}));
+
+function makeDoc(id: string, filename: string): Document {
+    return {
+        id,
+        filename,
+        file_type: "pdf",
+        size_bytes: 10,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        user_id: "user-1",
+        folder_id: null,
+        status: "ready",
+    } as unknown as Document;
+}
+
+function makeOperations(
+    overrides: Partial<Parameters<typeof DocTable>[0]["operations"]> = {},
+) {
+    return {
+        uploadDocument: vi.fn(),
+        refreshCollection: vi.fn().mockResolvedValue(undefined),
+        createFolder: vi.fn(),
+        resolveFolderPath: vi.fn(),
+        renameFolder: vi.fn(),
+        deleteFolder: vi.fn(),
+        moveFolder: vi.fn(),
+        moveDocument: vi.fn(),
+        renameDocument: vi.fn(),
+        ...overrides,
+    } as Parameters<typeof DocTable>[0]["operations"];
+}
+
+function Harness({
+    documents: initialDocuments,
+    operations,
+    onActions,
+    onExpandFolder,
+    folderViewId,
+}: {
+    documents: Document[];
+    operations: Parameters<typeof DocTable>[0]["operations"];
+    onActions?: (actions: DocTableSelectionActions | null) => void;
+    onExpandFolder?: (folderId: string) => Promise<void>;
+    folderViewId?: string | null;
+}) {
+    const [documents, setDocuments] = useState(initialDocuments);
+    const [folders, setFolders] = useState<DocTableFolder[]>([
+        {
+            id: "folder-1",
+            name: "Contracts",
+            parent_folder_id: null,
+        } as DocTableFolder,
+    ]);
+    return (
+        <>
+            <DocTable
+                scopeKey="test"
+                documents={documents}
+                setDocuments={setDocuments}
+                folders={folders}
+                setFolders={setFolders}
+                loading={false}
+                search=""
+                operations={operations}
+                emptyStateTitle="No documents"
+                canDo={() => true}
+                onSelectionActionsChange={onActions}
+                onExpandFolder={onExpandFolder}
+                folderViewId={folderViewId}
+            />
+            <ToastViewportUI />
+        </>
+    );
+}
+
+describe("DocTable failure reporting", () => {
+    beforeEach(() => {
+        clearToasts();
+    });
+    afterEach(() => {
+        clearToasts();
+        vi.clearAllMocks();
+    });
+
+    it("restores the rows and names the files when a bulk delete fails", async () => {
+        const user = userEvent.setup();
+        let actions: DocTableSelectionActions | null = null;
+        const bulkDeleteDocuments = vi
+            .fn()
+            .mockRejectedValue(new Error("boom"));
+
+        render(
+            <Harness
+                documents={[
+                    makeDoc("doc-1", "Lease.pdf"),
+                    makeDoc("doc-2", "NDA.pdf"),
+                ]}
+                operations={makeOperations({ bulkDeleteDocuments })}
+                onActions={(next) => {
+                    actions = next;
+                }}
+            />,
+        );
+
+        await user.click(screen.getByLabelText("Select Lease.pdf"));
+        await waitFor(() => expect(actions).not.toBeNull());
+        await actions!.onDelete();
+
+        // Confirm the destructive action the same way a user would.
+        await user.click(
+            await screen.findByRole("button", { name: /^delete$/i }),
+        );
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't delete the document");
+        expect(alert).toHaveTextContent("Lease.pdf");
+        // The optimistically removed row is back in the table.
+        expect(screen.getByText("Lease.pdf")).toBeInTheDocument();
+        expect(
+            screen.getByRole("button", { name: "Retry" }),
+        ).toBeInTheDocument();
+    });
+
+    it("puts a document back in its folder when moving it to the root fails", async () => {
+        const user = userEvent.setup();
+        let actions: DocTableSelectionActions | null = null;
+        const inFolder = {
+            ...makeDoc("doc-1", "Lease.pdf"),
+            folder_id: "folder-1",
+        };
+        const moveDocument = vi.fn().mockRejectedValue(new Error("boom"));
+
+        render(
+            <Harness
+                documents={[inFolder]}
+                folderViewId="folder-1"
+                operations={makeOperations({ moveDocument })}
+                onActions={(next) => {
+                    actions = next;
+                }}
+            />,
+        );
+
+        await user.click(screen.getByLabelText("Select Lease.pdf"));
+        await waitFor(() => expect(actions).not.toBeNull());
+        await actions!.onRemoveFromFolder();
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't move the document");
+        expect(alert).toHaveTextContent("Lease.pdf");
+        expect(moveDocument).toHaveBeenCalledWith("doc-1", null);
+    });
+
+    it("reports a failed download of the selection with a retry", async () => {
+        const user = userEvent.setup();
+        let actions: DocTableSelectionActions | null = null;
+
+        render(
+            <Harness
+                documents={[makeDoc("doc-1", "Lease.pdf")]}
+                operations={makeOperations()}
+                onActions={(next) => {
+                    actions = next;
+                }}
+            />,
+        );
+
+        await user.click(screen.getByLabelText("Select Lease.pdf"));
+        await waitFor(() => expect(actions).not.toBeNull());
+        await actions!.onDownload();
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Couldn't download the selected files");
+        expect(
+            screen.getByRole("button", { name: "Retry" }),
+        ).toBeInTheDocument();
+    });
+});
