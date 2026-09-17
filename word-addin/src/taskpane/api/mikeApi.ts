@@ -9,7 +9,8 @@
  * directly) so that importing any of them runs the side-effecting
  * configureMikeApiClient() below before the first request leaves.
  */
-import { configureMikeApiClient } from "./client";
+import { configureMikeApiClient, responseError } from "./client";
+import { notifySessionExpired } from "../lib/notify";
 import type { Chat, Document, Message, WordDocumentEdit } from "../types";
 import { refreshSession } from "../auth/session";
 import {
@@ -35,7 +36,11 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 const fetchWithRefresh: typeof fetch = async (input, init) => {
   const res = await fetch(input, { ...init, credentials: "include" });
   if (res.status !== 401) return res;
-  await refreshSession().catch(() => null);
+  const user = await refreshSession().catch(() => null);
+  // A refresh that comes back empty means the session is really gone. Say so
+  // once (deduped) instead of letting every in-flight call raise its own
+  // "Permission denied" — the caller still sees the 401 it asked for.
+  if (!user) notifySessionExpired();
   return res;
 };
 
@@ -101,10 +106,7 @@ export async function listProjectDocuments(
     },
   );
   if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `GET /projects/${projectId}/documents failed (${res.status}): ${body}`,
-    );
+    throw await responseError(res, `/projects/${projectId}/documents`);
   }
   return res.json() as Promise<Document[]>;
 }
@@ -121,6 +123,9 @@ export async function getOllamaModels(): Promise<OllamaModelOption[]> {
     cache: "no-store",
     headers: { Accept: "application/json", ...(await getAuthHeaders()) },
   });
+  // Local models are an optional extra: when the endpoint is absent or the
+  // Ollama host is down there is simply no "Local" group to offer, and
+  // nothing the user asked for has failed.
   if (!res.ok) return [];
   const body = (await res.json()) as { models?: OllamaModelOption[] };
   return body.models ?? [];
@@ -208,14 +213,6 @@ function normalizeWordDocumentEdits(value: unknown): WordDocumentEdit[] {
   });
 }
 
-async function throwWordChatResponseError(
-  response: Response,
-  fallback: string,
-): Promise<never> {
-  const body = await response.text().catch(() => "");
-  throw new Error(body || `${fallback} (${response.status}).`);
-}
-
 export async function listCloudWordChats(
   documentId: string,
   limit: number,
@@ -232,9 +229,7 @@ export async function listCloudWordChats(
     signal,
     headers: { Accept: "application/json", ...(await getAuthHeaders()) },
   });
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to load Word chats");
-  }
+  if (!res.ok) throw await responseError(res);
   return res.json() as Promise<Chat[]>;
 }
 
@@ -250,9 +245,7 @@ export async function getCloudWordChat(
       headers: { Accept: "application/json", ...(await getAuthHeaders()) },
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to open Word chat");
-  }
+  if (!res.ok) throw await responseError(res);
   const raw = (await res.json()) as {
     chat: Chat;
     messages: WordChatServerMessage[];
@@ -301,9 +294,7 @@ export async function updateCloudWordChatModel(
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to save Word chat model");
-  }
+  if (!res.ok) throw await responseError(res);
 }
 
 export async function updateCloudWordChatReasoning(
@@ -324,9 +315,7 @@ export async function updateCloudWordChatReasoning(
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to save reasoning level");
-  }
+  if (!res.ok) throw await responseError(res);
 }
 
 export async function createCloudWordDocumentEdit(args: {
@@ -361,9 +350,7 @@ export async function createCloudWordDocumentEdit(args: {
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to save Word edit");
-  }
+  if (!res.ok) throw await responseError(res);
   const edits = normalizeWordDocumentEdits([await res.json()]);
   const edit = edits[0];
   if (!edit) throw new Error("Word edit response was invalid.");
@@ -390,7 +377,5 @@ export async function updateCloudWordDocumentEdit(args: {
       keepalive: true,
     },
   );
-  if (!res.ok) {
-    await throwWordChatResponseError(res, "Failed to update Word edit");
-  }
+  if (!res.ok) throw await responseError(res);
 }
