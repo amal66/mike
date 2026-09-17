@@ -611,6 +611,71 @@ describe("useAssistantChat SSE parsing", () => {
         errorSpy.mockRestore();
     });
 
+    it("raises a retryable notice when the server sends an error event", async () => {
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        clearToasts();
+        fetchMock.mockResolvedValueOnce(
+            sseResponse([
+                'data: {"type":"error","message":"provider exploded: stack"}\n\n',
+            ]),
+        );
+        fetchMock.mockResolvedValueOnce(
+            sseResponse(['data: {"type":"content_delta","text":"Second go."}\n\n']),
+        );
+        const { result } = renderHook(() => ({
+            chat: useAssistantChat(),
+            toasts: useToasts(),
+        }));
+
+        await act(async () => {
+            await result.current.chat.handleChat(userMessage("why?"));
+        });
+
+        const toast = result.current.toasts[0];
+        expect(toast?.title).toBe("Couldn't get a response");
+        expect(toast?.message).toBe(
+            "Mike couldn't finish this answer. Try again.",
+        );
+        expect(String(toast?.message)).not.toContain("provider exploded");
+        // A server-side failure is one the user cannot fix: support rides along.
+        expect(toast?.supportHref).toMatch(/^mailto:will@mikeoss\.com\?/);
+        const retry = toast?.actions?.find((a) => a.label === "Retry");
+        expect(retry).toBeDefined();
+
+        await act(async () => {
+            await retry?.onClick();
+        });
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const answered = result.current.chat.messages.findLast(
+            (m) => m.role === "assistant",
+        );
+        expect(answered?.error).toBeUndefined();
+        expect(
+            result.current.chat.messages.filter((m) => m.role === "user"),
+        ).toHaveLength(1);
+        errorSpy.mockRestore();
+    });
+
+    it("keeps a safe server message verbatim in the retry notice", async () => {
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        clearToasts();
+        fetchMock.mockResolvedValueOnce(
+            sseResponse([
+                'data: {"type":"error","message":"Select a saved model first.","safe_to_display":true}\n\n',
+            ]),
+        );
+        const { result } = renderHook(() => ({
+            chat: useAssistantChat(),
+            toasts: useToasts(),
+        }));
+        await act(async () => {
+            await result.current.chat.handleChat(userMessage("why?"));
+        });
+        expect(result.current.toasts[0]?.message).toBe("Select a saved model first.");
+        errorSpy.mockRestore();
+    });
+
     it("does nothing for a whitespace-only user message", async () => {
         const { result } = renderHook(() => useAssistantChat());
         let returned: string | null = "sentinel";

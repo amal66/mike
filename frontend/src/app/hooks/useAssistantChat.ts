@@ -8,7 +8,11 @@ import { readSseFrames } from "@/app/lib/sse";
 import { reportError } from "@/app/lib/errorReporting";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { isPanelDocument } from "@/app/components/shared/types";
-import { describeError, notifyError } from "@/app/lib/userFacingError";
+import {
+  UserVisibleError,
+  describeError,
+  notifyError,
+} from "@/app/lib/userFacingError";
 import type {
   AssistantEvent,
   Citation,
@@ -552,6 +556,24 @@ export function useAssistantChat({
                 events: snapshot,
                 error: message,
               }));
+              // The bubble records that this turn failed; the toast is where
+              // the user gets a way back. A server-side failure is one the
+              // user cannot fix, so Contact support rides along with Retry.
+              notifyError(
+                new UserVisibleError(
+                  safeToDisplay
+                    ? message
+                    : "Mike couldn't finish this answer. Try again.",
+                  { kind: "server", retryable: true },
+                ),
+                {
+                  action: "get a response",
+                  dedupeKey: "assistant-chat",
+                  onRetry: async () => {
+                    await retryLastMessage();
+                  },
+                },
+              );
               setIsResponseLoading(false);
               setIsLoadingCitations(false);
               continue;
