@@ -100,7 +100,7 @@ describe("knownErrorCodeMessage", () => {
 describe("notifyError", () => {
     beforeEach(() => {
         clearToasts();
-        vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.spyOn(console, "warn").mockImplementation(() => {});
     });
     afterEach(() => {
         clearToasts();
@@ -192,7 +192,7 @@ describe("notifyError", () => {
 describe("notifyError options", () => {
     beforeEach(() => {
         clearToasts();
-        vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.spyOn(console, "warn").mockImplementation(() => {});
     });
     afterEach(() => {
         clearToasts();

@@ -80,8 +80,11 @@ export function networkFailure(
   error: unknown,
   request: { method: string; url: string },
 ): NetworkUnreachableError {
+  // warn, not error: the transport failure was already reported by the
+  // caller, and the console bridge would turn this string into a second,
+  // undifferentiated event.
   if (process.env.NODE_ENV !== "production") {
-    console.error(
+    console.warn(
       `[network] ${request.method} ${request.url} failed —`,
       errorDetail(error) || error,
     );
