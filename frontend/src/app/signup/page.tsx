@@ -14,15 +14,64 @@ import {
     authGlassCardClassName,
     authInputClassName,
 } from "@/app/components/auth/authStyles";
-import { knownErrorCodeMessage } from "@/app/lib/userFacingError";
+import {
+    UserVisibleError,
+    describeError,
+    supportMailtoFor,
+    type UserFacingError,
+} from "@/app/lib/userFacingError";
 
+/** bcrypt truncates past 72 bytes, so GoTrue refuses anything longer. */
+const MAX_PASSWORD_LENGTH = 72;
+const maximumPasswordMessage = `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
+const WEAK_PASSWORD_MESSAGE = `Choose a stronger password: at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers, and symbols.`;
+
+/** A failure the form found itself, so the text is already user-facing. */
+function localSignupError(message: string): UserFacingError {
+    return describeError(
+        new UserVisibleError(message, { kind: "validation" }),
+        { action: "create your account" },
+    );
+}
+
+/**
+ * Keyed by the `code` GoTrue returns through `/api/auth/signup`. Anything
+ * not listed falls through to `describeError` so a 429, a 5xx, or a dropped
+ * connection still says what actually happened.
+ */
 const SIGNUP_ERROR_MESSAGES = {
-    user_already_exists: "An account with this email already exists.",
-    email_exists: "An account with this email already exists.",
+    user_already_exists:
+        "An account with this email already exists. Log in instead.",
+    email_exists: "An account with this email already exists. Log in instead.",
+    email_address_invalid: "Enter a valid email address.",
+    email_address_not_authorized:
+        "Mike can't send email to this address. Use a different one.",
+    validation_failed: "Check your email address and password and try again.",
+    invalid_request: "Check your email address and password and try again.",
+    signup_disabled: "New accounts aren't open right now.",
+    captcha_failed:
+        "The security check didn't pass. Reload the page and try again.",
     over_email_send_rate_limit:
-        "Too many signup emails were requested. Please wait and try again.",
-    weak_password: "Choose a stronger password and try again.",
+        "Too many signup emails have been requested. Wait a few minutes and try again.",
+    over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
+    request_timeout: "The signup request timed out. Try again.",
+    weak_password: WEAK_PASSWORD_MESSAGE,
 } as const;
+
+const TOO_MANY_ATTEMPTS_MESSAGE =
+    "Too many attempts. Wait a moment and try again.";
+
+/** Classify a signup failure into text a person can act on. */
+function describeSignupError(error: unknown): UserFacingError {
+    const described = describeError(error, {
+        action: "create your account",
+        codeMessages: SIGNUP_ERROR_MESSAGES,
+        fallback: "Unable to create your account right now. Try again.",
+    });
+    return described.kind === "rate_limited"
+        ? { ...described, message: TOO_MANY_ATTEMPTS_MESSAGE }
+        : described;
+}
 import {
     MIN_PASSWORD_LENGTH,
     minimumPasswordMessage,
@@ -39,7 +88,7 @@ function SignupContent() {
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<UserFacingError | null>(null);
     const [success, setSuccess] = useState(false);
     const isAccountCreatedPreview =
         process.env.NODE_ENV !== "production" &&
@@ -65,14 +114,20 @@ function SignupContent() {
 
         // Validate passwords match
         if (password !== confirmPassword) {
-            setError("Passwords do not match");
+            setError(localSignupError("The two passwords don't match."));
             setLoading(false);
             return;
         }
 
-        // Validate password length
+        // Validate password length. The upper bound is bcrypt's: GoTrue
+        // rejects anything longer, so say so before the round trip.
         if (password.length < MIN_PASSWORD_LENGTH) {
-            setError(minimumPasswordMessage);
+            setError(localSignupError(`${minimumPasswordMessage}.`));
+            setLoading(false);
+            return;
+        }
+        if (password.length > MAX_PASSWORD_LENGTH) {
+            setError(localSignupError(maximumPasswordMessage));
             setLoading(false);
             return;
         }
@@ -94,14 +149,8 @@ function SignupContent() {
             } else {
                 router.push("/signup/check-email");
             }
-        } catch (error: unknown) {
-            setError(
-                knownErrorCodeMessage(
-                    error,
-                    SIGNUP_ERROR_MESSAGES,
-                    "Unable to create your account right now. Please try again.",
-                ),
-            );
+        } catch (caught: unknown) {
+            setError(describeSignupError(caught));
         } finally {
             setLoading(false);
         }
@@ -197,8 +246,22 @@ function SignupContent() {
                         </div>
 
                         {error && (
-                            <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
-                                {error}
+                            <div
+                                role="alert"
+                                className="text-red-600 text-sm bg-red-50 p-3 rounded"
+                            >
+                                {error.message}
+                                {error.supportable && (
+                                    <a
+                                        href={supportMailtoFor(
+                                            error,
+                                            "Failed to create an account.",
+                                        )}
+                                        className="ml-2 underline underline-offset-2"
+                                    >
+                                        Contact support
+                                    </a>
+                                )}
                             </div>
                         )}
 

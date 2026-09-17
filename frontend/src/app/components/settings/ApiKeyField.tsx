@@ -6,11 +6,15 @@ import {
   MfaVerificationPopup,
   needsMfaVerification,
 } from "@/app/components/popups/MfaVerificationPopup";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
 import { isMfaRequiredError } from "@/app/lib/mikeApi";
+import {
+  UserVisibleError,
+  notifyError,
+  notifySuccess,
+} from "@/app/lib/userFacingError";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
 
 // The backend never returns saved keys, so the mask is a fixed-length stand-in.
@@ -36,7 +40,6 @@ export function ApiKeyField({
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [pendingMfaAction, setPendingMfaAction] = useState<
     "save" | "remove" | null
   >(null);
@@ -61,13 +64,23 @@ export function ApiKeyField({
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
       } else {
-        setWarningMessage(`Failed to save ${label}. Please try again.`);
+        // The caller reports failure as `false`, with no error to classify.
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't save your ${label}. The key was not changed.`,
+            { retryable: true },
+          ),
+          { action: `save your ${label}`, onRetry: () => void handleSave() },
+        );
       }
     } catch (error) {
       if (isMfaRequiredError(error)) {
         setPendingMfaAction("save");
       } else {
-        setWarningMessage(`Failed to save ${label}. Please try again.`);
+        notifyError(error, {
+          action: `save your ${label}`,
+          onRetry: () => void handleSave(),
+        });
       }
     } finally {
       setIsSaving(false);
@@ -82,14 +95,28 @@ export function ApiKeyField({
         return;
       }
       const ok = await onRemove();
-      if (!ok) {
-        setWarningMessage(`Failed to remove ${label}. Please try again.`);
+      if (ok) {
+        notifySuccess(`${label} removed.`);
+      } else {
+        notifyError(
+          new UserVisibleError(
+            `Mike couldn't remove your ${label}. The key is still saved.`,
+            { retryable: true },
+          ),
+          {
+            action: `remove your ${label}`,
+            onRetry: () => void handleRemove(),
+          },
+        );
       }
     } catch (error) {
       if (isMfaRequiredError(error)) {
         setPendingMfaAction("remove");
       } else {
-        setWarningMessage(`Failed to remove ${label}. Please try again.`);
+        notifyError(error, {
+          action: `remove your ${label}`,
+          onRetry: () => void handleRemove(),
+        });
       }
     } finally {
       setIsSaving(false);
@@ -171,12 +198,6 @@ export function ApiKeyField({
         open={!!pendingMfaAction}
         onCancel={() => setPendingMfaAction(null)}
         onVerified={() => void handleMfaVerified()}
-      />
-      <WarningPopup
-        open={!!warningMessage}
-        title="API key update failed"
-        message={warningMessage}
-        onClose={() => setWarningMessage(null)}
       />
     </>
   );

@@ -8,6 +8,7 @@ import { readSseFrames } from "@/app/lib/sse";
 import { reportError } from "@/app/lib/errorReporting";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { isPanelDocument } from "@/app/components/shared/types";
+import { describeError, notifyError } from "@/app/lib/userFacingError";
 import type {
   AssistantEvent,
   Citation,
@@ -88,6 +89,12 @@ export function useAssistantChat({
   } = useChatHistoryContext();
 
   const [messages, setMessages] = useState<Message[]>(initialMessages);
+  // Mirrors `messages` for the async send path: a turn started from a toast
+  // Retry runs long after the render that raised it.
+  const messagesRef = useRef<Message[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const [isResponseLoading, setIsResponseLoading] = useState(false);
   const [isLoadingCitations, setIsLoadingCitations] = useState(false);
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
@@ -291,29 +298,60 @@ export function useAssistantChat({
     return true;
   };
 
+  type ChatTurnOptions = {
+    displayedDoc?: { filename: string; documentId: string } | null;
+    askInputsResponse?: Extract<
+      AssistantEvent,
+      { type: "ask_inputs_response" }
+    >;
+  };
+
+  /** The last turn sent, so a failed answer can be re-sent from the toast. */
+  const lastTurnRef = useRef<{
+    message: Message;
+    opts?: ChatTurnOptions;
+  } | null>(null);
+
+  const retryLastMessage = async (): Promise<string | null> => {
+    const last = lastTurnRef.current;
+    if (!last) return null;
+    // Drop the failed assistant bubble before re-sending, or the retry would
+    // stack a second empty turn under it and repeat the user's question in
+    // the request. `messagesRef` is updated here too so `handleChat` reads
+    // the trimmed list without waiting for a React commit.
+    const trimmed = [...messagesRef.current];
+    while (
+      trimmed.length > 0 &&
+      trimmed[trimmed.length - 1].role === "assistant"
+    ) {
+      trimmed.pop();
+    }
+    messagesRef.current = trimmed;
+    setMessages(trimmed);
+    return handleChat(last.message, last.opts);
+  };
+
   const handleChat = async (
     message: Message,
-    opts?: {
-      displayedDoc?: { filename: string; documentId: string } | null;
-      askInputsResponse?: Extract<
-        AssistantEvent,
-        { type: "ask_inputs_response" }
-      >;
-    },
+    opts?: ChatTurnOptions,
   ): Promise<string | null> => {
     if (!message.content.trim()) return null;
 
+    lastTurnRef.current = { message, opts };
+
     setIsResponseLoading(true);
 
-    const lastMessage = messages[messages.length - 1];
+    // The committed list, or the one a retry just trimmed.
+    const currentMessages = messagesRef.current;
+    const lastMessage = currentMessages[currentMessages.length - 1];
     const isMessageAlreadyAdded =
       lastMessage &&
       lastMessage.role === "user" &&
       lastMessage.content === message.content;
 
     const apiMessagesForTurn: Message[] = isMessageAlreadyAdded
-      ? messages
-      : [...messages, message];
+      ? currentMessages
+      : [...currentMessages, message];
     const askInputsResponseEvent = opts?.askInputsResponse ?? null;
     const optimisticResponseEvent = askInputsResponseEvent;
     const userInputThinkingEvent = optimisticResponseEvent
@@ -324,7 +362,7 @@ export function useAssistantChat({
       : null;
     const displayMessages: Message[] = optimisticResponseEvent
       ? (() => {
-          const updated = messages.map((item) => ({
+          const updated = currentMessages.map((item) => ({
             ...item,
             events: item.events ? [...item.events] : item.events,
           }));
@@ -434,7 +472,13 @@ export function useAssistantChat({
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});
-        throw new Error(`Chat request failed with status ${response.status}`);
+        // Carry the status so the failure can be classified (429, 5xx) rather
+        // than collapsing into one "something went wrong". The message uses
+        // the API client's placeholder form, which `describeError` knows not
+        // to show a user.
+        throw Object.assign(new Error(`API error: ${response.status}`), {
+          status: response.status,
+        });
       }
 
       // One shared reader (lib/sse.ts) owns the wire format: CRLF, the
@@ -1341,6 +1385,10 @@ export function useAssistantChat({
               continue;
             }
         } catch (e) {
+          // One unreadable frame out of a stream that is still arriving: the
+          // loop continues and the answer keeps rendering, so there is
+          // nothing for the user to act on. A stream that actually fails
+          // throws out of the loop and is reported below.
           console.warn("[useAssistantChat] failed to handle SSE event:", data, e);
         }
       }
@@ -1389,10 +1437,25 @@ export function useAssistantChat({
         reportError(error, {
           tags: { component: "assistant-chat", project: Boolean(projectId) },
         });
+        // The turn died mid-stream (dropped connection, 5xx, a rate limit).
+        // Say which on the bubble, and raise a toast whose Retry re-sends the
+        // same question — before, the answer just stopped with no way back.
+        const described = describeError(error, {
+          action: "get a response",
+          fallback: "Mike couldn't finish this answer. Try again.",
+        });
         updateLatestAssistantMessage((message) => ({
           ...message,
-          error: "Sorry, something went wrong.",
+          error: described.message,
         }));
+        notifyError(error, {
+          action: "get a response",
+          fallback: "Mike couldn't finish this answer. Try again.",
+          dedupeKey: "assistant-chat",
+          onRetry: async () => {
+            await retryLastMessage();
+          },
+        });
       }
 
       setIsResponseLoading(false);
@@ -1429,6 +1492,7 @@ export function useAssistantChat({
     setIsResponseLoading,
     isLoadingCitations,
     handleChat,
+    retryLastMessage,
     handleNewChat,
     setMessages,
     cancel,

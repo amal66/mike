@@ -54,7 +54,11 @@ function PracticeDetailsForm({
         if (saved) {
             router.replace("/assistant");
         } else {
-            setError("Unable to save your practice details");
+            // `completeOnboarding` reports failure as `false`, so there is no
+            // error object to classify here; say what to do instead.
+            setError(
+                "Mike couldn't save your practice details. Try again, and contact support if it keeps happening.",
+            );
             setSubmitting(false);
         }
     };

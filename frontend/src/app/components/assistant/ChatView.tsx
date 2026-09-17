@@ -45,7 +45,7 @@ import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { can, roleFrom } from "@/app/lib/permissions";
-import { userFacingApiError } from "@/app/lib/userFacingError";
+import { describeError } from "@/app/lib/userFacingError";
 
 interface Props {
     chatId?: string | null;
@@ -714,10 +714,10 @@ export function ChatView({
         } catch (error) {
             setActionError({
                 title: "Chat not renamed",
-                message: userFacingApiError(
-                    error,
-                    "The chat could not be renamed. Please try again.",
-                ),
+                message: describeError(error, {
+                    action: "rename this chat",
+                    fallback: "The chat could not be renamed. Try again.",
+                }).message,
             });
         }
     };
@@ -737,10 +737,10 @@ export function ChatView({
         } catch (error) {
             setActionError({
                 title: "Chat not deleted",
-                message: userFacingApiError(
-                    error,
-                    "The chat could not be deleted. Please try again.",
-                ),
+                message: describeError(error, {
+                    action: "delete this chat",
+                    fallback: "The chat could not be deleted. Try again.",
+                }).message,
             });
         }
     };

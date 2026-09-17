@@ -12,11 +12,32 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { useAuth } from "@/app/contexts/AuthContext";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import { requestPasswordReset } from "@/app/lib/authApi";
+import {
+  UserVisibleError,
+  describeError,
+  supportMailtoFor,
+  type UserFacingError,
+} from "@/app/lib/userFacingError";
 import { SettingsCard } from "./SettingsCard";
 import { SettingsHeading } from "./SettingsHeading";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
 import { FieldLabel } from "@/app/components/ui/form-field";
+
+/** bcrypt truncates past 72 bytes, so GoTrue refuses anything longer. */
+const MAX_PASSWORD_LENGTH = 72;
+
+/** Keyed by the `code` GoTrue returns from `PATCH /api/auth/password`. */
+const PASSWORD_ERROR_MESSAGES = {
+  weak_password: `Choose a stronger password: at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers, and symbols.`,
+  same_password: "Choose a password you haven't used on Mike before.",
+  validation_failed: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
+  invalid_request: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
+  reauthentication_needed: "Log in again before setting a password.",
+  session_expired: "Your session has expired. Log in again.",
+  cookie_session_required: "Your session has expired. Log in again.",
+  over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
+} as const;
 
 export function PasswordSettingsSection() {
   const { user, setPassword } = useAuth();
@@ -25,7 +46,8 @@ export function PasswordSettingsSection() {
   const [password, setPasswordValue] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordSaving, setPasswordSaving] = useState(false);
-  const [passwordSetError, setPasswordSetError] = useState<string | null>(null);
+  const [passwordSetError, setPasswordSetError] =
+    useState<UserFacingError | null>(null);
   const [passwordStatus, setPasswordStatus] = useState<string | null>(null);
   const [passwordResetSending, setPasswordResetSending] = useState(false);
 
@@ -35,11 +57,19 @@ export function PasswordSettingsSection() {
   async function addPassword() {
     setPasswordSetError(null);
     if (password.length < MIN_PASSWORD_LENGTH) {
-      setPasswordSetError(`${minimumPasswordMessage}.`);
+      setPasswordSetError(localPasswordError(`${minimumPasswordMessage}.`));
+      return;
+    }
+    if (password.length > MAX_PASSWORD_LENGTH) {
+      setPasswordSetError(
+        localPasswordError(
+          `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`,
+        ),
+      );
       return;
     }
     if (password !== confirmPassword) {
-      setPasswordSetError("Passwords do not match.");
+      setPasswordSetError(localPasswordError("The two passwords don't match."));
       return;
     }
 
@@ -48,7 +78,7 @@ export function PasswordSettingsSection() {
       await setPassword(password);
       const synced = await syncPasswordSet();
       if (!synced) {
-        throw new Error(
+        throw new UserVisibleError(
           "Your password was set, but its account status could not be refreshed. Reload the page and try again.",
         );
       }
@@ -57,8 +87,14 @@ export function PasswordSettingsSection() {
       setSetPasswordOpen(false);
       setPasswordStatus("Password added to your account.");
     } catch (error) {
+      // GoTrue's own wording ("Password should be at least 6 characters")
+      // contradicts Mike's policy, so the code decides the text instead.
       setPasswordSetError(
-        error instanceof Error ? error.message : "Unable to set your password.",
+        describeError(error, {
+          action: "set your password",
+          codeMessages: PASSWORD_ERROR_MESSAGES,
+          fallback: "Unable to set your password. Try again.",
+        }),
       );
     } finally {
       setPasswordSaving(false);
@@ -72,13 +108,25 @@ export function PasswordSettingsSection() {
     try {
       await requestPasswordReset(user.email);
       setPasswordStatus(`Password-reset instructions sent to ${user.email}.`);
-    } catch {
+    } catch (error) {
       setPasswordStatus(
-        "Unable to send a password-reset email right now. Please try again.",
+        describeError(error, {
+          action: "send the reset email",
+          codeMessages: PASSWORD_ERROR_MESSAGES,
+          fallback:
+            "Unable to send a password-reset email right now. Try again.",
+        }).message,
       );
     } finally {
       setPasswordResetSending(false);
     }
+  }
+
+  /** A failure the form found itself; the text is already user-facing. */
+  function localPasswordError(message: string): UserFacingError {
+    return describeError(new UserVisibleError(message, { kind: "validation" }), {
+      action: "set your password",
+    });
   }
 
   function closeSetPassword() {
@@ -174,7 +222,18 @@ export function PasswordSettingsSection() {
           </div>
           {passwordSetError && (
             <p className="text-sm text-red-600" role="alert">
-              {passwordSetError}
+              {passwordSetError.message}
+              {passwordSetError.supportable && (
+                <a
+                  href={supportMailtoFor(
+                    passwordSetError,
+                    "Failed to set an account password.",
+                  )}
+                  className="ml-2 underline underline-offset-2"
+                >
+                  Contact support
+                </a>
+              )}
             </p>
           )}
         </div>
