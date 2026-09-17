@@ -123,12 +123,12 @@ test.describe("auth flow", () => {
     await page.getByRole("textbox", { name: "Password" }).fill("badpassword");
     await page.getByRole("button", { name: "Log in" }).click();
 
-    // LoginPage renders what the server said, plus the status and endpoint so
-    // an opaque host failure is never all the user gets.
+    // LoginPage renders what the server said. A 4xx `detail` is written for
+    // the user, so it is shown as-is — without an "(HTTP 400)" suffix.
     const alert = page.getByRole("alert");
     await expect(alert).toBeVisible();
     await expect(alert).toContainText("Invalid login credentials");
-    await expect(alert).toContainText("HTTP 400");
+    await expect(alert).not.toContainText("HTTP 400");
 
     // Failed login leaves the user on the login page with no token exposed.
     await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
@@ -364,8 +364,10 @@ test.describe("auth flow", () => {
     await page.getByRole("button", { name: "Open menu" }).click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
 
+    // A 5xx body is never echoed, however friendly it looks: 503 reads as a
+    // temporary outage.
     await expect(page.getByRole("alert")).toContainText(
-      "Sign out is temporarily unavailable",
+      "Mike is temporarily unavailable",
     );
     await addin.expectAuthedShell();
   });

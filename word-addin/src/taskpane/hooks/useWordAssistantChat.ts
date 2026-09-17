@@ -35,6 +35,7 @@ import {
   upsertDocumentReadEvent,
 } from "../lib/wordChatEvents";
 import { readCurrentDocumentName } from "../lib/wordDocumentIdentity";
+import { describeError, notifyError } from "../lib/notify";
 
 let localMessageSequence = 0;
 
@@ -173,6 +174,23 @@ export function useWordAssistantChat({
   }, [sessionKey]);
 
   const cancel = useCallback((): void => abortRef.current?.abort(), []);
+  // The last turn the user actually asked for, so a failed answer can offer a
+  // "Retry" that resends it rather than an empty gesture.
+  const lastSubmissionRef = useRef<{
+    submission: WordChatSubmission;
+    options: WordChatSubmitOptions;
+  } | null>(null);
+  const handleChatRef = useRef<
+    ((
+      submission: WordChatSubmission,
+      options?: WordChatSubmitOptions,
+    ) => Promise<void>)
+    | null
+  >(null);
+  const retryLastMessage = useCallback((): void => {
+    const last = lastSubmissionRef.current;
+    if (last) void handleChatRef.current?.(last.submission, last.options);
+  }, []);
   const dismissRequestError = useCallback(
     (): void => setRequestError(null),
     [],
@@ -185,6 +203,7 @@ export function useWordAssistantChat({
     ): Promise<void> => {
       const text = submission.content.trim();
       if (!text || isResponseLoadingRef.current || sendingRef.current) return;
+      lastSubmissionRef.current = { submission, options };
 
       const generation = sessionGenerationRef.current;
       const sendToken = sendSequenceRef.current + 1;
@@ -215,10 +234,12 @@ export function useWordAssistantChat({
         try {
           documentContext = await readDocumentMarkdown();
         } catch (error) {
+          // Office.js failure text ("GeneralException") means nothing to a
+          // user; the composer alert says what actually could not happen.
           console.error("Failed to read the current Word document", error);
           if (requestIsCurrent()) {
             setRequestError(
-              "Mike couldn't read the current Word document. Please try again.",
+              "Mike couldn't read this Word document. Try again.",
             );
           }
           return;
@@ -397,8 +418,12 @@ export function useWordAssistantChat({
                   await new Promise((resolve) => setTimeout(resolve, 1500));
                   continue;
                 }
-                // A cancel mid-delivery aborts the fetch: that is the user
-                // stopping the turn, not a failure to report.
+                // Nothing more to try. The backend times the tool call out
+                // and ends the turn with its own error frame, which the
+                // catch below turns into a message the user sees — a toast
+                // here would only duplicate it. A cancel mid-delivery aborts
+                // the fetch: that is the user stopping the turn, not a
+                // failure to report.
                 const cancelled =
                   controller.signal.aborted ||
                   (error instanceof Error && error.name === "AbortError");
@@ -536,6 +561,8 @@ export function useWordAssistantChat({
             }
             await respond({ error: `Unknown client tool: ${call.name}` });
           } catch (error) {
+            // This text goes back to the model as a tool result, not to the
+            // screen, so the raw message is the useful thing to send.
             await respond({
               error:
                 error instanceof Error
@@ -742,10 +769,21 @@ export function useWordAssistantChat({
           await awaitClientToolCalls();
           await editController.waitForMessageEdits(assistantMessageId);
           if (!requestIsCurrent()) return;
-          const errorMessage =
-            error instanceof Error
-              ? `Error: ${error.message}`
-              : "An error occurred.";
+          // The bubble shows the classified sentence, never the thrown text:
+          // a stream failure carries provider and stack wording. The toast
+          // adds the one thing the bubble cannot — a way to try again.
+          const described = describeError(error, {
+            action: "get a response",
+            fallback: "Mike couldn't finish that answer. Try again.",
+          });
+          const errorMessage = described.message;
+          notifyError(error, {
+            action: "get a response",
+            fallback: "Mike couldn't finish that answer. Try again.",
+            dedupeKey: "assistant-turn",
+            page: "Assistant",
+            onRetry: retryLastMessage,
+          });
           assistantEvents = setAssistantError(assistantEvents, errorMessage);
           if (wordChatStorage === "local" && requestChatId) {
             await saveLocalWordMessage({
@@ -808,8 +846,10 @@ export function useWordAssistantChat({
       wordChatOwnerId,
       wordChatStorage,
       wordDocumentId,
+      retryLastMessage,
     ],
   );
+  handleChatRef.current = handleChat;
 
   return {
     messages,
@@ -818,5 +858,6 @@ export function useWordAssistantChat({
     handleChat,
     cancel,
     dismissRequestError,
+    retryLastMessage,
   };
 }

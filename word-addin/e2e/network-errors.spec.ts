@@ -1,7 +1,8 @@
 /**
  * Word's WebView collapses every transport failure into "Load failed", which
  * tells the user nothing about what could not be reached. These tests pin the
- * replacement: the request, the host's own wording, and where to look.
+ * replacement: one concise sentence that still names the server origin, so a
+ * self-hoster knows whether to check their connection or their own API.
  */
 import { test, expect } from "./support/fixtures";
 
@@ -21,11 +22,12 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   const alert = page.getByRole("alert");
   await expect(alert).toBeVisible();
   const text = await alert.innerText();
-  expect(text).toContain("Couldn’t reach POST");
-  expect(text).toContain("/api/auth/login");
-  // The host's own message is kept rather than swallowed.
-  expect(text).toMatch(/Failed to fetch|Load failed|NetworkError/);
-  expect(text).toContain("running and reachable from Word");
+  expect(text).toContain("Mike couldn't reach the server at");
+  // The origin is named so a self-hoster knows which server is down.
+  expect(text).toMatch(/http:\/\/(127\.0\.0\.1|localhost):\d+/);
+  expect(text).toContain("Check your connection and that the server is running");
+  // The host's opaque wording never reaches the screen.
+  expect(text).not.toMatch(/Failed to fetch|Load failed|NetworkError/);
 });
 
 test("a rejected sign-in shows what the server said, not a generic failure", async ({
@@ -50,10 +52,11 @@ test("a rejected sign-in shows what the server said, not a generic failure", asy
   await page.getByRole("textbox", { name: "Password" }).fill("wrong");
   await page.getByRole("button", { name: "Log in" }).click();
 
+  // A 4xx `detail` is written for the user by the backend, so it is shown
+  // as-is — without the "(HTTP 400)" suffix, which meant nothing to anyone.
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("Invalid login credentials");
-  await expect(alert).toContainText("HTTP 400");
-  expect(await alert.innerText()).not.toBe("Login failed");
+  await expect(alert).not.toContainText("HTTP 400");
 });
 
 test("a failed workflow load names the endpoint it could not reach", async ({
@@ -68,7 +71,11 @@ test("a failed workflow load names the endpoint it could not reach", async ({
   await page.getByRole("button", { name: "Open menu" }).click();
   await page.getByRole("menuitem", { name: "Workflows" }).click();
 
-  const message = page.getByText(/Couldn’t reach GET/);
-  await expect(message).toBeVisible();
-  await expect(message).toContainText("/workflows");
+  // The list says what happened, and the toast adds a Retry.
+  await expect(
+    page.getByText(/Mike couldn't reach the server at/).first(),
+  ).toBeVisible();
+  const toast = page.getByTestId("toast");
+  await expect(toast).toContainText("Couldn't load your workflows");
+  await expect(toast.getByRole("button", { name: "Retry" })).toBeVisible();
 });

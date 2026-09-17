@@ -275,7 +275,7 @@ test("does not send without the required Word document context", async ({
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(page.getByRole("alert")).toHaveText(
-    "Mike couldn't read the current Word document. Please try again.",
+    "Mike couldn't read this Word document. Try again.",
   );
   await expect(composer).toHaveValue("Review this document");
   await expect(page.locator("[data-message-id]")).toHaveCount(0);
@@ -656,7 +656,7 @@ test("a reasoning delta replaces Thinking with a live reasoning trace", async ({
   ).toBeVisible();
 });
 
-test("a pre-[DONE] error event surfaces as 'Error: ...' in the assistant bubble", async ({
+test("a pre-[DONE] error event surfaces in the assistant bubble", async ({
   addin,
   page,
 }) => {
@@ -670,8 +670,12 @@ test("a pre-[DONE] error event surfaces as 'Error: ...' in the assistant bubble"
   await page.getByRole("button", { name: "Send" }).click();
 
   // The client throws on the pre-[DONE] error; ChatPanel replaces the bubble
-  // content with the error message.
-  await expect(page.getByText("Error: model rate limited")).toBeVisible();
+  // content with the backend's own (user-facing) message, no "Error:" prefix,
+  // and a toast offers a Retry that resends the turn.
+  await expect(page.getByText("model rate limited").first()).toBeVisible();
+  await expect(
+    page.getByTestId("toast").getByRole("button", { name: "Retry" }),
+  ).toBeVisible();
 });
 
 test("sends a document snapshot without claiming the model read it", async ({
@@ -1316,7 +1320,10 @@ test("reports a Templates-tab load failure", async ({ addin, page }) => {
   await page.getByRole("menuitem", { name: "Web files" }).click();
   const modal = page.getByRole("dialog", { name: "Add Documents" });
   await modal.getByRole("button", { name: "Templates" }).click();
-  await expect(modal.getByRole("alert")).toContainText("API error: 503");
+  // A 5xx body is never echoed; 503 reads as a temporary outage.
+  await expect(modal.getByRole("alert")).toContainText(
+    "Mike is temporarily unavailable",
+  );
 });
 
 test("uploads desktop files directly from the document source menu", async ({

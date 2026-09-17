@@ -213,4 +213,6 @@ export interface WordAssistantChatController {
   ) => Promise<void>;
   cancel: () => void;
   dismissRequestError: () => void;
+  /** Resend the last turn the user submitted, for a "Retry" on a failure. */
+  retryLastMessage: () => void;
 }
