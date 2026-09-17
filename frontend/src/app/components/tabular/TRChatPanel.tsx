@@ -36,6 +36,7 @@ import {
     ReasoningBlock,
 } from "../assistant/message/EventBlocks";
 import { readSseFrames } from "@/app/lib/sse";
+import { notifyError } from "@/app/lib/userFacingError";
 import {
     LIQUID_GLASS_FLAT_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
@@ -46,7 +47,6 @@ import { cn } from "@/app/lib/utils";
 import { buildTabularChatHistory } from "@/app/lib/tabularChatHistory";
 import { CitationPillUI } from "@/shared/ui/CitationPillUI";
 import { subscribeToTabularChatSettingsUpdates } from "@/app/lib/tabularChatSettingsEvents";
-import { WarningPopup } from "../popups/WarningPopup";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -466,7 +466,6 @@ export function TRChatPanel({
     const [isLoadingChats, setIsLoadingChats] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-    const [messageLoadWarning, setMessageLoadWarning] = useState(false);
     const [minHeight, setMinHeight] = useState("0px");
     const [messagesVisible, setMessagesVisible] = useState(false);
     const [panelWidth, setPanelWidth] = useState(380);
@@ -551,25 +550,36 @@ export function TRChatPanel({
 
     // Load existing chats from DB on mount
     useEffect(() => {
-        getTabularChats(reviewId)
-            .then((loadedChats) => {
-                setChats(loadedChats);
-                if (!initialChatId) return;
-                const initialChat = loadedChats.find(
-                    (chat) => chat.id === initialChatId,
-                );
-                setCurrentChatModel(initialChat?.model ?? null);
-                setCurrentChatReasoningLevel(
-                    initialChat?.reasoning_level ?? null,
-                );
-            })
-            .catch(() => {
-                if (initialChatId) {
-                    setCurrentChatModel(null);
-                    setCurrentChatReasoningLevel(null);
-                }
-            })
-            .finally(() => setIsLoadingChats(false));
+        const loadChats = () => {
+            setIsLoadingChats(true);
+            getTabularChats(reviewId)
+                .then((loadedChats) => {
+                    setChats(loadedChats);
+                    if (!initialChatId) return;
+                    const initialChat = loadedChats.find(
+                        (chat) => chat.id === initialChatId,
+                    );
+                    setCurrentChatModel(initialChat?.model ?? null);
+                    setCurrentChatReasoningLevel(
+                        initialChat?.reasoning_level ?? null,
+                    );
+                })
+                .catch((error) => {
+                    if (initialChatId) {
+                        setCurrentChatModel(null);
+                        setCurrentChatReasoningLevel(null);
+                    }
+                    // Without this the chat menu just stays empty and the
+                    // model/reasoning pickers silently fall back to defaults.
+                    notifyError(error, {
+                        action: "load your chat history",
+                        dedupeKey: `tr-chats:${reviewId}`,
+                        onRetry: loadChats,
+                    });
+                })
+                .finally(() => setIsLoadingChats(false));
+        };
+        loadChats();
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps -- initialChatId is the mount-time thread; live chat id changes must not refetch settings
 
     // ChatInput persists through UserProfileContext. Mirror successful saves
@@ -612,10 +622,22 @@ export function TRChatPanel({
     useEffect(() => {
         if (!initialChatId) return;
         setIsLoadingMessages(true);
-        getTabularChatMessages(reviewId, initialChatId)
-            .then((raw) => setMessages(mapTRMessages(raw) as TRMessage[]))
-            .catch(() => setMessageLoadWarning(true))
-            .finally(() => setIsLoadingMessages(false));
+        const loadInitialMessages = () => {
+            setIsLoadingMessages(true);
+            getTabularChatMessages(reviewId, initialChatId)
+                .then((raw) => setMessages(mapTRMessages(raw) as TRMessage[]))
+                .catch((error) => {
+                    // An empty transcript is indistinguishable from a new
+                    // chat, so say the history could not be loaded.
+                    notifyError(error, {
+                        action: "load this chat",
+                        dedupeKey: `tr-chat-messages:${initialChatId}`,
+                        onRetry: loadInitialMessages,
+                    });
+                })
+                .finally(() => setIsLoadingMessages(false));
+        };
+        loadInitialMessages();
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Fill in title once chats list arrives
@@ -874,6 +896,16 @@ export function TRChatPanel({
     }
 
     async function handleDeleteChat(chatId: string) {
+        // Everything the optimistic removal throws away, so a failed delete
+        // can put the thread back instead of losing it from the menu.
+        const snapshot = {
+            chats,
+            currentChatId,
+            currentChatTitle,
+            currentChatModel,
+            currentChatReasoningLevel,
+            messages,
+        };
         setChats((prev) => prev.filter((c) => c.id !== chatId));
         if (chatId === currentChatId) {
             // Same exit as New chat / Load chat: retire the in-flight stream's
@@ -887,20 +919,48 @@ export function TRChatPanel({
         }
         try {
             await deleteTabularChat(reviewId, chatId);
-        } catch {
-            /* ignore */
+        } catch (error) {
+            setChats(snapshot.chats);
+            if (chatId === snapshot.currentChatId) {
+                setCurrentChatId(snapshot.currentChatId);
+                setCurrentChatTitle(snapshot.currentChatTitle);
+                setCurrentChatModel(snapshot.currentChatModel);
+                setCurrentChatReasoningLevel(
+                    snapshot.currentChatReasoningLevel,
+                );
+                setMessages(snapshot.messages);
+            }
+            notifyError(error, {
+                action: "delete this chat",
+                onRetry: () => {
+                    void handleDeleteChat(chatId);
+                },
+            });
         }
     }
 
     async function handleRenameChat(chatId: string, title: string) {
+        const previousTitle =
+            chats.find((c) => c.id === chatId)?.title ?? null;
         setChats((prev) =>
             prev.map((c) => (c.id === chatId ? { ...c, title } : c)),
         );
         if (chatId === currentChatId) setCurrentChatTitle(title);
         try {
             await renameTabularChat(reviewId, chatId, title);
-        } catch {
-            /* ignore */
+        } catch (error) {
+            setChats((prev) =>
+                prev.map((c) =>
+                    c.id === chatId ? { ...c, title: previousTitle } : c,
+                ),
+            );
+            if (chatId === currentChatId) setCurrentChatTitle(previousTitle);
+            notifyError(error, {
+                action: "rename this chat",
+                onRetry: () => {
+                    void handleRenameChat(chatId, title);
+                },
+            });
         }
     }
 
@@ -916,8 +976,15 @@ export function TRChatPanel({
         try {
             const raw = await getTabularChatMessages(reviewId, chatId);
             setMessages(mapTRMessages(raw) as TRMessage[]);
-        } catch {
-            /* ignore */
+        } catch (error) {
+            // Otherwise the thread opens blank and reads as an empty chat.
+            notifyError(error, {
+                action: "load this chat",
+                dedupeKey: `tr-chat-messages:${chatId}`,
+                onRetry: () => {
+                    void handleLoadChat(chatId);
+                },
+            });
         } finally {
             setIsLoadingMessages(false);
         }
@@ -938,6 +1005,9 @@ export function TRChatPanel({
         const history = buildTabularChatHistory(messages);
         const allMessages = [...history, { role: "user", content: trimmed }];
 
+        // The transcript as it stood before this turn. Retry rewinds to it so
+        // resending cannot duplicate the question or the failed answer.
+        const transcriptBeforeSend = messages;
         const userMsg: TRMessage = { role: "user", content: trimmed };
         const assistantMsg: TRMessage = {
             role: "assistant",
@@ -1474,7 +1544,13 @@ export function TRChatPanel({
                             continue;
                         }
                 } catch (err) {
-                    console.warn("[TRChatPanel] failed to handle SSE event:", data, err);
+                    // One notice per stream: an event we could not apply means
+                    // part of the answer is missing from the transcript, and
+                    // the stream itself keeps going.
+                    notifyError(err, {
+                        action: "show part of this answer",
+                        dedupeKey: `tr-chat-frame:${gen}`,
+                    });
                 }
             }
 
@@ -1505,33 +1581,29 @@ export function TRChatPanel({
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
                 if (last?.role === "assistant") {
-                    const hasContent = (last.events ?? []).some(
-                        (e) =>
-                            e.type === "content" &&
-                            (e as { type: "content"; text: string }).text,
-                    );
-                    if (!hasContent) {
-                        updated[updated.length - 1] = {
-                            ...last,
-                            isStreaming: false,
-                            events: [
-                                ...(last.events ?? []),
-                                {
-                                    type: "content" as const,
-                                    text: isAbort
-                                        ? ""
-                                        : "An error occurred. Please try again.",
-                                },
-                            ],
-                        };
-                    } else {
-                        updated[updated.length - 1] = {
-                            ...last,
-                            isStreaming: false,
-                        };
-                    }
+                    // Whatever arrived before the break is real answer text
+                    // and stays on screen; only the streaming state is closed.
+                    updated[updated.length - 1] = {
+                        ...last,
+                        isStreaming: false,
+                    };
                 }
                 return updated;
+            });
+            // The failure used to be written into the answer as if the model
+            // had said it, which left no way to tell a real answer from a
+            // transport error and offered nothing to do about it.
+            notifyError(err, {
+                action: "finish this answer",
+                fallback:
+                    "The answer stopped before it finished. Anything already shown is kept.",
+                dedupeKey: `tr-chat-stream:${reviewId}`,
+                onRetry: isAbort
+                    ? undefined
+                    : () => {
+                          setMessages(transcriptBeforeSend);
+                          void handleSubmit(message);
+                      },
             });
         } finally {
             setIsLoading(false);
@@ -1734,12 +1806,6 @@ export function TRChatPanel({
                     }
                 />
             </div>
-            <WarningPopup
-                open={messageLoadWarning}
-                title="Chat unavailable"
-                message="This chat’s messages could not be loaded. Please try again."
-                onClose={() => setMessageLoadWarning(false)}
-            />
         </div>
     );
 }
