@@ -9,3 +9,4 @@ Same seeded database (compose project `mike-463`), same clicks, recorded back to
 | `b23.gif` | carol (non-creator Owner) opens the Access modal: base offers her own row a role picker and Remove; fix shows an Owner pill only |
 | `b26.gif` | alice opens Delete organization then presses Escape: base closes Settings and leaves the red confirm; fix closes one layer |
 | `b32.gif` | dave (editor, not the chat's creator) renames a project chat: base refuses "Owner-only action"; fix renames it and still reserves Delete for owners |
+| `b05.gif` | alice creates a project with an attached file while the access-grant POST is forced to 403, then retries: base ends with two identical `b05-attachment.docx` rows, fix with one |
