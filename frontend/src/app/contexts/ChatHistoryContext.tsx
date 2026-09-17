@@ -28,7 +28,10 @@ interface ChatHistoryContextType {
     setCurrentChatId: (chatId: string | null) => void;
     loadChats: () => Promise<void>;
   loadMoreChats: () => Promise<void>;
-    saveChat: (projectId?: string) => Promise<string | null>;
+    saveChat: (
+        projectId?: string,
+        options?: { onRetry?: () => void | Promise<void> },
+    ) => Promise<string | null>;
     renameChat: (chatId: string, title: string) => Promise<void>;
     updateChatTitle: (chatId: string, title: string) => void;
     newChatMessages: Message[] | null;
@@ -175,7 +178,10 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
     );
 
     const saveChat = useCallback(
-        async (projectId?: string): Promise<string | null> => {
+        async (
+            projectId?: string,
+            options?: { onRetry?: () => void | Promise<void> },
+        ): Promise<string | null> => {
             try {
                 const { id } = await createChat(
                     projectId ? { project_id: projectId } : undefined,
@@ -203,9 +209,13 @@ export function ChatHistoryProvider({ children }: { children: ReactNode }) {
             } catch (error) {
                 // Callers only see `null`, and the ones that do simply stop —
                 // so this is the last place that can tell the user their
-                // chat was never created. No Retry: a create is not safe to
-                // repeat blind, and the user can send the message again.
-                notifyError(error, { action: "start a new chat" });
+                // chat was never created. Retry is only offered when the
+                // caller can re-run its whole submit (create + send), since
+                // repeating the create alone would strand an empty chat.
+                notifyError(error, {
+                    action: "start a new chat",
+                    onRetry: options?.onRetry,
+                });
                 return null;
             }
         },

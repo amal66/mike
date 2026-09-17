@@ -1471,16 +1471,23 @@ export function useAssistantChat({
   const handleNewChat = async (
     message: Message,
     projectId?: string,
+    options?: { onRetry?: () => void | Promise<void> },
   ): Promise<string | null> => {
     if (!message.content.trim()) return null;
 
     setMessages([message]);
     setNewChatMessages([message]);
 
-    const newChatId = await saveChat(projectId);
+    const newChatId = await saveChat(projectId, options);
     if (newChatId) {
       setChatId(newChatId);
       setCurrentChatId(newChatId);
+    } else {
+      // The chat was never created, so the optimistic bubble would sit
+      // above a composer whose next send has no chat to land in. Return to
+      // the empty state; the toast's Retry re-runs the caller's submit.
+      setMessages([]);
+      setNewChatMessages([]);
     }
 
     return newChatId;
