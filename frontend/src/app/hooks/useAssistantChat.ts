@@ -1,8 +1,20 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useRouter } from "next/navigation";
 import { streamChat, streamProjectChat } from "@/app/lib/mikeApi";
+import {
+  beginAssistantTurn,
+  cancelAssistantTurn,
+  hasAssistantTurn,
+  subscribeAssistantTurns,
+} from "@/app/lib/assistantTurns";
 import { assistantHistoryContent } from "@/app/lib/assistantHistoryContent";
 import { readSseFrames } from "@/app/lib/sse";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -92,11 +104,25 @@ export function useAssistantChat({
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the hook stays mounted while its host switches between existing threads
     setChatId(initialChatId);
   }, [initialChatId]);
 
+  const mountedRef = useRef(true);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const pendingTurn = useSyncExternalStore(
+    subscribeAssistantTurns,
+    () => hasAssistantTurn(initialChatId ?? chatId),
+    () => false,
+  );
   const abortControllerRef = useRef<AbortController | null>(null);
+  const registeredTurnRef = useRef<ReturnType<typeof beginAssistantTurn> | null>(
+    null,
+  );
   const requestGenerationRef = useRef(0);
 
   // Invalidate the previous request before a new thread can receive updates.
@@ -125,7 +151,6 @@ export function useAssistantChat({
     // runs to completion and the server stores the whole answer.
     requestGenerationRef.current += 1;
     abortControllerRef.current = null;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset request status when the host selects another thread
     setIsResponseLoading(false);
     setIsLoadingCitations(false);
   }, [threadKey]);
@@ -230,9 +255,13 @@ export function useAssistantChat({
 
   const cancel = () => {
     const controller = abortControllerRef.current;
-    if (!controller) return;
+    if (!controller) {
+      cancelAssistantTurn(initialChatId ?? chatId);
+      return;
+    }
     requestGenerationRef.current += 1;
     controller.abort();
+    registeredTurnRef.current?.finish();
     abortControllerRef.current = null;
     const snapshot = appendCancellationEvent(eventsRef.current);
     eventsRef.current = snapshot;
@@ -319,7 +348,7 @@ export function useAssistantChat({
       >;
     },
   ): Promise<string | null> => {
-    if (!message.content.trim()) return null;
+    if (!message.content.trim() || hasAssistantTurn(chatId)) return null;
 
     setIsResponseLoading(true);
 
@@ -389,7 +418,10 @@ export function useAssistantChat({
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const isCurrentRequest = () => requestGenerationRef.current === generation;
+    const turn = beginAssistantTurn(chatId, () => controller.abort());
+    registeredTurnRef.current = turn;
+    const isCurrentRequest = () =>
+      mountedRef.current && requestGenerationRef.current === generation;
 
     try {
       const apiMessages = apiMessagesForTurn.map((currentMessage) => ({
@@ -468,10 +500,23 @@ export function useAssistantChat({
         // kilobytes and lets the server finish and store the whole answer.
         // Stop is the one exit that still aborts: readSseFrames throws on
         // its signal, and the socket is already closing.
-        if (!isCurrentRequest()) superseded = true;
-        if (superseded) continue;
-
         const data = frame as Record<string, unknown>;
+
+        if (!isCurrentRequest()) superseded = true;
+        if (superseded) {
+          // The turn is detached, but a reader coming back to this thread
+          // still needs to know which chat and message to wait for, and a
+          // brand new chat only learns its id from this frame.
+          if (data.type === "chat_id" && typeof data.chatId === "string") {
+            turn.identify(
+              data.chatId,
+              typeof data.assistantMessageId === "string"
+                ? data.assistantMessageId
+                : undefined,
+            );
+          }
+          continue;
+        }
 
         try {
             if (data.type === "chat_id") {
@@ -479,6 +524,12 @@ export function useAssistantChat({
               const isNewChatId =
                 streamed !== chatId && streamed !== streamedChatId;
               streamedChatId = streamed;
+              turn.identify(
+                streamed,
+                typeof data.assistantMessageId === "string"
+                  ? data.assistantMessageId
+                  : undefined,
+              );
               setChatId(streamed);
               setCurrentChatId(streamed);
               if (isNewChatId && onChatCreated) {
@@ -1418,6 +1469,8 @@ export function useAssistantChat({
       setIsLoadingCitations(false);
       return null;
     } finally {
+      turn.finish();
+      if (registeredTurnRef.current === turn) registeredTurnRef.current = null;
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
@@ -1444,7 +1497,7 @@ export function useAssistantChat({
 
   return {
     messages,
-    isResponseLoading,
+    isResponseLoading: isResponseLoading || pendingTurn,
     setIsResponseLoading,
     isLoadingCitations,
     handleChat,

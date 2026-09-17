@@ -107,6 +107,15 @@ describe("ChatInput canSend gating", () => {
         ).toBeNull();
     });
 
+    it("can stop a pending response while history is still loading", () => {
+        const onCancel = vi.fn();
+        render(<ChatInput onSubmit={vi.fn()} onCancel={onCancel} isLoading canSend={false} />);
+        const stop = screen.getByRole("button", { name: "Stop response" });
+        expect(stop).toBeEnabled();
+        fireEvent.click(stop);
+        expect(onCancel).toHaveBeenCalledOnce();
+    });
+
     it("does not submit on Enter when canSend is false", () => {
         const onSubmit = renderInput(false);
         const textarea = screen.getByRole("combobox");
