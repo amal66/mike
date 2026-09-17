@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { ChatView } from "@/app/components/assistant/ChatView";
-import { getChat } from "@/app/lib/mikeApi";
+import { loadAssistantChat } from "@/app/lib/assistantTurns";
 import { can, roleFrom } from "@/app/lib/permissions";
 import type { Chat } from "@/app/components/shared/types";
 
@@ -30,7 +30,7 @@ export default function AssistantChatPage() {
     } = useAssistantChat({ initialMessages, chatId: id });
 
     const hasAutoSent = useRef(false);
-    const hasLoaded = useRef(false);
+    const loadedChatId = useRef<string | null>(null);
     // Whether the caller may write here, from the standing GET /chat/:id
     // serves. Grant-reachable chats appear in the global sidebar since the
     // parity change, so a project VIEWER can land on this page — dropping
@@ -76,11 +76,16 @@ export default function AssistantChatPage() {
             if (newChatMessages) setNewChatMessages(null);
             return;
         }
-        if (hasLoaded.current || messages.length > 0) return;
-        hasLoaded.current = true;
+        if (loadedChatId.current === id) return;
+        loadedChatId.current = id;
+        let cancelled = false;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- a newly selected chat must load its permissions before sending
+        setCanSend(false);
+        setMessages([]);
 
-        getChat(id)
+        loadAssistantChat(id)
             .then(({ chat, messages: loaded }) => {
+                if (cancelled) return;
                 setChat(chat);
                 setChatModel(chat.model ?? null);
                 setChatReasoningLevel(chat.reasoning_level ?? null);
@@ -92,7 +97,15 @@ export default function AssistantChatPage() {
                     router.replace("/assistant");
                 }
             })
-            .catch(() => router.replace("/assistant"));
+            .catch(() => {
+                if (!cancelled) router.replace("/assistant");
+            });
+        return () => {
+            cancelled = true;
+            // StrictMode replays the effect, and the replacement load must
+            // be allowed after retiring the first one's callback.
+            loadedChatId.current = null;
+        };
     }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {

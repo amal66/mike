@@ -165,7 +165,8 @@ describe("useAssistantChat stream lifecycle", () => {
         await act(async () => {
             result.current.detach();
         });
-        expect(result.current.isResponseLoading).toBe(false);
+        // Until the host navigates away, this is still a pending chat.
+        expect(result.current.isResponseLoading).toBe(true);
 
         await body.send('data: {"type":"content_delta","text":" and rest"}\n\n');
         await body.close();
@@ -217,6 +218,8 @@ describe("useAssistantChat stream lifecycle", () => {
 
         expect(signalOfLastRequest().aborted).toBe(false);
         expect(body.state.cancelled).toBe(false);
+        expect(replaceMock).not.toHaveBeenCalled();
+        expect(setCurrentChatIdMock).not.toHaveBeenCalled();
     });
 
     it("aborts the request when the user presses Stop", async () => {
@@ -249,4 +252,50 @@ describe("useAssistantChat stream lifecycle", () => {
         ]);
         expect(result.current.isResponseLoading).toBe(false);
     });
+});
+
+
+it.each(["switch", "remount"])("blocks duplicate turns after %s until the detached response completes", async (mode) => {
+    const body = controllableSseResponse();
+    fetchMock.mockResolvedValue(body.response);
+    const first = renderHook(({ chatId }) => useAssistantChat({ chatId }), {
+        initialProps: { chatId: "return-a" },
+    });
+    const { turn } = await startTurn(first.result.current.handleChat);
+    await body.send('data: {"type":"content_delta","text":"Partial"}\n\n');
+    let returned = first;
+    if (mode === "remount") {
+        first.unmount();
+        returned = renderHook(({ chatId }) => useAssistantChat({ chatId }), {
+            initialProps: { chatId: "return-a" },
+        });
+    } else {
+        first.rerender({ chatId: "other" });
+        expect(first.result.current.isResponseLoading).toBe(false);
+        first.rerender({ chatId: "return-a" });
+    }
+    expect(returned.result.current.isResponseLoading).toBe(true);
+    await act(async () => { await returned.result.current.handleChat(userMessage("follow-up")); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await body.send('data: {"type":"content_delta","text":" finished"}\n\n');
+    await body.close();
+    await turn;
+    expect(returned.result.current.isResponseLoading).toBe(false);
+    returned.unmount();
+});
+
+
+it("can stop a detached request from a newly mounted owner", async () => {
+    const body = controllableSseResponse();
+    fetchMock.mockResolvedValue(body.response);
+    const first = renderHook(() => useAssistantChat({ chatId: "stop-return" }));
+    const { turn } = await startTurn(first.result.current.handleChat);
+    const signal = signalOfLastRequest();
+    first.unmount();
+    const returned = renderHook(() => useAssistantChat({ chatId: "stop-return" }));
+    act(() => returned.result.current.cancel());
+    expect(signal.aborted).toBe(true);
+    await body.send(": keep-alive\n\n");
+    await act(async () => { await turn; });
+    expect(returned.result.current.isResponseLoading).toBe(false);
 });

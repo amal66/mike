@@ -24,7 +24,6 @@ import {
 import {
     deleteChat,
     deleteDocument,
-    getChat,
     getDocument,
     getProject,
     listProjectChats,
@@ -37,6 +36,7 @@ import {
     moveSubfolderToFolder,
     resolveProjectFolderPath,
 } from "@/app/lib/mikeApi";
+import { loadAssistantChat } from "@/app/lib/assistantTurns";
 import { useAssistantChat } from "@/app/hooks/useAssistantChat";
 import { useAssistantMessageLayout } from "@/app/hooks/useAssistantMessageLayout";
 import { useProjectPicker } from "@/app/hooks/useProjectPicker";
@@ -633,7 +633,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
             };
         }
 
-        getChat(activeChatId)
+        loadAssistantChat(activeChatId)
             .then(({ chat, messages: loaded }) => {
                 if (cancelled) return;
                 setChatTitle(chat.title);
@@ -2050,7 +2050,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                                     chatKey={activeChatId}
                                     chatModel={chatModel}
                                     chatReasoningLevel={chatReasoningLevel}
-                                    canSend={canSendChat}
+                                    canSend={canSendChat && chatLoaded}
                                     enableGlobalFileDrop={false}
                                     dropUploadsToProject={false}
                                     projectId={projectId}

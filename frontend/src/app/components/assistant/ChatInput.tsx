@@ -831,10 +831,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                                 )}
                                 onClick={handleActionClick}
                                 disabled={
-                                    !canSend ||
-                                    (!isLoading &&
-                                        (!value.trim() ||
-                                            slashCommandsLoading))
+                                    !isLoading &&
+                                    (!canSend ||
+                                        !value.trim() ||
+                                        slashCommandsLoading)
                                 }
                             >
                                 {isLoading ? (
