@@ -123,11 +123,13 @@ test.describe("auth flow", () => {
     await page.getByRole("textbox", { name: "Password" }).fill("badpassword");
     await page.getByRole("button", { name: "Log in" }).click();
 
-    // LoginPage renders what the server said. A 4xx `detail` is written for
-    // the user, so it is shown as-is — without an "(HTTP 400)" suffix.
+    // LoginPage no longer echoes the server. The failure is recognised by its
+    // `invalid_credentials` CODE and stated in Mike's own words, so neither
+    // GoTrue's wording nor an "(HTTP 400)" suffix reaches the screen.
     const alert = page.getByRole("alert");
     await expect(alert).toBeVisible();
-    await expect(alert).toContainText("Invalid login credentials");
+    await expect(alert).toContainText("That email and password don't match an account.");
+    await expect(alert).not.toContainText("Invalid login credentials");
     await expect(alert).not.toContainText("HTTP 400");
 
     // Failed login leaves the user on the login page with no token exposed.

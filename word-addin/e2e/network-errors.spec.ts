@@ -30,7 +30,7 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   expect(text).not.toMatch(/Failed to fetch|Load failed|NetworkError/);
 });
 
-test("a rejected sign-in shows what the server said, not a generic failure", async ({
+test("a rejected sign-in is stated in Mike's words, not GoTrue's", async ({
   addin,
   page,
 }) => {
@@ -52,10 +52,12 @@ test("a rejected sign-in shows what the server said, not a generic failure", asy
   await page.getByRole("textbox", { name: "Password" }).fill("wrong");
   await page.getByRole("button", { name: "Log in" }).click();
 
-  // A 4xx `detail` is written for the user by the backend, so it is shown
-  // as-is — without the "(HTTP 400)" suffix, which meant nothing to anyone.
+  // The `invalid_credentials` code — not the provider's sentence — decides
+  // what the user reads, so a GoTrue rewording cannot change the screen.
+  // "(HTTP 400)" never meant anything to anyone and still must not appear.
   const alert = page.getByRole("alert");
-  await expect(alert).toContainText("Invalid login credentials");
+  await expect(alert).toContainText("That email and password don't match an account.");
+  await expect(alert).not.toContainText("Invalid login credentials");
   await expect(alert).not.toContainText("HTTP 400");
 });
 
