@@ -18,7 +18,6 @@ import {
   type DescribeErrorOptions,
   type UserFacingError,
 } from "@mike/user-error";
-import { createElement } from "react";
 import { showToast, type ToastAction } from "@mike/toast-ui";
 import { SESSION_CHECK_FAILED_MESSAGE } from "./sessionRefresh";
 import { openExternalUrl } from "./openExternalUrl";
@@ -115,6 +114,13 @@ export async function handOffToSupport(
 
   const outcome = supportHandoffResult({ copied, opened, details });
   if (outcome.details) {
+    // Imported here, not at the top of the file. `tsconfig.json` maps "react"
+    // onto `@types/react/index.d.ts` so the webpack build type-checks, and
+    // Playwright's loader honours that mapping at RUNTIME: a top-level
+    // `import ... from "react"` makes every Node-side spec that reaches this
+    // module (e2e/sse.spec.ts does, via api/mikeApi) try to execute a
+    // declaration file and die. Nothing else in this module needs React.
+    const { createElement } = await import("react");
     showToast({
       tone: "info",
       title: outcome.message,
