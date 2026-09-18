@@ -21,10 +21,6 @@ import {
     type UserFacingError,
 } from "@/app/lib/userFacingError";
 
-/** bcrypt truncates past 72 bytes, so GoTrue refuses anything longer. */
-const MAX_PASSWORD_LENGTH = 72;
-const maximumPasswordMessage = `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`;
-const WEAK_PASSWORD_MESSAGE = `Choose a stronger password: at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers, and symbols.`;
 
 /** A failure the form found itself, so the text is already user-facing. */
 function localSignupError(message: string): UserFacingError {
@@ -35,31 +31,17 @@ function localSignupError(message: string): UserFacingError {
 }
 
 /**
- * Keyed by the `code` GoTrue returns through `/api/auth/signup`. Anything
- * not listed falls through to `describeError` so a 429, a 5xx, or a dropped
- * connection still says what actually happened.
+ * The shared auth table with this screen's deltas. Anything not listed
+ * falls through to `describeError` so a 429, a 5xx, or a dropped connection
+ * still says what actually happened.
  */
-const SIGNUP_ERROR_MESSAGES = {
-    user_already_exists:
-        "An account with this email already exists. Log in instead.",
-    email_exists: "An account with this email already exists. Log in instead.",
-    email_address_invalid: "Enter a valid email address.",
-    email_address_not_authorized:
-        "Mike can't send email to this address. Use a different one.",
+const SIGNUP_ERROR_MESSAGES = authMessages({
     validation_failed: "Check your email address and password and try again.",
     invalid_request: "Check your email address and password and try again.",
-    signup_disabled: "New accounts aren't open right now.",
-    captcha_failed:
-        "The security check didn't pass. Reload the page and try again.",
     over_email_send_rate_limit:
         "Too many signup emails have been requested. Wait a few minutes and try again.",
-    over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
     request_timeout: "The signup request timed out. Try again.",
-    weak_password: WEAK_PASSWORD_MESSAGE,
-} as const;
-
-const TOO_MANY_ATTEMPTS_MESSAGE =
-    "Too many attempts. Wait a moment and try again.";
+});
 
 /** Classify a signup failure into text a person can act on. */
 function describeSignupError(error: unknown): UserFacingError {
@@ -74,8 +56,11 @@ function describeSignupError(error: unknown): UserFacingError {
 }
 import {
     MIN_PASSWORD_LENGTH,
+    isPasswordTooLong,
+    maximumPasswordMessage,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
+import { TOO_MANY_ATTEMPTS_MESSAGE, authMessages } from "@/app/lib/authMessages";
 import { AuthDivider } from "@/app/components/auth/AuthDivider";
 import { GoogleAuthButton } from "@/app/components/auth/GoogleAuthButton";
 import { FieldLabel } from "@/app/components/ui/form-field";
@@ -119,14 +104,14 @@ function SignupContent() {
             return;
         }
 
-        // Validate password length. The upper bound is bcrypt's: GoTrue
-        // rejects anything longer, so say so before the round trip.
+        // Validate password length. The upper bound is bcrypt's 72 BYTES:
+        // GoTrue rejects anything longer, so say so before the round trip.
         if (password.length < MIN_PASSWORD_LENGTH) {
             setError(localSignupError(`${minimumPasswordMessage}.`));
             setLoading(false);
             return;
         }
-        if (password.length > MAX_PASSWORD_LENGTH) {
+        if (isPasswordTooLong(password)) {
             setError(localSignupError(maximumPasswordMessage));
             setLoading(false);
             return;

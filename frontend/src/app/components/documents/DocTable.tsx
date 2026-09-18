@@ -3288,14 +3288,11 @@ export function DocTable({
         }
     }, [downloadDoc, selectedFolderRootIds, selectedStandaloneDocIds]);
 
-    const handleRemoveSelectedFromFolder = useCallback(async () => {
-        if (
-            !requireCapability("docs.organize", "move documents", "editor")
-        )
-            return;
-        const ids = selectedStandaloneDocIds.filter(
-            (id) => docs.find((d) => d.id === id)?.folder_id != null,
-        );
+    // Takes the ids explicitly so a "Retry" can re-run exactly the rows that
+    // failed. Reading the selection again would resend the whole original
+    // batch: the toast's closure is frozen, and `setSelectedDocIds` below
+    // cannot reach it.
+    const removeDocsFromFolder = useCallback(async (ids: string[]) => {
         if (ids.length === 0) return;
         setSelectedFolderIds(new Set());
         const snapshot = docs;
@@ -3335,11 +3332,27 @@ export function DocTable({
                 action: `move ${failedIds.length === 1 ? "the document" : "those documents"} out of ${failedIds.length === 1 ? "its folder" : "their folders"}`,
                 onRetry: () => {
                     setSelectedDocIds(failedIds);
-                    void handleRemoveSelectedFromFolder();
+                    void removeDocsFromFolder(failedIds);
                 },
             },
         );
-    }, [docs, operations, requireCapability, selectedStandaloneDocIds, setDocuments, setSelectedDocIds]);
+    }, [
+        docs,
+        operations,
+        setDocuments,
+        setSelectedDocIds,
+        setSelectedFolderIds,
+    ]);
+
+    const handleRemoveSelectedFromFolder = useCallback(async () => {
+        if (!requireCapability("docs.organize", "move documents", "editor"))
+            return;
+        await removeDocsFromFolder(
+            selectedStandaloneDocIds.filter(
+                (id) => docs.find((d) => d.id === id)?.folder_id != null,
+            ),
+        );
+    }, [docs, removeDocsFromFolder, requireCapability, selectedStandaloneDocIds]);
 
     const deleteDocumentIds = useCallback(async (ids: string[]) => {
         const owned = ids.filter((id) => {
@@ -3923,9 +3936,9 @@ export function DocTable({
                 action: "select every matching file",
                 fallback:
                     "All matching files could not be selected. Please try again.",
-                onRetry: () => {
-                    void handleToggleAllDocuments();
-                },
+                // Through the ref: the search, filter and sort this reads
+                // may have changed while the request was in flight.
+                onRetry: () => retryToggleAllDocumentsRef.current(),
             });
         } finally {
             setSelectingAllDocuments(false);
@@ -3942,6 +3955,15 @@ export function DocTable({
         typeFilter,
         viewedFolderTreeIds,
     ]);
+
+    // "Retry" must re-enter the newest callback: the one the toast captured
+    // was built from the search, filter and selection as they were when the
+    // request failed.
+    const retryToggleAllDocumentsRef = useRef(() => {});
+    useEffect(() => {
+        retryToggleAllDocumentsRef.current = () =>
+            void handleToggleAllDocuments();
+    }, [handleToggleAllDocuments]);
 
     const selectedItemCount =
         selectedFolderIds.size + selectedStandaloneDocIds.length;

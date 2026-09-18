@@ -268,4 +268,35 @@ describe("SettingsPage Google email changes", () => {
         expect(state.push).not.toHaveBeenCalled();
         clearToasts();
     });
+
+    it("re-asks for confirmation when Retry follows a failed deletion", async () => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        clearToasts();
+        vi.mocked(deleteAccount).mockRejectedValue(
+            Object.assign(new Error("boom"), { status: 500 }),
+        );
+        const user = userEvent.setup();
+        render(
+            <>
+                <SettingsPage />
+                <ToastViewportUI />
+            </>,
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "Delete account" }),
+        );
+        await user.click(screen.getByRole("button", { name: "Delete" }));
+        expect(deleteAccount).toHaveBeenCalledTimes(1);
+
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+        // Retry re-opens the confirmation instead of deleting outright.
+        expect(deleteAccount).toHaveBeenCalledTimes(1);
+        expect(await screen.findByText("Delete account?")).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Delete" }));
+        expect(deleteAccount).toHaveBeenCalledTimes(2);
+        clearToasts();
+    });
 });

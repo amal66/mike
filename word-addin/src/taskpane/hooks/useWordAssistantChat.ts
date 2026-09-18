@@ -12,6 +12,7 @@ import type {
 import type { RedlineEdit, WordEditFormat } from "../lib/redline";
 import { TOOL_EDIT_INDEX_BASE } from "../lib/wordTrackedEditKeys";
 import { saveLocalWordMessage } from "../lib/localWordChats";
+import { saveWordMessageOrNotify } from "../lib/localWordChatSaves";
 import type { WordChatStorageMode } from "../lib/wordChatSettings";
 import { notifyWordChatHistoryChanged } from "../lib/wordChatHistoryEvents";
 import type {
@@ -748,12 +749,20 @@ export function useWordAssistantChat({
               (streamedContent ||
                 completeAssistantEvents(assistantEvents).length > 0)
             ) {
-              await saveLocalWordMessage({
+              // Device-only mode has no server copy: a lost save loses the
+              // transcript, so the failure is shown with a Retry that
+              // re-saves this exact message.
+              const cancelledPayload = {
                 documentId: wordDocumentId,
                 ownerId: wordChatOwnerId,
                 chatId: requestChatId,
                 message: buildLocalAssistantMessage(),
-              }).catch(() => {});
+              };
+              await saveWordMessageOrNotify({
+                storage: wordChatStorage,
+                chatId: requestChatId,
+                save: () => saveLocalWordMessage(cancelledPayload),
+              });
             } else if (wordChatStorage === "cloud") {
               notifyWordChatHistoryChanged();
             }
@@ -786,12 +795,17 @@ export function useWordAssistantChat({
           });
           assistantEvents = setAssistantError(assistantEvents, errorMessage);
           if (wordChatStorage === "local" && requestChatId) {
-            await saveLocalWordMessage({
+            const failedTurnPayload = {
               documentId: wordDocumentId,
               ownerId: wordChatOwnerId,
               chatId: requestChatId,
               message: buildLocalAssistantMessage(errorMessage),
-            }).catch(() => {});
+            };
+            await saveWordMessageOrNotify({
+              storage: wordChatStorage,
+              chatId: requestChatId,
+              save: () => saveLocalWordMessage(failedTurnPayload),
+            });
           } else if (wordChatStorage === "cloud") {
             // The Word-chat backend persists non-abort stream failures before
             // sending its terminal error frame. Refresh history exactly once

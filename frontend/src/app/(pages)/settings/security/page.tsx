@@ -39,29 +39,19 @@ import {
   supportMailtoFor,
   type UserFacingError,
 } from "@/app/lib/userFacingError";
+import { authMessages } from "@/app/lib/authMessages";
 
-/** Keyed by the `code` GoTrue returns from the `/api/auth/mfa/*` routes. */
-const MFA_ERROR_MESSAGES = {
-  mfa_verification_failed:
-    "That code is incorrect. Enter the current six-digit code from your authenticator app.",
-  mfa_verification_rejected:
-    "That code was rejected. Enter the current six-digit code from your authenticator app.",
-  mfa_challenge_expired:
-    "That code expired. Enter the current six-digit code from your authenticator app.",
+/** The shared auth table with this page's deltas, keyed by the `code` the
+ *  `/api/auth/mfa/*` routes return. */
+const MFA_ERROR_MESSAGES = authMessages({
+  // On this page a one-time code is always an authenticator code, and a
+  // step-up is about the setting being changed, not about signing in.
   otp_expired:
     "That code expired. Enter the current six-digit code from your authenticator app.",
-  mfa_factor_not_found: "This authenticator is no longer registered.",
-  too_many_enrolled_mfa_factors:
-    "You already have the maximum number of authenticators. Remove one first.",
-  mfa_totp_enroll_not_enabled:
-    "Authenticator apps are turned off for this workspace.",
   insufficient_aal: "Verify your identity again before changing this setting.",
   reauthentication_needed:
     "Verify your identity again before changing this setting.",
-  over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
-  session_expired: "Your session has expired. Log in again.",
-  cookie_session_required: "Your session has expired. Log in again.",
-} as const;
+});
 
 type MfaFactor = {
   id: string;

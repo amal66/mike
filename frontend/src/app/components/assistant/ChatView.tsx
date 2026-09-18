@@ -43,9 +43,8 @@ import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liqui
 import { HeaderButtonUI, HeaderButtonsUI } from "@/shared/ui/HeaderButtonsUI";
 import { HeaderActionsMenu } from "@/app/components/shared/HeaderActionsMenu";
 import { PermissionDeniedPopup } from "@/app/components/popups/PermissionDeniedPopup";
-import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { can, roleFrom } from "@/app/lib/permissions";
-import { describeError } from "@/app/lib/userFacingError";
+import { notifyError } from "@/app/lib/userFacingError";
 
 interface Props {
     chatId?: string | null;
@@ -113,10 +112,6 @@ export function ChatView({
     const [actionGate, setActionGate] = useState<{
         action: string;
         requiredRole: "owner" | "editor";
-    } | null>(null);
-    const [actionError, setActionError] = useState<{
-        title: string;
-        message: string;
     } | null>(null);
     const [workflowModalInitialId, setWorkflowModalInitialId] = useState<
         string | undefined
@@ -701,12 +696,9 @@ export function ChatView({
         try {
             await renameChat(activeChat.id, title.trim());
         } catch (error) {
-            setActionError({
-                title: "Chat not renamed",
-                message: describeError(error, {
-                    action: "rename this chat",
-                    fallback: "The chat could not be renamed. Try again.",
-                }).message,
+            notifyError(error, {
+                action: "rename this chat",
+                fallback: "The chat could not be renamed. Try again.",
             });
         }
     };
@@ -724,12 +716,10 @@ export function ChatView({
             await deleteChat(activeChat.id);
             router.push("/assistant");
         } catch (error) {
-            setActionError({
-                title: "Chat not deleted",
-                message: describeError(error, {
-                    action: "delete this chat",
-                    fallback: "The chat could not be deleted. Try again.",
-                }).message,
+            notifyError(error, {
+                action: "delete this chat",
+                fallback: "The chat could not be deleted. Try again.",
+                onRetry: () => void handleDeleteChat(),
             });
         }
     };
@@ -1046,13 +1036,6 @@ export function ChatView({
                 action={actionGate?.action}
                 requiredRole={actionGate?.requiredRole}
                 onClose={() => setActionGate(null)}
-            />
-
-            <WarningPopup
-                open={!!actionError}
-                title={actionError?.title ?? "Chat action failed"}
-                message={actionError?.message ?? null}
-                onClose={() => setActionError(null)}
             />
 
             {panelMounted && (

@@ -14,8 +14,14 @@ import {
 } from "@/app/components/auth/authStyles";
 import {
     MIN_PASSWORD_LENGTH,
+    isPasswordTooLong,
+    maximumPasswordMessage,
     minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
+import {
+    PASSWORD_LENGTH_MESSAGE,
+    authMessages,
+} from "@/app/lib/authMessages";
 import { getAuthSession, updateAuthPassword } from "@/app/lib/authApi";
 import { FieldLabel } from "@/app/components/ui/form-field";
 import {
@@ -24,24 +30,19 @@ import {
     type UserFacingError,
 } from "@/app/lib/userFacingError";
 
-/** bcrypt truncates past 72 bytes, so GoTrue refuses anything longer. */
-const MAX_PASSWORD_LENGTH = 72;
-
-const RESET_ERROR_MESSAGES = {
-    weak_password: `Choose a stronger password: at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers, and symbols.`,
-    same_password: "Choose a password you haven't used on Mike before.",
-    validation_failed: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
-    invalid_request: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
+/** The shared auth table with this screen's deltas: here every session-
+ *  shaped failure is really "your reset link is no longer usable". */
+const RESET_ERROR_MESSAGES = authMessages({
+    validation_failed: PASSWORD_LENGTH_MESSAGE,
+    invalid_request: PASSWORD_LENGTH_MESSAGE,
     otp_expired: "This password-reset link has expired. Request a new one.",
     session_expired: "This password-reset link has expired. Request a new one.",
     session_not_found:
         "This password-reset link is invalid or has expired. Request a new one.",
     cookie_session_required:
         "This password-reset link is invalid or has expired. Request a new one.",
-    over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
-    reauthentication_needed:
-        "Log in again before changing your password.",
-} as const;
+    reauthentication_needed: "Log in again before changing your password.",
+});
 
 function ResetPasswordContent() {
     const searchParams = useSearchParams();
@@ -112,8 +113,8 @@ function ResetPasswordContent() {
             setError(`${minimumPasswordMessage}.`);
             return;
         }
-        if (password.length > MAX_PASSWORD_LENGTH) {
-            setError(`Password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
+        if (isPasswordTooLong(password)) {
+            setError(maximumPasswordMessage);
             return;
         }
         if (password !== confirmPassword) {

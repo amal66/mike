@@ -284,7 +284,10 @@ export default function PrivacyDataPage() {
       }
       notifyError(error, {
         action: DELETE_ACTION_LABELS[action],
-        onRetry: () => void handleDeleteData(action),
+        // Re-open the confirmation rather than deleting again from the
+        // toast: this erases data permanently, so it is always the dialog
+        // that starts it.
+        onRetry: () => setPendingDeleteAction(action),
       });
     } finally {
       setDeletingAction(null);

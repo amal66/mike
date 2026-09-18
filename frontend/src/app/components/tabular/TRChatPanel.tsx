@@ -36,6 +36,7 @@ import {
     ReasoningBlock,
 } from "../assistant/message/EventBlocks";
 import { readSseFrames } from "@/app/lib/sse";
+import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { UserVisibleError, notifyError } from "@/app/lib/userFacingError";
 import {
     LIQUID_GLASS_FLAT_CLASS,
@@ -916,7 +917,8 @@ export function TRChatPanel({
             messages,
         };
         setChats((prev) => prev.filter((c) => c.id !== chatId));
-        if (chatId === currentChatId) {
+        const clearedActiveThread = chatId === currentChatId;
+        if (clearedActiveThread) {
             // Same exit as New chat / Load chat: retire the in-flight stream's
             // generation so its late events cannot land in the emptied list.
             detachActiveStream();
@@ -926,11 +928,27 @@ export function TRChatPanel({
             setCurrentChatReasoningLevel(null);
             setMessages([]);
         }
+        // Every thread switch (and every submit) bumps this, so it doubles
+        // as "has the panel moved on since we emptied it?".
+        const clearedGeneration = streamGenerationRef.current;
         try {
             await deleteTabularChat(reviewId, chatId);
         } catch (error) {
-            setChats(snapshot.chats);
-            if (chatId === snapshot.currentChatId) {
+            // Put back only the thread that failed to delete: the list is
+            // reloaded, renamed and appended to while this request is in
+            // flight, and restoring the whole snapshot threw that away.
+            setChats((current) =>
+                restoreOptimisticallyDeletedRows(current, snapshot.chats, [
+                    chatId,
+                ]),
+            );
+            if (
+                clearedActiveThread &&
+                // Reopen the deleted thread only if the user has not since
+                // opened another, started a new chat or sent a message —
+                // re-seating these messages over that would lose their work.
+                streamGenerationRef.current === clearedGeneration
+            ) {
                 setCurrentChatId(snapshot.currentChatId);
                 setCurrentChatTitle(snapshot.currentChatTitle);
                 setCurrentChatModel(snapshot.currentChatModel);

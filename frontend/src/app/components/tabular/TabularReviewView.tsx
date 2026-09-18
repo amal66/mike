@@ -72,6 +72,7 @@ import {
     isModelAvailable,
     type ModelProvider,
 } from "@/app/lib/modelAvailability";
+import { restoreOptimisticallyDeletedRows } from "@/app/lib/optimisticRows";
 import { TRSidePanel } from "./TRSidePanel";
 import { TRTable } from "./TRTable";
 import type { TRTableHandle } from "./TRTable";
@@ -178,6 +179,53 @@ export function TRView({ reviewId, projectId }: Props) {
     // Only one resume stream may be open at a time — mount, a 202 regenerate
     // and a dropped generate stream can all ask for one.
     const resumeStreamOpenRef = useRef(false);
+    // A toast outlives the render that raised it: its "Retry" closure and
+    // everything that closure captured are frozen at the moment of the
+    // failure, while the review moves on — another column is edited, a run
+    // fills cells in. These refs let a revert touch only the item that
+    // failed and let a retry re-enter the CURRENT handler against the
+    // CURRENT config instead of resurrecting a stale snapshot.
+    const columnsRef = useRef(columns);
+    const generatingRef = useRef(false);
+    const cellMutationsBlockedRef = useRef(false);
+    const retryRef = useRef<{
+        generate: () => void;
+        updateColumn: (column: ColumnConfig) => void;
+        deleteColumn: (columnIndex: number) => void;
+    }>({
+        generate: () => {},
+        updateColumn: () => {},
+        deleteColumn: () => {},
+    });
+
+    useEffect(() => {
+        columnsRef.current = columns;
+    }, [columns]);
+
+    // No dependency list: these handlers are re-created every render, and a
+    // retry must always land on the newest one.
+    useEffect(() => {
+        retryRef.current = {
+            generate: () => void handleGenerate(),
+            updateColumn: (column) => void handleUpdateColumn(column),
+            deleteColumn: (columnIndex) => void handleDeleteColumn(columnIndex),
+        };
+    });
+
+    /**
+     * Apply a column change to the latest config, not to the array this
+     * render captured, and return the result to save. The ref is written
+     * eagerly because two edits can start in the same tick, before React
+     * has re-rendered with the first one.
+     */
+    function applyColumns(
+        update: (current: ColumnConfig[]) => ColumnConfig[],
+    ): ColumnConfig[] {
+        const next = update(columnsRef.current);
+        columnsRef.current = next;
+        setColumns(next);
+        return next;
+    }
 
     useEffect(
         () => () => {
@@ -197,6 +245,9 @@ export function TRView({ reviewId, projectId }: Props) {
     const tabularModel = review?.model ?? "";
     const cellMutationsBlocked =
         generating || stoppingGeneration || review?.is_running === true;
+    useEffect(() => {
+        cellMutationsBlockedRef.current = cellMutationsBlocked;
+    }, [cellMutationsBlocked]);
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -324,7 +375,10 @@ export function TRView({ reviewId, projectId }: Props) {
 
     function getNextColumnIndex() {
         return (
-            columns.reduce((max, column) => Math.max(max, column.index), -1) + 1
+            columnsRef.current.reduce(
+                (max, column) => Math.max(max, column.index),
+                -1,
+            ) + 1
         );
     }
 
@@ -698,7 +752,10 @@ export function TRView({ reviewId, projectId }: Props) {
     }
 
     async function handleGenerate() {
-        if (!review || generating) return;
+        // The ref, not the `generating` state: a "Retry" pressed after the
+        // run failed runs a closure created while the run was still in
+        // flight, and the captured `true` made that retry a silent no-op.
+        if (!review || generatingRef.current) return;
         if (!requireContent("run generation")) return;
 
         if (review.is_running) {
@@ -723,6 +780,7 @@ export function TRView({ reviewId, projectId }: Props) {
         generationAbortRef.current = generationAbort;
         stopRequestedRef.current = false;
         setStoppingGeneration(false);
+        generatingRef.current = true;
         setGenerating(true);
 
         try {
@@ -815,9 +873,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 notifyError(err, {
                     action: "run this review",
                     dedupeKey: `tr-generate:${reviewId}`,
-                    onRetry: () => {
-                        void handleGenerate();
-                    },
+                    onRetry: () => retryRef.current.generate(),
                 });
             }
         } finally {
@@ -839,6 +895,7 @@ export function TRView({ reviewId, projectId }: Props) {
                 }
                 generationAbortRef.current = null;
                 stopRequestedRef.current = false;
+                generatingRef.current = false;
                 setGenerating(false);
                 setStoppingGeneration(false);
             }
@@ -925,9 +982,11 @@ export function TRView({ reviewId, projectId }: Props) {
             ...column,
             index: startIndex + index,
         }));
-        const newCols = [...columns, ...normalizedColumns];
         setSavingColumn(true);
-        setColumns(newCols);
+        const newCols = applyColumns((current) => [
+            ...current,
+            ...normalizedColumns,
+        ]);
         setCells((prev) => [
             ...prev,
             ...rows
@@ -966,7 +1025,16 @@ export function TRView({ reviewId, projectId }: Props) {
         try {
             await saveColumnsConfig(newCols);
         } catch (err) {
-            setColumns(columns);
+            // Take back only the columns this call added; an edit to a
+            // different column may have landed while the save was in flight.
+            applyColumns((current) =>
+                current.filter(
+                    (column) =>
+                        !normalizedColumns.some(
+                            (added) => added.index === column.index,
+                        ),
+                ),
+            );
             setCells((prev) =>
                 prev.filter(
                     (cell) =>
@@ -986,41 +1054,66 @@ export function TRView({ reviewId, projectId }: Props) {
 
     async function handleUpdateColumn(nextColumn: ColumnConfig) {
         if (!requireStructure("edit columns")) return;
-        const nextColumns = columns.map((column) =>
-            column.index === nextColumn.index ? nextColumn : column,
+        // The server takes the whole config, so this edit is merged onto the
+        // config as it is now. Restoring the whole array on failure — or
+        // resending the array a frozen Retry captured — would undo every
+        // other column change made in the meantime, on screen and on the
+        // server.
+        const previousColumn = columnsRef.current.find(
+            (column) => column.index === nextColumn.index,
         );
-        const previousColumns = columns;
-        setColumns(nextColumns);
+        const nextColumns = applyColumns((current) =>
+            current.map((column) =>
+                column.index === nextColumn.index ? nextColumn : column,
+            ),
+        );
         try {
             await saveColumnsConfig(nextColumns);
         } catch (err) {
-            setColumns(previousColumns);
+            if (previousColumn) {
+                applyColumns((current) =>
+                    current.map((column) =>
+                        column.index === nextColumn.index
+                            ? previousColumn
+                            : column,
+                    ),
+                );
+            }
             notifyError(err, {
                 action: "save the column",
                 fallback: "This column could not be saved. Try again.",
-                onRetry: () => {
-                    void handleUpdateColumn(nextColumn);
-                },
+                onRetry: () => retryRef.current.updateColumn(nextColumn),
             });
         }
     }
 
     async function handleDeleteColumn(columnIndex: number) {
         if (!requireStructure("delete columns")) return;
-        const previousColumns = columns;
-        const nextColumns = columns.filter(
-            (column) => column.index !== columnIndex,
+        const removedAt = columnsRef.current.findIndex(
+            (column) => column.index === columnIndex,
         );
-        setColumns(nextColumns);
+        if (removedAt === -1) return;
+        const removed = columnsRef.current[removedAt];
+        const nextColumns = applyColumns((current) =>
+            current.filter((column) => column.index !== columnIndex),
+        );
         try {
             await saveColumnsConfig(nextColumns);
         } catch (err) {
-            setColumns(previousColumns);
+            // Put back just this column, where it was, on top of whatever
+            // the config looks like now.
+            applyColumns((current) =>
+                current.some((column) => column.index === columnIndex)
+                    ? current
+                    : [
+                          ...current.slice(0, removedAt),
+                          removed,
+                          ...current.slice(removedAt),
+                      ],
+            );
             notifyError(err, {
                 action: "delete the column",
-                onRetry: () => {
-                    void handleDeleteColumn(columnIndex);
-                },
+                onRetry: () => retryRef.current.deleteColumn(columnIndex),
             });
         }
     }
@@ -1088,10 +1181,35 @@ export function TRView({ reviewId, projectId }: Props) {
             setRows(detail.rows);
             setCells(detail.cells);
         } catch (err) {
-            setDocuments(previousDocuments);
-            setRows(previousRows);
-            setCells(previousCells);
-            setSelectedRowIds(rowIdsToDelete);
+            // Put back only what this removal took out, merged onto what is
+            // on screen now. A run may be filling cells in as this fails
+            // (`cellMutationsBlocked`), and another removal may have
+            // succeeded: restoring the whole snapshot wiped both.
+            const failedCellIds = previousCells
+                .filter((cell) => rowIdsToDelete.includes(cell.row_id))
+                .map((cell) => cell.id);
+            setDocuments((current) =>
+                restoreOptimisticallyDeletedRows(current, previousDocuments, [
+                    ...documentIdsToDelete,
+                ]),
+            );
+            setRows((current) =>
+                restoreOptimisticallyDeletedRows(
+                    current,
+                    previousRows,
+                    rowIdsToDelete,
+                ),
+            );
+            setCells((current) =>
+                restoreOptimisticallyDeletedRows(
+                    current,
+                    previousCells,
+                    failedCellIds,
+                ),
+            );
+            setSelectedRowIds((current) => [
+                ...new Set([...current, ...rowIdsToDelete]),
+            ]);
             notifyError(err, {
                 action:
                     rowIdsToDelete.length === 1
@@ -1130,8 +1248,24 @@ export function TRView({ reviewId, projectId }: Props) {
                 await loadLatestReview();
                 return;
             }
-            setCells(previousCells);
-            setSelectedRowIds(previousSelectedRowIds);
+            // Only the rows this call cleared go back, and only while no run
+            // owns the cells: if one started while the clear was in flight,
+            // its stream is the authority and a restore would overwrite the
+            // results it has already produced.
+            if (!cellMutationsBlockedRef.current) {
+                setCells((current) =>
+                    current.map((cell) =>
+                        rowIds.includes(cell.row_id)
+                            ? (previousCells.find(
+                                  (previous) => previous.id === cell.id,
+                              ) ?? cell)
+                            : cell,
+                    ),
+                );
+            }
+            setSelectedRowIds((current) => [
+                ...new Set([...current, ...previousSelectedRowIds]),
+            ]);
             notifyError(err, {
                 action: "clear the results",
                 onRetry: () => {

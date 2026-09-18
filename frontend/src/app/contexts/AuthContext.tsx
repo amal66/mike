@@ -21,6 +21,7 @@ import {
 import { AUTH_SESSION_INVALIDATED_EVENT } from "@/app/lib/authEvents";
 import { setReportingUser } from "@/app/lib/errorReporting";
 import { notifyError } from "@/app/lib/userFacingError";
+import { clearToasts } from "@/shared/ui/ToastUI";
 
 type User = AuthUser;
 
@@ -135,6 +136,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setUser(null);
                 setAuthError(null);
                 setAuthLoading(false);
+                // Signed out in another tab: same reasoning as above.
+                clearToasts();
                 return;
             }
 
@@ -222,6 +225,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await logout("local");
             setUser(null);
             setAuthError(null);
+            // Toasts outlive the screen that raised them. After a sign-out
+            // the next screen is the login form, and "Couldn't save the
+            // document — Retry" floating over it is both confusing and a
+            // button that now acts as a different user.
+            clearToasts();
             broadcastAuthState("signed-out");
         } catch (error) {
             setAuthError("Unable to sign out. Please try again.");

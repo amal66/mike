@@ -46,6 +46,7 @@ import {
     type UserFacingError,
 } from "@/shared/lib/userError";
 import { showToast, type ToastAction } from "@/shared/ui/ToastUI";
+import { isReported, reportError } from "@/app/lib/errorReporting";
 
 export {
     SUPPORT_EMAIL,
@@ -82,6 +83,57 @@ export function supportMailtoFor(
     });
 }
 
+/** Screens that already are the way back in; "Sign in" would be a no-op. */
+const AUTH_ROUTES = [
+    "/login",
+    "/signup",
+    "/reset-password",
+    "/forgot-password",
+    "/verify-mfa",
+    "/auth/callback",
+    "/sso",
+];
+
+/**
+ * Where "Sign in" goes, or null when the user is already on an auth screen
+ * (and would be sent to the page they are looking at).
+ */
+function signInActionHref(): string | null {
+    if (typeof window === "undefined") return null;
+    const { pathname, search } = window.location;
+    const path = pathname.replace(/\/+$/, "") || "/";
+    if (
+        AUTH_ROUTES.some(
+            (route) => path === route || path.startsWith(`${route}/`),
+        )
+    ) {
+        return null;
+    }
+    return `/login?next=${encodeURIComponent(`${pathname}${search}`)}`;
+}
+
+/**
+ * Send real faults to Sentry, and only real faults.
+ *
+ * A 4xx is an intentional answer, a transport failure is already reported by
+ * the API client under `component: mike-api`, and a cancellation is not a
+ * failure at all. What is left is an unclassifiable throw (a bug in this
+ * code) and a 5xx that reached a screen without going through the API
+ * client. This runs BEFORE the console.warn below so the console bridge
+ * recognises the error as already sent and drops its own copy.
+ */
+function reportRealFault(
+    error: unknown,
+    described: UserFacingError,
+    action: string | undefined,
+): void {
+    const isFault =
+        described.kind === "unknown" ||
+        (described.kind === "server" && !isReported(error));
+    if (!isFault) return;
+    reportError(error, { tags: { component: "notify", action } });
+}
+
 /**
  * Show a failure to the user. Returns the description so the caller can
  * also render it inline, or `null` when the failure is a cancellation the
@@ -94,9 +146,11 @@ export function notifyError(
     const described = describeError(error, options);
     if (described.kind === "aborted") return null;
 
+    reportRealFault(error, described, options.action);
+
     // warn, not error: Sentry's console bridge forwards console.error, and
-    // a 4xx or a cancellation the user just saw is not an incident. Real
-    // faults were already reported where they were caught (5xx, transport).
+    // a 4xx or a cancellation the user just saw is not an incident. The one
+    // above already reported anything that was a real fault.
     if (process.env.NODE_ENV !== "production") {
         console.warn("[user-error]", described.title, described.cause);
     }
@@ -104,6 +158,15 @@ export function notifyError(
     const actions: ToastAction[] = [...(options.actions ?? [])];
     if (options.onRetry && described.retryable) {
         actions.push({ label: "Retry", onClick: options.onRetry });
+    }
+    // "Your session has expired" with nothing to click leaves the user to
+    // find the way back to the login screen themselves.
+    const signInHref = signInActionHref();
+    if (described.kind === "unauthenticated" && signInHref) {
+        actions.push({
+            label: "Sign in",
+            onClick: () => window.location.assign(signInHref),
+        });
     }
     const wantsSupport = options.support ?? described.supportable;
 

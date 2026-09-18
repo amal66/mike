@@ -161,4 +161,35 @@ describe("privacy-data async exports", () => {
 
         await waitFor(() => expect(mockedDeleteMemories).toHaveBeenCalledOnce());
     });
+
+    it("re-asks for confirmation when Retry follows a failed deletion", async () => {
+        clearToasts();
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        mockedDeleteMemories.mockRejectedValue(
+            Object.assign(new Error("boom"), { status: 500 }),
+        );
+
+        render(
+            <>
+                <PrivacyDataPage />
+                <ToastViewportUI />
+            </>,
+        );
+        await userEvent.click(
+            screen.getByRole("button", { name: "Delete all memory" }),
+        );
+        await userEvent.click(
+            screen.getAllByRole("button", { name: "Delete" }).at(-1)!,
+        );
+        await waitFor(() => expect(mockedDeleteMemories).toHaveBeenCalledOnce());
+
+        await userEvent.click(
+            await screen.findByRole("button", { name: "Retry" }),
+        );
+
+        // Nothing is erased straight from the toast; the dialog comes back.
+        expect(mockedDeleteMemories).toHaveBeenCalledOnce();
+        expect(await screen.findByText("Delete all memory?")).toBeVisible();
+        clearToasts();
+    });
 });

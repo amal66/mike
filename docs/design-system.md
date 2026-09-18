@@ -230,6 +230,7 @@ Compose the material classes through the established primitives and constants:
 | `empty-state` | `components/ui` | Icon + display heading + copy + optional action, for "nothing here yet". Wrap in `TableEmptyState` inside a table. |
 | `check-square` | `components/ui` | The selection square used by directory/picker rows. Decorative by default; the row owns the ARIA state. |
 | `ToastUI` | `shared/ui` | Global toast (snackbar) stack. Raise with `showToast`; in the web app prefer `notifyError`/`notifySuccess` from `app/lib/userFacingError.ts`. See "Reporting failures" below. |
+| `TableErrorState` | `components/shared` | "This didn't load" inside a table: icon, heading, the described message and a "Try again" button. |
 
 For a real standalone checkbox use `<input type="checkbox">` with
 `TABLE_CHECKBOX_CLASS` (see `TablePrimitive.tsx`), not `check-square`.
@@ -258,20 +259,33 @@ the inside out:
      given) and "Contact support" (only when the failure is one the user
      cannot fix), which opens a pre-filled email to `SUPPORT_EMAIL`
      (`will@mikeoss.com`) carrying the request id, code, page and time.
-   - A whole screen that cannot render: `EmptyState tone="error"` /
-     `ErrorState` with a "Try again" action.
+   - A whole screen that cannot render: `EmptyState tone="error"`, or
+     `TableErrorState` from `components/shared/TablePrimitive.tsx` inside a
+     table, with a "Try again" action.
    - A route that threw: `app/error.tsx` and `app/global-error.tsx` offer
      "Try again" and "Contact support" with the error digest.
    The Word add-in mounts the same `ToastViewportUI` and uses
    `word-addin/src/taskpane/lib/notify.ts`, so both clients read the same
    sentences.
 3. **Revert optimistic state** before notifying, so the screen never shows a
-   change that did not happen.
+   change that did not happen — but revert only the item that failed. Use a
+   functional updater (and `restoreOptimisticallyDeletedRows` in
+   `app/lib/optimisticRows.ts` for a removed row) rather than restoring a
+   snapshot of the whole list, and let `onRetry` re-read the current state
+   through a ref: by the time it runs, the request that failed is no longer
+   the last thing that happened.
 4. **Cancellation is not an error.** `notifyError` returns `null` for an
    `AbortError` and shows nothing.
 5. **Repeats collapse.** Polling and autosave loops pass a `dedupeKey` so a
    failing loop shows one toast, not one per tick.
-6. **Silence needs a reason.** A catch that intentionally shows nothing
+6. **The toast stack protects what must be acted on.** Only three toasts
+   are visible at once; when the stack overflows it drops dismissible
+   notices (info, success, errors with nothing to click) oldest-first and
+   keeps an error that offers "Retry" or "Contact support". Toasts never
+   take focus — that would pull the caret out of what the user is typing —
+   but `focusToast(id)` moves it deliberately for a failure that must be
+   dealt with now.
+7. **Silence needs a reason.** A catch that intentionally shows nothing
    (cleanup, a local-storage JSON fallback, a body drain) carries a one-line
    comment saying why.
 
