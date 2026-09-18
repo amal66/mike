@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
     getProject,
     getTabularReview,
-    listProjects,
     updateTabularReview,
 } from "@/app/lib/mikeApi";
 import type { TabularReview } from "@/app/components/shared/types";

@@ -3330,10 +3330,12 @@ export function DocTable({
         const results = await Promise.allSettled(
             ids.map((id) => operations.moveDocument(id, null)),
         );
-        // Rows the server did move carry its version of the record.
+        // Rows the server did move carry its version of the record. A move
+        // that resolves without one (a 204, say) still counts as moved, so
+        // read the id defensively rather than failing the whole batch on it.
         const updatedById = new Map(
             results.flatMap((result) =>
-                result.status === "fulfilled"
+                result.status === "fulfilled" && result.value?.id
                     ? [[result.value.id, result.value] as const]
                     : [],
             ),
