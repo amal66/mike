@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { reportError } from "@/app/lib/errorReporting";
 import { buildSupportMailto, describeError } from "@/shared/lib/userError";
 
@@ -70,7 +69,44 @@ export default function GlobalError({
                         margin-bottom: 2rem;
                     }
 
-                    .btn-back { font-family: 'Inter', sans-serif; }
+                    /*
+                     * global-error replaces the root layout, so globals.css
+                     * and Tailwind never load here: a PillButtonUI would
+                     * render as unstyled browser chrome. These rules are the
+                     * pill, restated in plain CSS.
+                     */
+                    .error-btn {
+                        font-family: 'Inter', -apple-system, sans-serif;
+                        font-size: 0.875rem;
+                        font-weight: 500;
+                        line-height: 1;
+                        padding: 0.625rem 1.125rem;
+                        border-radius: 9999px;
+                        border: 1px solid transparent;
+                        cursor: pointer;
+                        transition: background-color 0.15s, border-color 0.15s;
+                    }
+
+                    .error-btn-primary {
+                        background-color: #111;
+                        color: #fff;
+                    }
+
+                    .error-btn-primary:hover { background-color: #000; }
+
+                    .error-btn-secondary {
+                        background-color: #fff;
+                        color: #111;
+                        border-color: #d1d5db;
+                    }
+
+                    .error-btn-secondary:hover { background-color: #f9fafb; }
+
+                    .error-btn:focus-visible,
+                    .error-support a:focus-visible {
+                        outline: 2px solid #111;
+                        outline-offset: 2px;
+                    }
 
                     .error-actions {
                         display: flex;
@@ -99,25 +135,21 @@ export default function GlobalError({
                     </p>
                     <div className="error-actions">
                         {reset && (
-                            <PillButtonUI
+                            <button
                                 type="button"
-                                tone="blue"
-                                size="normal"
-                                className="btn-back"
+                                className="error-btn error-btn-primary"
                                 onClick={() => reset()}
                             >
                                 Try again
-                            </PillButtonUI>
+                            </button>
                         )}
-                        <PillButtonUI
+                        <button
                             type="button"
-                            tone="white"
-                            size="normal"
-                            className="btn-back"
+                            className="error-btn error-btn-secondary"
                             onClick={() => window.history.back()}
                         >
                             Back
-                        </PillButtonUI>
+                        </button>
                     </div>
                     <p className="error-support">
                         <a href={supportHref}>Contact support</a>

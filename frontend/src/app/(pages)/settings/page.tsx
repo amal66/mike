@@ -16,6 +16,7 @@ import {
 } from "@/app/components/popups/MfaVerificationPopup";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import { deleteAccount, isMfaRequiredError } from "@/app/lib/mikeApi";
+import { authMessages } from "@/app/lib/authMessages";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
 import {
   SettingsDescription,
@@ -36,16 +37,14 @@ interface EmailWarning {
 }
 
 /** Keyed by the `code` GoTrue returns from `PATCH /api/auth/email`. */
-const EMAIL_ERROR_MESSAGES = {
-  email_address_invalid: "Enter a valid email address.",
-  email_address_not_authorized:
-    "Mike can't send email to this address. Use a different one.",
+// One auth message source (authMessages.ts); only the email-field wording
+// differs here, because a validation failure on this screen can only mean
+// the address itself.
+const EMAIL_ERROR_MESSAGES = authMessages({
   validation_failed: "Enter a valid email address.",
   invalid_request: "Enter a valid email address.",
   reauthentication_needed: "Log in again before changing your email.",
-  session_expired: "Your session has expired. Log in again.",
-  cookie_session_required: "Your session has expired. Log in again.",
-} as const;
+});
 
 const EMAIL_TAKEN_CODES = new Set(["email_exists", "user_already_exists"]);
 const EMAIL_RATE_LIMIT_CODES = new Set([
@@ -143,7 +142,10 @@ export default function SettingsPage() {
       setDeleteConfirm(false);
       notifyError(error, {
         action: "delete your account",
-        onRetry: () => void handleDeleteAccount(),
+        // Retry re-opens the confirmation instead of deleting outright: a
+        // button in a toast must never be the only thing between a stray
+        // click and an irreversible account deletion.
+        onRetry: () => setDeleteConfirm(true),
         supportNote: "Account deletion failed.",
       });
     }

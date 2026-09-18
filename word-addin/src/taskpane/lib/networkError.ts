@@ -9,7 +9,7 @@
  * container is down. The host's original wording is kept on `cause` for the
  * console, never for the screen.
  */
-import { UserVisibleError } from "@mike/user-error";
+import { UserVisibleError, networkMessage } from "@mike/user-error";
 
 /** The origin a request was aimed at, for the message and for the console. */
 export function requestOrigin(url: string): string {
@@ -27,10 +27,9 @@ export function requestOrigin(url: string): string {
  * the wording can be asserted without a browser.
  */
 export function networkErrorMessage(url: string): string {
-  return (
-    `Mike couldn't reach the server at ${requestOrigin(url)}. ` +
-    `Check your connection and that the server is running.`
-  );
+  // The sentence itself is shared with the web app so both clients say the
+  // same thing; only the origin is added here.
+  return networkMessage(requestOrigin(url));
 }
 
 /** Detail about the original throw, for logs only. Never rendered. */

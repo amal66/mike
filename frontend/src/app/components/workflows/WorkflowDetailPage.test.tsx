@@ -185,8 +185,19 @@ describe("WorkflowDetailPage failures", () => {
         await user.click(screen.getAllByRole("checkbox")[0]);
         await user.click(screen.getAllByRole("button", { name: "Delete" })[0]);
 
-        const alert = await screen.findByRole("alert");
-        expect(alert).toHaveTextContent("Couldn't save the columns");
+        // Under load the prompt autosave debounce can fire during this test
+        // and raise its own toast for the same rejected mock, so pick the
+        // column-save toast by content rather than assuming a single alert.
+        await screen.findAllByRole("alert");
+        await waitFor(() =>
+            expect(
+                screen
+                    .getAllByRole("alert")
+                    .some((el) =>
+                        el.textContent?.includes("Couldn't save the columns"),
+                    ),
+            ).toBe(true),
+        );
         // The optimistic removal is undone before the toast: the table never
         // shows a layout the server refused.
         expect(await screen.findByText("Party")).toBeVisible();

@@ -38,7 +38,7 @@ const TOO_MANY_ATTEMPTS_DETAIL =
   "Too many attempts. Wait a few minutes and try again.";
 
 /** GoTrue error codes → what the user should read. */
-const CODE_DETAILS: Readonly<Record<string, string>> = {
+export const CODE_DETAILS: Readonly<Record<string, string>> = {
   invalid_credentials: "The email or password is incorrect.",
   email_not_confirmed:
     "Confirm your email address before signing in. Check your inbox for the confirmation link.",
@@ -98,7 +98,7 @@ const CODE_DETAILS: Readonly<Record<string, string>> = {
  * Older GoTrue releases send only a message. Recognise the common ones so
  * they receive the same treatment as coded errors.
  */
-const MESSAGE_CODES: ReadonlyArray<[RegExp, string]> = [
+export const MESSAGE_CODES: ReadonlyArray<[RegExp, string]> = [
   [/invalid login credentials/i, "invalid_credentials"],
   [/email not confirmed/i, "email_not_confirmed"],
   [/user already registered/i, "user_already_exists"],

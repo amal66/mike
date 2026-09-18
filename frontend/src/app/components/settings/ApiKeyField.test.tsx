@@ -18,7 +18,7 @@ vi.mock("@/app/lib/mikeApi", () => ({
 }));
 
 function renderField(overrides: {
-    onSave?: () => Promise<boolean>;
+    onSave?: (value: string) => Promise<boolean>;
     onRemove?: () => Promise<boolean>;
     hasSavedKey?: boolean;
 }) {
@@ -90,6 +90,49 @@ describe("ApiKeyField", () => {
         expect(await screen.findByRole("alert")).toHaveTextContent(
             "Mike couldn't reach the server. Check your connection and try again.",
         );
+    });
+
+    it("does not resend the old key when Retry follows a correction", async () => {
+        const onSave = vi
+            .fn<(value: string) => Promise<boolean>>()
+            .mockResolvedValue(false);
+        const user = userEvent.setup();
+        renderField({ onSave });
+
+        const input = screen.getByLabelText("Anthropic API key");
+        await user.type(input, "sk-typo");
+        await user.click(screen.getByRole("button", { name: "Save" }));
+        expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+        // The user fixes the key before reaching for the toast.
+        await user.clear(input);
+        await user.type(input, "sk-correct");
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+        // The stale value is never sent again...
+        expect(onSave).toHaveBeenCalledTimes(1);
+        expect(onSave).toHaveBeenCalledWith("sk-typo");
+        // ...and the user is told why nothing happened.
+        expect(await screen.findByRole("status")).toHaveTextContent(
+            "has changed since that attempt",
+        );
+        expect(input).toHaveValue("sk-correct");
+    });
+
+    it("retries the same key when the field is untouched", async () => {
+        const onSave = vi
+            .fn<(value: string) => Promise<boolean>>()
+            .mockResolvedValueOnce(false)
+            .mockResolvedValueOnce(true);
+        const user = userEvent.setup();
+        renderField({ onSave });
+
+        await user.type(screen.getByLabelText("Anthropic API key"), "sk-same");
+        await user.click(screen.getByRole("button", { name: "Save" }));
+        await user.click(await screen.findByRole("button", { name: "Retry" }));
+
+        expect(onSave).toHaveBeenCalledTimes(2);
+        expect(onSave).toHaveBeenLastCalledWith("sk-same");
     });
 
     it("reports a refused removal and leaves the key in place", async () => {

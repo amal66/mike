@@ -16,22 +16,13 @@ import {
     supportMailtoFor,
     type UserFacingError,
 } from "@/app/lib/userFacingError";
+import { LINK_SPENT_MESSAGE, authMessages } from "@/app/lib/authMessages";
 
-const LINK_SPENT_MESSAGE =
-    "This confirmation link is invalid or has expired. Request a new one.";
-
-const CALLBACK_ERROR_MESSAGES = {
-    flow_state_expired: LINK_SPENT_MESSAGE,
-    flow_state_not_found: LINK_SPENT_MESSAGE,
+/** The shared auth table with this screen's deltas: on the callback route
+ *  every spent one-time code is the same spent confirmation link. */
+const CALLBACK_ERROR_MESSAGES = authMessages({
     otp_expired: LINK_SPENT_MESSAGE,
-    bad_code_verifier:
-        "This link was opened in a different browser than the one that started sign-in. Start again from the login page.",
-    bad_oauth_state:
-        "Sign-in couldn't be completed. Start again from the login page.",
-    bad_oauth_callback:
-        "Sign-in couldn't be completed. Start again from the login page.",
-    over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
-} as const;
+});
 
 /**
  * A spent or tampered link is a 4xx and deserves the "request a new one"

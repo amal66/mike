@@ -19,22 +19,15 @@ import {
     supportMailtoFor,
     type UserFacingError,
 } from "@/app/lib/userFacingError";
+import { authMessages } from "@/app/lib/authMessages";
 
-const SSO_ERROR_MESSAGES = {
+/** The shared auth table with this screen's deltas: the address asked for
+ *  here is a work address, so "valid email" is not specific enough. */
+const SSO_ERROR_MESSAGES = authMessages({
     invalid_request: "Enter a valid company email address.",
     validation_failed: "Enter a valid company email address.",
     email_address_invalid: "Enter a valid company email address.",
-    sso_domain_not_allowed:
-        "Single sign-on is not available for this email domain.",
-    sso_disabled: "Single sign-on is not enabled.",
-    sso_unavailable:
-        "Unable to start single sign-on for this email domain.",
-    sso_provider_not_found:
-        "Single sign-on is not set up for this email domain.",
-    saml_provider_disabled:
-        "Single sign-on is not enabled for this email domain.",
-    over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
-} as const;
+});
 
 export default function SsoLoginPage() {
     const router = useRouter();

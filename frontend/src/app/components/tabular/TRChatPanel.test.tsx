@@ -311,6 +311,56 @@ describe("TRChatPanel header", () => {
         ).toBeVisible();
     });
 
+    it("does not reopen the deleted thread over one the user opened since", async () => {
+        const user = userEvent.setup();
+        let failDelete!: (error: unknown) => void;
+        vi.mocked(deleteTabularChat).mockReturnValue(
+            new Promise((_resolve, reject) => {
+                failDelete = reject;
+            }),
+        );
+        render(
+            <>
+                <TRChatPanel
+                    reviewId="review-1"
+                    initialChatId="chat-1"
+                    onCitationClick={vi.fn()}
+                />
+                <ToastViewportUI />
+            </>,
+        );
+        await screen.findByRole("button", { name: "Current draft" });
+        await user.click(screen.getByRole("button", { name: "Actions" }));
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+        // While the delete is in flight the user opens another thread.
+        await user.click(screen.getByRole("button", { name: /New Chat/ }));
+        await user.click(
+            await screen.findByRole("menuitem", { name: /Earlier advice/ }),
+        );
+        await screen.findByRole("button", { name: /Earlier advice/ });
+
+        await act(async () => {
+            failDelete(new Error("boom"));
+            await Promise.resolve();
+        });
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Couldn't delete this chat",
+        );
+        // The thread the user is reading stays open...
+        expect(
+            screen.getByRole("button", { name: /Earlier advice/ }),
+        ).toBeVisible();
+        // ...and the chat that failed to delete is back in the history.
+        await user.click(
+            screen.getByRole("button", { name: /Earlier advice/ }),
+        );
+        expect(
+            await screen.findByRole("menuitem", { name: /Current draft/ }),
+        ).toBeVisible();
+    });
+
     it("restores the old title and explains when renaming fails", async () => {
         const user = userEvent.setup();
         vi.mocked(renameTabularChat).mockRejectedValue(new Error("boom"));

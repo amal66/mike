@@ -2,6 +2,21 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 import { MikeApiError } from "./mikeApi";
+
+// The Sentry SDK is not loaded in tests; what matters is which failures
+// reach `reportError` and which do not.
+const reported = vi.hoisted(() => ({
+    reportError: vi.fn(),
+    isReported: vi.fn(() => false),
+}));
+vi.mock("@/app/lib/errorReporting", () => ({
+    reportError: reported.reportError,
+    isReported: reported.isReported,
+    reportApiFailure: vi.fn(),
+    reportNetworkFailure: vi.fn(),
+    setReportingUser: vi.fn(),
+    scrubEvent: vi.fn(),
+}));
 import {
     errorCode,
     knownErrorCodeMessage,
@@ -137,6 +152,98 @@ describe("notifyError", () => {
         );
     });
 
+    it("puts everything support needs in the email, on every route", () => {
+        // The in-app form at /support has no backend route to post to, so
+        // the email draft is the hand-off — and it has to carry enough to
+        // find the request in the logs without the user quoting a document.
+        for (const pathname of ["/documents/1", "/login"]) {
+            clearToasts();
+            const original = window.location;
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: {
+                    ...original,
+                    href: `https://app.test${pathname}`,
+                    pathname,
+                    search: "",
+                },
+            });
+            try {
+                const { unmount } = render(<ToastViewportUI />);
+                act(() => {
+                    notifyError(
+                        new MikeApiError({
+                            status: 500,
+                            message: "internal",
+                            code: "internal_error",
+                            requestId: "req-9",
+                        }),
+                        {
+                            action: "save the document",
+                            supportNote: "While renaming Contract.docx",
+                        },
+                    );
+                });
+                const href = decodeURIComponent(
+                    screen
+                        .getByRole("link", { name: "Contact support" })
+                        .getAttribute("href") ?? "",
+                );
+                expect(href.startsWith("mailto:will@mikeoss.com?")).toBe(true);
+                expect(href).toContain("Request ID: req-9");
+                expect(href).toContain("Error code: internal_error");
+                expect(href).toContain("HTTP status: 500");
+                expect(href).toContain(`Page: https://app.test${pathname}`);
+                expect(href).toContain("Details: While renaming Contract.docx");
+                // Support is a link, never an in-app action.
+                expect(
+                    screen.queryByRole("button", { name: "Contact support" }),
+                ).toBeNull();
+                unmount();
+            } finally {
+                Object.defineProperty(window, "location", {
+                    configurable: true,
+                    writable: true,
+                    value: original,
+                });
+            }
+        }
+    });
+
+    it("offers a way back to the login screen when the session is gone", () => {
+        render(<ToastViewportUI />);
+        const assign = vi.fn();
+        const original = window.location;
+        Object.defineProperty(window, "location", {
+            configurable: true,
+            writable: true,
+            value: {
+                ...original,
+                pathname: "/documents/1",
+                search: "?tab=edits",
+                assign,
+            },
+        });
+        try {
+            act(() => {
+                notifyError(new MikeApiError({ status: 401, message: "no" }));
+            });
+            act(() => {
+                screen.getByRole("button", { name: "Sign in" }).click();
+            });
+            expect(assign).toHaveBeenCalledWith(
+                "/login?next=%2Fdocuments%2F1%3Ftab%3Dedits",
+            );
+        } finally {
+            Object.defineProperty(window, "location", {
+                configurable: true,
+                writable: true,
+                value: original,
+            });
+        }
+    });
+
     it("offers neither Retry nor support for a validation failure", () => {
         render(<ToastViewportUI />);
         act(() => {
@@ -252,5 +359,87 @@ describe("notifyError options", () => {
         } finally {
             globalThis.window = win;
         }
+    });
+
+    it("offers no Sign in action without a window to navigate", () => {
+        const win = globalThis.window;
+        // @ts-expect-error simulate a non-browser runtime
+        delete globalThis.window;
+        try {
+            const described = notifyError(
+                new MikeApiError({ status: 401, message: "no" }),
+                { onRetry: () => undefined },
+            );
+            expect(described?.kind).toBe("unauthenticated");
+        } finally {
+            globalThis.window = win;
+        }
+        render(<ToastViewportUI />);
+        expect(
+            screen.queryByRole("button", { name: "Sign in" }),
+        ).not.toBeInTheDocument();
+    });
+
+    it("keeps the diagnostic console line out of production", () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        vi.stubEnv("NODE_ENV", "production");
+        try {
+            notifyError(new MikeApiError({ status: 500, message: "boom" }));
+            expect(warn).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllEnvs();
+            warn.mockRestore();
+        }
+    });
+});
+
+describe("what notifyError reports to Sentry", () => {
+    beforeEach(() => {
+        clearToasts();
+        reported.reportError.mockClear();
+        reported.isReported.mockReturnValue(false);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    afterEach(() => {
+        clearToasts();
+        vi.restoreAllMocks();
+    });
+
+    it("reports a throw it could not classify", () => {
+        const bug = new Error("cannot read properties of undefined");
+        act(() => {
+            notifyError(bug, { action: "open the workflow" });
+        });
+        expect(reported.reportError).toHaveBeenCalledTimes(1);
+        expect(reported.reportError).toHaveBeenCalledWith(bug, {
+            tags: { component: "notify", action: "open the workflow" },
+        });
+    });
+
+    it("reports a 5xx the API client did not already report, once", () => {
+        act(() => {
+            notifyError(new MikeApiError({ status: 500, message: "x" }));
+        });
+        expect(reported.reportError).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not report a 5xx twice", () => {
+        reported.isReported.mockReturnValue(true);
+        act(() => {
+            notifyError(new MikeApiError({ status: 500, message: "x" }));
+        });
+        expect(reported.reportError).not.toHaveBeenCalled();
+    });
+
+    it("stays quiet for failures that are not faults", () => {
+        act(() => {
+            // An intentional 4xx answer.
+            notifyError(new MikeApiError({ status: 400, message: "Bad." }));
+            // The transport, already reported under component: mike-api.
+            notifyError(new TypeError("Failed to fetch"));
+            // A cancellation the user caused.
+            notifyError(new DOMException("x", "AbortError"));
+        });
+        expect(reported.reportError).not.toHaveBeenCalled();
     });
 });

@@ -99,10 +99,26 @@ const KIND_TITLES: Record<UserErrorKind, string> = {
     unknown: "Something went wrong",
 };
 
+/**
+ * The one sentence shown when a request never reached the server.
+ *
+ * Both clients say this. The add-in passes the origin because Mike is
+ * self-hostable and "check your connection" is useless advice to someone
+ * whose own API container is down; the web app omits it because the API is
+ * same-origin there and naming it would add noise, not information.
+ */
+export function networkMessage(origin?: string): string {
+    // Naming the origin is for self-hosters, whose own server may be the
+    // thing that is down, so that variant also says to check the server.
+    if (origin) {
+        return `Mike couldn't reach the server at ${origin}. Check your connection and that the server is running, then try again.`;
+    }
+    return "Mike couldn't reach the server. Check your connection and try again.";
+}
+
 const KIND_MESSAGES: Record<UserErrorKind, string> = {
     offline: "Your device is offline. Check your connection and try again.",
-    network:
-        "Mike couldn't reach the server. Check your connection and try again.",
+    network: networkMessage(),
     timeout: "The server took too long to respond. Try again.",
     aborted: "The request was cancelled.",
     unauthenticated: "Your session has expired. Sign in again to continue.",
@@ -136,21 +152,52 @@ const SUPPORTABLE: ReadonlySet<UserErrorKind> = new Set([
     "unknown",
 ]);
 
-/** Backend `code` values whose meaning is stable across routes. */
-const CODE_KINDS: Readonly<Record<string, UserErrorKind>> = {
+/**
+ * Backend `code` values whose meaning is stable across routes.
+ *
+ * Every entry must be a code some server actually emits — the API
+ * (`backend/src`) or the Next proxy route (`frontend/src/app/api`). An
+ * invented code is worse than no entry: it looks like coverage while the
+ * real failure falls through to the status-based classification below.
+ * `codeTable.drift.test.ts` fails when a code here exists in neither tree.
+ */
+export const CODE_KINDS: Readonly<Record<string, UserErrorKind>> = {
+    // Throttling
     rate_limited: "rate_limited",
-    too_many_requests: "rate_limited",
-    payload_too_large: "payload_too_large",
-    file_too_large: "payload_too_large",
-    unauthorized: "unauthenticated",
-    session_expired: "unauthenticated",
-    forbidden: "forbidden",
-    not_found: "not_found",
-    conflict: "conflict",
-    validation_error: "validation",
+    upload_session_control_rate_limit: "rate_limited",
+    upload_session_poll_rate_limit: "rate_limited",
+    upload_session_rate_limit_exceeded: "rate_limited",
+    // Size limits
+    request_too_large: "payload_too_large",
+    upload_file_too_large: "payload_too_large",
+    upload_batch_too_large: "payload_too_large",
+    // Input the user can correct
+    validation_failed: "validation",
     invalid_request: "validation",
+    invalid_json: "validation",
+    password_too_short: "validation",
+    password_too_long: "validation",
+    email_address_invalid: "validation",
+    upload_incomplete: "validation",
+    missing_api_key: "validation",
+    model_unavailable: "validation",
+    model_required: "validation",
+    // Identity
+    authentication_failed: "unauthenticated",
+    session_expired: "unauthenticated",
+    cookie_session_required: "unauthenticated",
+    mfa_verification_required: "forbidden",
+    untrusted_origin: "forbidden",
+    // Something else changed first
+    review_running: "conflict",
+    review_stale: "conflict",
+    memory_revision_conflict: "conflict",
+    upload_target_busy: "conflict",
+    access_inherited: "conflict",
+    ask_inputs_stale: "conflict",
+    // Ours, not theirs
     internal_error: "server",
-    service_unavailable: "unavailable",
+    upstream_unavailable: "unavailable",
 };
 
 type ErrorLike = {

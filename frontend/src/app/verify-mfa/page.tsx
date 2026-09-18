@@ -19,25 +19,17 @@ import {
     supportMailtoFor,
     type UserFacingError,
 } from "@/app/lib/userFacingError";
+import { authMessages } from "@/app/lib/authMessages";
 
-const MFA_ERROR_MESSAGES = {
-    mfa_verification_failed:
-        "That code is incorrect. Enter the current six-digit code from your authenticator app.",
-    mfa_verification_rejected:
-        "That code was rejected. Enter the current six-digit code from your authenticator app.",
-    mfa_challenge_expired:
-        "That code expired. Enter the current six-digit code from your authenticator app.",
+/** The shared auth table with this screen's deltas. */
+const MFA_ERROR_MESSAGES = authMessages({
+    // Only here is a missing authenticator a lock-out rather than a
+    // settings row that disappeared.
     mfa_factor_not_found:
         "This authenticator is no longer registered. Contact support to regain access.",
-    mfa_ip_address_mismatch:
-        "Your network changed mid-verification. Start again from the login page.",
-    over_request_rate_limit:
-        "Too many attempts. Wait a moment and try again.",
     validation_failed: "Enter the six-digit code from your authenticator app.",
     invalid_request: "Enter the six-digit code from your authenticator app.",
-    session_expired: "Your session has expired. Log in again.",
-    cookie_session_required: "Your session has expired. Log in again.",
-} as const;
+});
 
 type MfaFactor = {
     id: string;

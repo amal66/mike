@@ -65,6 +65,7 @@ vi.mock("../../../middleware/auth", () => ({
 }));
 
 import { authRouter } from "../auth.routes";
+import { signupSchema } from "../auth.service";
 
 const app = express();
 app.use(express.json());
@@ -340,6 +341,28 @@ describe("auth routes", () => {
       .post("/auth/signup")
       .set("Origin", origin)
       .send({ email: user.email, password: "x".repeat(73) });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      code: "password_too_long",
+      detail: "Password must be at most 72 characters.",
+    });
+    expect(authClient.auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it("counts bcrypt's 72-byte limit in bytes, not characters", async () => {
+    // 36 two-byte characters: 36 long by String.length, 72 bytes to bcrypt,
+    // so this one is legal. A `.max(72)` on characters would instead let
+    // its 37-character sibling through for GoTrue to reject.
+    const atTheLimit = "é".repeat(36);
+    const overTheLimit = "é".repeat(37);
+    expect(atTheLimit.length).toBe(36);
+    expect(signupSchema.safeParse({ email: user.email, password: atTheLimit }).success).toBe(true);
+
+    const response = await request(app)
+      .post("/auth/signup")
+      .set("Origin", origin)
+      .send({ email: user.email, password: overTheLimit });
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({

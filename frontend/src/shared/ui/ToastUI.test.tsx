@@ -2,6 +2,7 @@ import { act, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     MAX_VISIBLE_TOASTS,
+    focusToast,
     ToastViewportUI,
     clearToasts,
     dismissToast,
@@ -140,6 +141,44 @@ describe("ToastUI", () => {
         expect(items[0]).toHaveTextContent("Toast 2");
     });
 
+    it("evicts chatter before an error the user still has to act on", () => {
+        render(<ToastViewportUI />);
+        act(() => {
+            showToast({
+                tone: "error",
+                message: "Upload failed",
+                actions: [{ label: "Retry", onClick: () => {} }],
+            });
+            for (let i = 0; i < MAX_VISIBLE_TOASTS; i += 1) {
+                showToast({ tone: "success", message: `Saved ${i}` });
+            }
+        });
+        const items = screen.getAllByTestId("toast");
+        expect(items).toHaveLength(MAX_VISIBLE_TOASTS);
+        expect(items[0]).toHaveTextContent("Upload failed");
+        expect(
+            screen.getByRole("button", { name: "Retry" }),
+        ).toBeInTheDocument();
+        // The oldest success was dropped in its place.
+        expect(screen.queryByText("Saved 0")).toBeNull();
+    });
+
+    it("falls back to the oldest when every toast is actionable", () => {
+        render(<ToastViewportUI />);
+        act(() => {
+            for (let i = 0; i < MAX_VISIBLE_TOASTS + 1; i += 1) {
+                showToast({
+                    tone: "error",
+                    message: `Error ${i}`,
+                    actions: [{ label: "Retry", onClick: () => {} }],
+                });
+            }
+        });
+        const items = screen.getAllByTestId("toast");
+        expect(items).toHaveLength(MAX_VISIBLE_TOASTS);
+        expect(items[0]).toHaveTextContent("Error 1");
+    });
+
     it("dismissToast ignores unknown ids", () => {
         render(<ToastViewportUI />);
         let id = "";
@@ -154,11 +193,49 @@ describe("ToastUI", () => {
         expect(screen.queryByRole("status")).toBeNull();
     });
 
-    it("always renders the live region so it is registered before use", () => {
+    it("labels the viewport as a region and leaves the live role to each toast", () => {
         render(<ToastViewportUI />);
-        expect(screen.getByLabelText("Notifications")).toHaveAttribute(
-            "aria-live",
-            "polite",
+        const region = screen.getByRole("region", { name: "Notifications" });
+        // A live region wrapping live items is announced twice, or not at all.
+        expect(region).not.toHaveAttribute("aria-live");
+        act(() => {
+            showToast({ tone: "error", message: "Failed" });
+            showToast({ tone: "info", message: "FYI" });
+        });
+        expect(screen.getByRole("alert")).toHaveTextContent("Failed");
+        expect(screen.getByRole("status")).toHaveTextContent("FYI");
+    });
+
+    it("does not steal focus, but focusToast can move it to a toast", () => {
+        render(
+            <>
+                <button type="button">Elsewhere</button>
+                <ToastViewportUI />
+            </>,
         );
+        const outside = screen.getByRole("button", { name: "Elsewhere" });
+        outside.focus();
+        let id = "";
+        act(() => {
+            id = showToast({
+                tone: "error",
+                message: "Failed",
+                actions: [{ label: "Retry", onClick: () => {} }],
+            });
+        });
+        expect(document.activeElement).toBe(outside);
+
+        let moved = false;
+        act(() => {
+            moved = focusToast(id);
+        });
+        expect(moved).toBe(true);
+        expect(document.activeElement).toBe(screen.getByRole("alert"));
+        expect(screen.getByRole("alert")).toHaveAttribute("tabindex", "-1");
+
+        act(() => {
+            dismissToast(id);
+        });
+        expect(focusToast(id)).toBe(false);
     });
 });

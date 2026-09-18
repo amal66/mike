@@ -74,6 +74,45 @@ export const MAX_VISIBLE_TOASTS = 3;
 
 type Listener = () => void;
 
+/**
+ * A toast the user still has to act on: an error carrying "Retry" or
+ * "Contact support". It is the one kind the stack must not evict to make
+ * room for a "Saved" notice.
+ */
+function isActionableError(toast: ToastRecord): boolean {
+    return (
+        toast.tone === "error" &&
+        Boolean(toast.actions?.length || toast.supportHref)
+    );
+}
+
+/**
+ * Trim the stack to `MAX_VISIBLE_TOASTS`, dropping dismissible chatter
+ * (info/success, and errors with nothing to click) oldest-first and only
+ * then falling back to actionable errors. The newest toast is always kept:
+ * it is the one that just happened.
+ */
+function trimToStack(next: readonly ToastRecord[]): readonly ToastRecord[] {
+    let excess = next.length - MAX_VISIBLE_TOASTS;
+    if (excess <= 0) return next;
+
+    const newest = next[next.length - 1];
+    const dropped = new Set<string>();
+    for (const toast of next) {
+        if (excess === 0) break;
+        if (toast === newest || isActionableError(toast)) continue;
+        dropped.add(toast.id);
+        excess -= 1;
+    }
+    for (const toast of next) {
+        if (excess === 0) break;
+        if (toast === newest || dropped.has(toast.id)) continue;
+        dropped.add(toast.id);
+        excess -= 1;
+    }
+    return next.filter((toast) => !dropped.has(toast.id));
+}
+
 let toasts: readonly ToastRecord[] = [];
 const listeners = new Set<Listener>();
 let counter = 0;
@@ -107,12 +146,7 @@ export function showToast(input: ToastInput): string {
     const kept = input.dedupeKey
         ? toasts.filter((toast) => toast.dedupeKey !== input.dedupeKey)
         : toasts;
-    const next = [...kept, record];
-    // Drop the oldest when the stack overflows so the newest is always seen.
-    toasts =
-        next.length > MAX_VISIBLE_TOASTS
-            ? next.slice(next.length - MAX_VISIBLE_TOASTS)
-            : next;
+    toasts = trimToStack([...kept, record]);
     emit();
     return record.id;
 }
@@ -121,6 +155,21 @@ export function dismissToast(id: string) {
     if (!toasts.some((toast) => toast.id === id)) return;
     toasts = toasts.filter((toast) => toast.id !== id);
     emit();
+}
+
+const toastNodes = new Map<string, HTMLElement>();
+
+/**
+ * Move keyboard focus onto a toast. Toasts never take focus on their own —
+ * yanking the caret out of what the user is typing is worse than the
+ * failure being reported — so a caller that must be acted on immediately
+ * asks for it explicitly. Returns false when the toast is not on screen.
+ */
+export function focusToast(id: string): boolean {
+    const node = toastNodes.get(id);
+    if (!node) return false;
+    node.focus();
+    return true;
 }
 
 export function clearToasts() {
@@ -151,9 +200,11 @@ export function useToasts(): readonly ToastRecord[] {
 
 const toneIcon: Record<ToastTone, ReactNode> = {
     error: <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-600" aria-hidden />,
+    // `text-emerald-700` (not -600) because it is the shade globals.css
+    // remaps for dark mode; an unmapped one stays dark on dark glass.
     success: (
         <CheckCircle2
-            className="h-3.5 w-3.5 shrink-0 text-emerald-600"
+            className="h-3.5 w-3.5 shrink-0 text-emerald-700"
             aria-hidden
         />
     ),
@@ -219,7 +270,18 @@ function ToastItemUI({ toast }: { toast: ToastRecord }) {
 
     return (
         <div
+            // The item owns the live semantics: `alert` is implicitly
+            // assertive, `status` polite. The viewport around it is a plain
+            // region, because a live region nested in a live region is
+            // announced unpredictably (or twice).
             role={isError ? "alert" : "status"}
+            // Not in the tab order, but focusable so `focusToast` can put
+            // the keyboard on a critical failure and its actions.
+            tabIndex={-1}
+            ref={(node) => {
+                if (node) toastNodes.set(toast.id, node);
+                else toastNodes.delete(toast.id);
+            }}
             data-tone={toast.tone}
             data-testid="toast"
             onMouseEnter={pause}
@@ -306,7 +368,8 @@ const positionClass: Record<
 /**
  * Renders the toast stack. Mount exactly once per client, near the root.
  * The region is always present so assistive tech registers it before the
- * first notification arrives.
+ * first notification arrives; the live announcement belongs to each toast,
+ * not to this container.
  */
 export function ToastViewportUI({
     position = "bottom-center",
@@ -316,7 +379,10 @@ export function ToastViewportUI({
 
     return (
         <div
-            aria-live="polite"
+            // A landmark, not a live region: each toast announces itself
+            // through its own role, and `aria-label` needs a role to be
+            // exposed at all.
+            role="region"
             aria-label="Notifications"
             className={twMerge(
                 clsx(

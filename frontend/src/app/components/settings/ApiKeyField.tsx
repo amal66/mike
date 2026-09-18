@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import {
   MfaVerificationPopup,
@@ -13,6 +13,7 @@ import { isMfaRequiredError } from "@/app/lib/mikeApi";
 import {
   UserVisibleError,
   notifyError,
+  notifyInfo,
   notifySuccess,
 } from "@/app/lib/userFacingError";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
@@ -44,6 +45,15 @@ export function ApiKeyField({
     "save" | "remove" | null
   >(null);
 
+  // The field is cleared on success and whenever the saved-key state
+  // changes, and the user may well correct a rejected key before reaching
+  // for the toast. A Retry therefore reads the box as it is NOW instead of
+  // resending the value the failed attempt closed over.
+  const valueRef = useRef(value);
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
   useEffect(() => {
     setValue("");
   }, [hasSavedKey]);
@@ -51,14 +61,33 @@ export function ApiKeyField({
   const dirty = value.trim().length > 0;
   const showMask = hasSavedKey && !isEditing && !dirty;
 
+  /**
+   * Re-run a save only while the box still holds the key that failed.
+   * Anything else — a corrected key, a cleared field — would silently store
+   * the wrong secret, so say what happened and leave the input alone.
+   */
+  const retrySave = (attempted: string) => {
+    if (valueRef.current === attempted) {
+      void handleSave();
+      return;
+    }
+    notifyInfo(
+      valueRef.current.trim().length > 0
+        ? `Your ${label} has changed since that attempt. Press Save to store the key now in the field.`
+        : `The ${label} field is empty, so there is nothing to retry. Enter the key again and press Save.`,
+      "Nothing was sent",
+    );
+  };
+
   const handleSave = async () => {
+    const attempted = valueRef.current;
     setIsSaving(true);
     try {
       if (await needsMfaVerification()) {
         setPendingMfaAction("save");
         return;
       }
-      const ok = await onSave(value);
+      const ok = await onSave(attempted);
       if (ok) {
         setValue("");
         setSaved(true);
@@ -70,7 +99,10 @@ export function ApiKeyField({
             `Mike couldn't save your ${label}. The key was not changed.`,
             { retryable: true },
           ),
-          { action: `save your ${label}`, onRetry: () => void handleSave() },
+          {
+            action: `save your ${label}`,
+            onRetry: () => retrySave(attempted),
+          },
         );
       }
     } catch (error) {
@@ -79,7 +111,7 @@ export function ApiKeyField({
       } else {
         notifyError(error, {
           action: `save your ${label}`,
-          onRetry: () => void handleSave(),
+          onRetry: () => retrySave(attempted),
         });
       }
     } finally {

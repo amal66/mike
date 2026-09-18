@@ -4,7 +4,9 @@
  * `describeError` (shared with the web app) decides *what* to say; this
  * module decides *how* the add-in says it: a toast with an honest "Retry"
  * and, for failures the user cannot fix themselves, a "Contact support"
- * link that opens a pre-filled email carrying the request id.
+ * ACTION that copies the diagnostics and opens the pre-filled support email
+ * (see ./supportHandoff) — a plain `mailto:` LINK does nothing in desktop
+ * Word, which is why it is an action and not an anchor.
  *
  * Mirrors frontend/src/app/lib/userFacingError.ts so a failure reads the
  * same in Word as it does in the browser. Screens must never render a raw
@@ -16,7 +18,15 @@ import {
   type DescribeErrorOptions,
   type UserFacingError,
 } from "@mike/user-error";
+import { createElement } from "react";
 import { showToast, type ToastAction } from "@mike/toast-ui";
+import { SESSION_CHECK_FAILED_MESSAGE } from "./sessionRefresh";
+import { openExternalUrl } from "./openExternalUrl";
+import {
+  buildSupportDiagnostics,
+  supportHandoffResult,
+  type SupportErrorFields,
+} from "./supportHandoff";
 
 export {
   SUPPORT_EMAIL,
@@ -65,6 +75,71 @@ export function supportMailtoFor(
 }
 
 /**
+ * Hand a failure to a human: copy the diagnostics, open the pre-filled email.
+ *
+ * The mailbox is the destination, not the web app's /support form — that form
+ * posts to a route the backend does not mount, so every submission fails.
+ *
+ * Both steps can be refused inside a Word webview (a clipboard without
+ * permission, a host that blocks navigation), so each is attempted
+ * independently and the user is told what actually happened. If neither
+ * worked they still get the address and the block, on screen, to copy by hand.
+ */
+export async function handOffToSupport(
+  error: SupportErrorFields,
+  options: { note?: string; page?: string } = {},
+): Promise<void> {
+  const page =
+    options.page ??
+    (typeof window !== "undefined" ? window.location.href : undefined);
+  const details = buildSupportDiagnostics(error, {
+    note: options.note,
+    page,
+    product: SUPPORT_PRODUCT,
+  });
+
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(details);
+    copied = true;
+  } catch {
+    // No clipboard permission in this host. The draft still carries the
+    // details, and the both-refused path puts them on screen.
+  }
+
+  // `openExternalUrl` rather than an anchor: desktop Word ignores a link out
+  // of the pane but honours Office's openBrowserWindow.
+  const opened = openExternalUrl(
+    supportMailtoFor(error, { note: options.note, page }),
+  );
+
+  const outcome = supportHandoffResult({ copied, opened, details });
+  if (outcome.details) {
+    showToast({
+      tone: "info",
+      title: outcome.message,
+      // Selectable, and sticky: the user is copying this by hand.
+      message: createElement(
+        "pre",
+        {
+          className:
+            "mt-1 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words text-[11px] leading-4",
+        },
+        outcome.details,
+      ),
+      durationMs: null,
+      dedupeKey: "support-details",
+    });
+    return;
+  }
+  if (outcome.tone === "success") {
+    notifySuccess(outcome.message);
+    return;
+  }
+  notifyInfo(outcome.message);
+}
+
+/**
  * Show a failure to the user. Returns the description so the caller can
  * also render it inline, or `null` when the failure is a cancellation the
  * user caused and does not need to hear about.
@@ -88,18 +163,25 @@ export function notifyError(
     actions.push({ label: "Retry", onClick: options.onRetry });
   }
   const wantsSupport = options.support ?? described.supportable;
+  if (wantsSupport) {
+    // An ACTION, not a link: desktop Word refuses to follow a `mailto:`
+    // anchor out of the pane, so the old link did nothing at all there.
+    actions.push({
+      label: "Contact support",
+      keepOpen: true,
+      onClick: () =>
+        handOffToSupport(described, {
+          note: options.supportNote,
+          page: options.page,
+        }),
+    });
+  }
 
   showToast({
     tone: "error",
     title: described.title,
     message: described.message,
     actions,
-    supportHref: wantsSupport
-      ? supportMailtoFor(described, {
-          note: options.supportNote,
-          page: options.page,
-        })
-      : undefined,
     dedupeKey: options.dedupeKey,
   });
 
@@ -117,6 +199,24 @@ export function notifySessionExpired(): void {
     title: "Sign in required",
     message: "Your session has expired. Sign in again to continue.",
     dedupeKey: "session-expired",
+  });
+}
+
+/**
+ * The refresh never reached the backend, so nothing is known about the
+ * session. Do NOT say it expired: the pane is probably still signed in and
+ * the user has a connection to fix, not a password to type. `onRetry`
+ * re-checks the session.
+ */
+export function notifySessionCheckFailed(
+  onRetry?: () => void | Promise<void>,
+): void {
+  showToast({
+    tone: "error",
+    title: "Connection problem",
+    message: SESSION_CHECK_FAILED_MESSAGE,
+    actions: onRetry ? [{ label: "Retry", onClick: onRetry }] : [],
+    dedupeKey: "session-check-failed",
   });
 }
 

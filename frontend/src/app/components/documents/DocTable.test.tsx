@@ -170,6 +170,45 @@ describe("DocTable failure reporting", () => {
         expect(moveDocument).toHaveBeenCalledWith("doc-1", null);
     });
 
+    it("retries only the documents whose move out of a folder failed", async () => {
+        const user = userEvent.setup();
+        let actions: DocTableSelectionActions | null = null;
+        const moveDocument = vi
+            .fn()
+            .mockImplementation(async (id: string) => {
+                if (id === "doc-1") throw new Error("boom");
+            });
+
+        render(
+            <Harness
+                documents={[
+                    { ...makeDoc("doc-1", "Lease.pdf"), folder_id: "folder-1" },
+                    { ...makeDoc("doc-2", "NDA.pdf"), folder_id: "folder-1" },
+                ]}
+                folderViewId="folder-1"
+                operations={makeOperations({ moveDocument })}
+                onActions={(next) => {
+                    actions = next;
+                }}
+            />,
+        );
+
+        await user.click(screen.getByLabelText("Select Lease.pdf"));
+        await user.click(screen.getByLabelText("Select NDA.pdf"));
+        await waitFor(() => expect(actions).not.toBeNull());
+        await actions!.onRemoveFromFolder();
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Lease.pdf",
+        );
+        moveDocument.mockClear();
+        await user.click(screen.getByRole("button", { name: "Retry" }));
+
+        // Only the row that failed is sent again: NDA.pdf already moved.
+        await waitFor(() => expect(moveDocument).toHaveBeenCalledTimes(1));
+        expect(moveDocument).toHaveBeenCalledWith("doc-1", null);
+    });
+
     it("reports a failed download of the selection with a retry", async () => {
         const user = userEvent.setup();
         let actions: DocTableSelectionActions | null = null;

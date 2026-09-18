@@ -4,8 +4,14 @@ import { useState } from "react";
 import { authInputClassName } from "@/app/components/auth/authStyles";
 import {
   MIN_PASSWORD_LENGTH,
+  isPasswordTooLong,
+  maximumPasswordMessage,
   minimumPasswordMessage,
 } from "@/app/components/auth/passwordPolicy";
+import {
+  PASSWORD_LENGTH_MESSAGE,
+  authMessages,
+} from "@/app/lib/authMessages";
 import { Modal } from "@/app/components/modals/Modal";
 import { Input } from "@/app/components/ui/input";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -24,20 +30,13 @@ import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
-/** bcrypt truncates past 72 bytes, so GoTrue refuses anything longer. */
-const MAX_PASSWORD_LENGTH = 72;
-
-/** Keyed by the `code` GoTrue returns from `PATCH /api/auth/password`. */
-const PASSWORD_ERROR_MESSAGES = {
-  weak_password: `Choose a stronger password: at least ${MIN_PASSWORD_LENGTH} characters, mixing letters, numbers, and symbols.`,
-  same_password: "Choose a password you haven't used on Mike before.",
-  validation_failed: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
-  invalid_request: `Password must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH} characters.`,
+/** The shared auth table with this section's deltas, keyed by the `code`
+ *  GoTrue returns from `PATCH /api/auth/password`. */
+const PASSWORD_ERROR_MESSAGES = authMessages({
+  validation_failed: PASSWORD_LENGTH_MESSAGE,
+  invalid_request: PASSWORD_LENGTH_MESSAGE,
   reauthentication_needed: "Log in again before setting a password.",
-  session_expired: "Your session has expired. Log in again.",
-  cookie_session_required: "Your session has expired. Log in again.",
-  over_request_rate_limit: "Too many attempts. Wait a moment and try again.",
-} as const;
+});
 
 export function PasswordSettingsSection() {
   const { user, setPassword } = useAuth();
@@ -60,12 +59,8 @@ export function PasswordSettingsSection() {
       setPasswordSetError(localPasswordError(`${minimumPasswordMessage}.`));
       return;
     }
-    if (password.length > MAX_PASSWORD_LENGTH) {
-      setPasswordSetError(
-        localPasswordError(
-          `Password must be at most ${MAX_PASSWORD_LENGTH} characters.`,
-        ),
-      );
+    if (isPasswordTooLong(password)) {
+      setPasswordSetError(localPasswordError(maximumPasswordMessage));
       return;
     }
     if (password !== confirmPassword) {

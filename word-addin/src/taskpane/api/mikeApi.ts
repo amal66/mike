@@ -10,9 +10,17 @@
  * configureMikeApiClient() below before the first request leaves.
  */
 import { configureMikeApiClient, responseError } from "./client";
-import { notifySessionExpired } from "../lib/notify";
+import {
+  notifySessionCheckFailed,
+  notifySessionExpired,
+  notifySuccess,
+} from "../lib/notify";
+import {
+  classifySessionRefresh,
+  createRefreshingFetch,
+} from "../lib/sessionRefresh";
 import type { Chat, Document, Message, WordDocumentEdit } from "../types";
-import { refreshSession } from "../auth/session";
+import { markSessionEnded, refreshSession } from "../auth/session";
 import {
   assistantContentFromEvents,
   normalizeStoredAssistantEvents,
@@ -30,19 +38,41 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return {};
 }
 
-// The backend refreshes HttpOnly sessions before API handlers run. A 401 means
-// the session can no longer be refreshed; synchronize the login gate and leave
-// the original response intact for the caller.
-const fetchWithRefresh: typeof fetch = async (input, init) => {
-  const res = await fetch(input, { ...init, credentials: "include" });
-  if (res.status !== 401) return res;
-  const user = await refreshSession().catch(() => null);
-  // A refresh that comes back empty means the session is really gone. Say so
-  // once (deduped) instead of letting every in-flight call raise its own
-  // "Permission denied" — the caller still sees the 401 it asked for.
-  if (!user) notifySessionExpired();
-  return res;
-};
+/** Re-check the session on demand, for the "Retry" on an unreachable check. */
+async function recheckSession(): Promise<void> {
+  const outcome = await refreshSession().then(
+    (user) => classifySessionRefresh({ ok: true, user }),
+    (error: unknown) => classifySessionRefresh({ ok: false, error }),
+  );
+  if (outcome.kind === "refreshed") {
+    notifySuccess("You're signed back in. Try that again.");
+    return;
+  }
+  if (outcome.kind === "expired") {
+    markSessionEnded();
+    notifySessionExpired();
+    return;
+  }
+  notifySessionCheckFailed(recheckSession);
+}
+
+/**
+ * The backend refreshes HttpOnly sessions before API handlers run, so a 401
+ * means this pane's cookie needs a refresh — or is genuinely dead. The three
+ * outcomes are kept apart in lib/sessionRefresh; this wires them to the
+ * pane's session state and toasts.
+ */
+const fetchWithRefresh = createRefreshingFetch({
+  fetchImpl: (input, init) => fetch(input, init),
+  refreshSession,
+  onExpired: () => {
+    // Sign the pane out so the login gate is actually on screen: telling
+    // someone to sign in with nothing to click is what this replaces.
+    markSessionEnded();
+    notifySessionExpired();
+  },
+  onUnreachable: () => notifySessionCheckFailed(recheckSession),
+});
 
 configureMikeApiClient({
   baseUrl: BASE_URL,

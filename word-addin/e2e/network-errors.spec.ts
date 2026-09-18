@@ -25,7 +25,7 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   expect(text).toContain("Mike couldn't reach the server at");
   // The origin is named so a self-hoster knows which server is down.
   expect(text).toMatch(/http:\/\/(127\.0\.0\.1|localhost):\d+/);
-  expect(text).toContain("Check your connection and that the server is running");
+  expect(text).toContain("Check your connection and that the server is running, then try again");
   // The host's opaque wording never reaches the screen.
   expect(text).not.toMatch(/Failed to fetch|Load failed|NetworkError/);
 });
