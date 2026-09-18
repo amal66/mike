@@ -36,7 +36,7 @@ import {
     ReasoningBlock,
 } from "../assistant/message/EventBlocks";
 import { readSseFrames } from "@/app/lib/sse";
-import { notifyError } from "@/app/lib/userFacingError";
+import { UserVisibleError, notifyError } from "@/app/lib/userFacingError";
 import {
     LIQUID_GLASS_FLAT_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
@@ -58,6 +58,12 @@ interface TRMessage {
     events?: AssistantEvent[];
     annotations?: TRCitationAnnotation[];
     isStreaming?: boolean;
+    /**
+     * This turn ended in a failure. Already-streamed text is kept, but the
+     * bubble has to say the answer is unfinished — a half-written answer with
+     * nothing after it reads as a complete one.
+     */
+    error?: string;
 }
 
 function parseCourtlistenerEventCases(value: unknown) {
@@ -393,6 +399,9 @@ function TRAssistantMessage({
                     })}
                 </div>
             )}
+            {msg.error ? (
+                <p className="mt-2 text-xs text-red-600">{msg.error}</p>
+            ) : null}
         </div>
     );
 }
@@ -1089,6 +1098,62 @@ export function TRChatPanel({
                                 ),
                             );
                             setCurrentChatTitle(title);
+                            continue;
+                        }
+
+                        if (data.type === "error") {
+                            // The server ends a failed turn with this frame
+                            // and then `[DONE]`, so without this branch the
+                            // answer just stops mid-sentence and looks
+                            // finished. `safe_to_display` marks text the
+                            // backend wrote for the user (a configuration
+                            // refusal); anything else is internal and is
+                            // replaced.
+                            const safeToDisplay = data.safe_to_display === true;
+                            const errorText =
+                                safeToDisplay &&
+                                typeof data.message === "string" &&
+                                data.message.trim()
+                                    ? data.message.trim()
+                                    : "Mike couldn't finish this answer. Try again.";
+                            flushDrip();
+                            clearStreamingPlaceholders();
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                if (last?.role === "assistant") {
+                                    // Partial content stays; the turn is
+                                    // marked failed rather than erased.
+                                    updated[updated.length - 1] = {
+                                        ...last,
+                                        isStreaming: false,
+                                        error: errorText,
+                                    };
+                                }
+                                return updated;
+                            });
+                            notifyError(
+                                new UserVisibleError(errorText, {
+                                    kind: "server",
+                                    // A refusal the backend wrote (no key, a
+                                    // disallowed model) answers the same way
+                                    // however many times it is re-sent.
+                                    retryable: !safeToDisplay,
+                                }),
+                                {
+                                    action: "get a response",
+                                    dedupeKey: `tr-chat-error:${currentChatId ?? reviewId}`,
+                                    onRetry: safeToDisplay
+                                        ? undefined
+                                        : () => {
+                                              setMessages(
+                                                  transcriptBeforeSend,
+                                              );
+                                              void handleSubmit(message);
+                                          },
+                                },
+                            );
+                            setIsLoading(false);
                             continue;
                         }
 

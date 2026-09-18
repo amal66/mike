@@ -227,7 +227,10 @@ export default function SettingsPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } else {
-      setNameError("Unable to save your name.");
+      // The profile context classified the failure and raised the toast
+      // (message, Retry, support). This line is only the field's status, so
+      // the user never reads two different explanations of one failure.
+      setNameError("Not saved");
     }
   };
 
@@ -243,7 +246,7 @@ export default function SettingsPage() {
       setOrgSaved(true);
       setTimeout(() => setOrgSaved(false), 2000);
     } else {
-      setOrgError("Unable to save your organisation.");
+      setOrgError("Not saved");
     }
   };
 

@@ -54,11 +54,10 @@ function PracticeDetailsForm({
         if (saved) {
             router.replace("/assistant");
         } else {
-            // `completeOnboarding` reports failure as `false`, so there is no
-            // error object to classify here; say what to do instead.
-            setError(
-                "Mike couldn't save your practice details. Try again, and contact support if it keeps happening.",
-            );
+            // `completeOnboarding` classified the failure and raised the
+            // toast that carries the sentence, Retry and support; this line
+            // only tells the user the form did not go through.
+            setError("Not saved.");
             setSubmitting(false);
         }
     };

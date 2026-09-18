@@ -30,6 +30,11 @@ const DELIVERY_FAILURE_KINDS: ReadonlySet<UserErrorKind> = new Set([
     "timeout",
     "unavailable",
     "server",
+    // The 10-per-hour reset limiter and a blocked request both answer before
+    // any address is looked at, so neither says whether the account exists.
+    // Showing "check your email" for them would promise mail nobody sent.
+    "rate_limited",
+    "forbidden",
 ]);
 
 export default function ForgotPasswordPage() {

@@ -468,10 +468,9 @@ export default function SecurityPage() {
     try {
       const success = await updateMfaOnLogin(enabled);
       if (!success) {
-        // The profile context reports failure as `false`, with no error.
-        setStatus(
-          "Mike couldn't update your login verification setting. Try again.",
-        );
+        // The profile context classified the failure and raised the toast
+        // (message, Retry, support); this line is only the row's status.
+        setStatus("Not saved.");
       }
     } catch (error) {
       if (isMfaRequiredError(error)) {
