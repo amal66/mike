@@ -157,6 +157,8 @@ function isGoogleMcpConnector(connector: McpConnectorSummary) {
       hostname === "googleapis.com" || hostname.endsWith(".googleapis.com")
     );
   } catch {
+    // A URL we cannot parse is simply not Google's. Nothing the user asked
+    // for fails here, so there is nothing to report.
     return false;
   }
 }

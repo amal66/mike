@@ -84,6 +84,56 @@ describe("ForgotPasswordPage", () => {
         ).not.toBeInTheDocument();
     });
 
+    it("does not claim mail was sent when the hourly limiter refuses", async () => {
+        // 10 resets an hour are rejected before any address is looked at, so
+        // saying so cannot reveal whether the account exists — and "check
+        // your email" would promise mail nobody sent.
+        requestPasswordReset.mockRejectedValue(
+            Object.assign(new Error("Too many requests"), {
+                status: 429,
+                code: "rate_limited",
+            }),
+        );
+        const user = userEvent.setup();
+        render(<ForgotPasswordPage />);
+
+        await user.type(
+            screen.getByRole("textbox", { name: "Email" }),
+            "person@example.com",
+        );
+        await user.click(
+            screen.getByRole("button", { name: "Send reset link" }),
+        );
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            /Too many requests/i,
+        );
+        expect(
+            screen.queryByRole("heading", { name: "Check your email" }),
+        ).not.toBeInTheDocument();
+    });
+
+    it("does not claim mail was sent when the request is refused", async () => {
+        requestPasswordReset.mockRejectedValue(
+            Object.assign(new Error("Forbidden"), { status: 403 }),
+        );
+        const user = userEvent.setup();
+        render(<ForgotPasswordPage />);
+
+        await user.type(
+            screen.getByRole("textbox", { name: "Email" }),
+            "person@example.com",
+        );
+        await user.click(
+            screen.getByRole("button", { name: "Send reset link" }),
+        );
+
+        expect(await screen.findByRole("alert")).toBeInTheDocument();
+        expect(
+            screen.queryByRole("heading", { name: "Check your email" }),
+        ).not.toBeInTheDocument();
+    });
+
     it("retries a server failure from the inline error", async () => {
         requestPasswordReset.mockRejectedValueOnce(
             Object.assign(new Error("Internal error"), { status: 500 }),
