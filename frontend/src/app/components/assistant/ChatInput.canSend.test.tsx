@@ -117,9 +117,10 @@ describe("ChatInput canSend gating", () => {
     });
 
     it("says a response is still arriving rather than blaming permissions", () => {
-        // Returning to a thread whose detached answer is still running closes
-        // the composer, but the reader may write here — only the history is
-        // missing. Blaming edit access would be a lie (see #486).
+        // Returning to a thread whose answer is still streaming, while its
+        // history is on its way, closes the composer, but the reader may
+        // write here — only the history is missing. Blaming edit access would
+        // be a lie (see #486).
         render(
             <ChatInput
                 onSubmit={vi.fn()}

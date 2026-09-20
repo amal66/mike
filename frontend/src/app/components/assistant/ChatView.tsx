@@ -106,8 +106,8 @@ interface Props {
      * Whether this chat's history is still loading. Separate from `canSend`
      * so the composer can say which of the two is closing it: once the
      * standing is resolved the composer stays on the page, and a thread switch
-     * (or the wait for a detached answer) reads "still arriving", not
-     * "needs edit access".
+     * reads "still arriving" (while an answer streams into the thread) or
+     * "loading", not "needs edit access".
      */
     chatLoading?: boolean;
     /** Shares document previews with the initial composer before a chat exists. */

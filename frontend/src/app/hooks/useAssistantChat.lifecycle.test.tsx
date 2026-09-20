@@ -299,3 +299,131 @@ it("can stop a detached request from a newly mounted owner", async () => {
     await act(async () => { await turn; });
     expect(returned.result.current.isResponseLoading).toBe(false);
 });
+
+/**
+ * Coming back to a thread whose answer is still streaming. The turn record,
+ * not the hook that sent the request, owns the answer while it streams, so a
+ * hook that returns to the thread (the workspace swapping the chat back, or
+ * the page mounting again) attaches to it and shows the same live answer.
+ */
+describe("returning to a thread while its answer streams", () => {
+    const assistantText = (messages: Message[]) =>
+        (messages.findLast((message) => message.role === "assistant")?.events ?? [])
+            .map((event) => (event.type === "content" ? event.text : ""))
+            .join("");
+    /** The stored question, as a history read returns it before the answer row has content. */
+    const storedQuestion = (): Message => ({ id: "u1", role: "user", content: "hello" });
+
+    it("shows the live answer, token by token, after switching away and back", async () => {
+        const body = controllableSseResponse();
+        fetchMock.mockResolvedValue(body.response);
+        const { result, rerender } = renderHook(
+            ({ chatId }: { chatId: string }) => useAssistantChat({ chatId }),
+            { initialProps: { chatId: "chat-a" } },
+        );
+        const { turn } = await startTurn(result.current.handleChat);
+        await body.send('data: {"type":"chat_id","chatId":"chat-a","assistantMessageId":"answer-1"}\n\n');
+        await body.send('data: {"type":"content_delta","text":"Partial"}\n\n');
+
+        rerender({ chatId: "chat-b" });
+        act(() => result.current.setMessages([userMessage("about b")]));
+        await body.send('data: {"type":"content_delta","text":" while away"}\n\n');
+        // Nothing from the detached turn lands in the other thread.
+        expect(result.current.messages).toEqual([userMessage("about b")]);
+        expect(result.current.isResponseLoading).toBe(false);
+
+        rerender({ chatId: "chat-a" });
+        // The host loads chat-a's history: the question is stored, the answer
+        // row is hidden until it has content. The live answer is laid over it.
+        act(() => result.current.setMessages([storedQuestion()]));
+        expect(result.current.isResponseLoading).toBe(true);
+        expect(result.current.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(assistantText(result.current.messages)).toBe("Partial while away");
+
+        await body.send('data: {"type":"content_delta","text":" and back"}\n\n');
+        expect(assistantText(result.current.messages)).toBe("Partial while away and back");
+
+        await body.close();
+        await turn;
+        expect(result.current.isResponseLoading).toBe(false);
+        expect(assistantText(result.current.messages)).toBe("Partial while away and back");
+        expect(result.current.messages.at(-1)?.id).toBe("answer-1");
+        expect(signalOfLastRequest().aborted).toBe(false);
+        expect(body.state.cancelled).toBe(false);
+    });
+
+    it("attaches a freshly mounted hook to the answer already streaming", async () => {
+        const body = controllableSseResponse();
+        fetchMock.mockResolvedValue(body.response);
+        const first = renderHook(() => useAssistantChat({ chatId: "chat-a" }));
+        const { turn } = await startTurn(first.result.current.handleChat);
+        await body.send('data: {"type":"chat_id","chatId":"chat-a","assistantMessageId":"answer-1"}\n\n');
+        await body.send('data: {"type":"content_delta","text":"Partial"}\n\n');
+        first.unmount();
+
+        const returned = renderHook(() => useAssistantChat({ chatId: "chat-a" }));
+        // Attached on mount, before any history has been set.
+        expect(returned.result.current.isResponseLoading).toBe(true);
+        expect(assistantText(returned.result.current.messages)).toBe("Partial");
+        act(() => returned.result.current.setMessages([storedQuestion()]));
+        expect(returned.result.current.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+
+        await body.send('data: {"type":"content_delta","text":" and the rest"}\n\n');
+        expect(assistantText(returned.result.current.messages)).toBe("Partial and the rest");
+        await body.close();
+        await turn;
+        expect(returned.result.current.isResponseLoading).toBe(false);
+        expect(assistantText(returned.result.current.messages)).toBe("Partial and the rest");
+        returned.unmount();
+    });
+
+    it("keeps the finished answer when a history read that predates it lands", async () => {
+        const body = controllableSseResponse();
+        fetchMock.mockResolvedValue(body.response);
+        const { result } = renderHook(() => useAssistantChat({ chatId: "chat-a" }));
+        const { turn } = await startTurn(result.current.handleChat);
+        await body.send('data: {"type":"chat_id","chatId":"chat-a","assistantMessageId":"answer-1"}\n\n');
+        await body.send('data: {"type":"content_delta","text":"Whole answer"}\n\n');
+        await body.close();
+        await turn;
+        expect(result.current.isResponseLoading).toBe(false);
+
+        // A GET issued before the server stored the row resolves now.
+        act(() => result.current.setMessages([storedQuestion()]));
+        expect(result.current.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+        expect(assistantText(result.current.messages)).toBe("Whole answer");
+        // A later, complete read replaces the row in place.
+        act(() =>
+            result.current.setMessages([
+                storedQuestion(),
+                { id: "answer-1", role: "assistant", content: "", events: [{ type: "content", text: "Whole answer" }] },
+            ]),
+        );
+        expect(result.current.messages).toHaveLength(2);
+    });
+
+    it("labels the answer for the reader who stops it after returning", async () => {
+        const body = controllableSseResponse();
+        fetchMock.mockResolvedValue(body.response);
+        const first = renderHook(() => useAssistantChat({ chatId: "chat-a" }));
+        const { turn } = await startTurn(first.result.current.handleChat);
+        await body.send('data: {"type":"chat_id","chatId":"chat-a","assistantMessageId":"answer-1"}\n\n');
+        await body.send('data: {"type":"content_delta","text":"Partial"}\n\n');
+        first.unmount();
+
+        const returned = renderHook(() => useAssistantChat({ chatId: "chat-a" }));
+        act(() => returned.result.current.cancel());
+        expect(signalOfLastRequest().aborted).toBe(true);
+        expect(returned.result.current.isResponseLoading).toBe(false);
+        // What the server will store, shown without waiting for it.
+        expect(returned.result.current.messages.at(-1)?.events).toEqual([
+            { type: "content", text: "Partial" },
+            { type: "content", text: "Cancelled by user." },
+        ]);
+        await body.send(": keep-alive\n\n");
+        await act(async () => { await turn; });
+        expect(body.state.cancelled).toBe(true);
+        expect(returned.result.current.messages.at(-1)?.events).toHaveLength(2);
+        returned.unmount();
+    });
+});

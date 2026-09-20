@@ -55,10 +55,11 @@ export default function AssistantChatPage() {
     );
     // Separate from canSend: while this is true the composer is closed because
     // the thread's messages have not arrived, not because the caller lacks a
-    // grant. A detached response holds the load open until the server has
-    // stored it, and the composer must say that rather than blame permissions.
+    // grant, and the composer must say that rather than blame permissions.
     // This is the switch-to-another-thread case, where the standing is already
-    // resolved and the composer stays on the page while the history lands.
+    // resolved and the composer stays on the page while the history lands. An
+    // answer still streaming into the thread does not hold the load open: the
+    // history is fetched at once and the live answer is laid over it.
     const [chatLoading, setChatLoading] = useState<boolean>(
         initialMessages.length === 0,
     );
@@ -91,8 +92,7 @@ export default function AssistantChatPage() {
         // The composer stays closed until the load resolves, but through
         // chatLoading rather than canSend: retiring the grant here made the
         // read-only copy ("needs edit access") the message a reader saw while
-        // simply waiting for a thread — including the seconds a detached
-        // response holds the load open.
+        // simply waiting for a thread.
         // eslint-disable-next-line react-hooks/set-state-in-effect -- a newly selected chat must load before sending
         setChatLoading(true);
         setMessages([]);

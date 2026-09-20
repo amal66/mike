@@ -103,10 +103,9 @@ interface Props {
     /**
      * Whether this chat's history is still on its way. Kept apart from
      * `canSend` on purpose: both close the composer, but only one of them is
-     * about permissions, and saying the wrong one is a lie to the reader. The
-     * long case is a detached response (one that outlived the reader leaving
-     * the thread) holding the load open until the server has stored it —
-     * `isLoading` is set too then, and the composer says so.
+     * about permissions, and saying the wrong one is a lie to the reader.
+     * While an answer is still streaming into the thread `isLoading` is set
+     * too, and the composer says so.
      */
     chatLoading?: boolean;
     hideAddDocButton?: boolean;
@@ -131,9 +130,9 @@ interface Props {
  * Order matters. A reader without edit access is told about the grant even
  * while the thread loads, because that is the reason that will still be true
  * afterwards. Otherwise a load in progress explains itself — and when a
- * response is running (a detached one keeps `isLoading` set after the reader
- * comes back to the thread) it says which one, instead of inventing a
- * permission problem.
+ * response is running (a turn started before the reader left keeps
+ * `isLoading` set when they come back) it says which one, instead of
+ * inventing a permission problem.
  */
 function placeholderFor({
     canSend,
