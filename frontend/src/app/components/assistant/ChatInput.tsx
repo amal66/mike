@@ -4,10 +4,12 @@ import {
     useState,
     useCallback,
     useEffect,
+    useLayoutEffect,
     useRef,
     forwardRef,
     useImperativeHandle,
     useMemo,
+    type ForwardedRef,
 } from "react";
 import {
     ArrowRight,
@@ -149,7 +151,7 @@ function placeholderFor({
     return isLoading ? "A response is still arriving…" : "Loading this chat…";
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+function ChatInputForChatImpl(
     {
         onSubmit,
         onCancel,
@@ -169,7 +171,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         chatReasoningLevel,
         chatKey,
     }: Props,
-    ref,
+    ref: ForwardedRef<ChatInputHandle>,
 ) {
     // Sending needs both a grant and a loaded thread; the placeholder below
     // names whichever one is missing.
@@ -251,6 +253,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
     const dragDepthRef = useRef(0);
     const settingsSaveRef = useRef<Promise<boolean>>(Promise.resolve(true));
+    // `ChatInput` keys this component by chat. Mark this generation inactive
+    // during the keyed unmount so upload callbacks from the previous thread
+    // cannot mutate its replacement or call outward with stale documents.
+    const uploadGenerationActiveRef = useRef(true);
+    useLayoutEffect(() => {
+        uploadGenerationActiveRef.current = true;
+        return () => {
+            uploadGenerationActiveRef.current = false;
+        };
+    }, []);
 
     const handleModelChange = useCallback(
         (nextModel: string) => {
@@ -375,6 +387,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 })),
             );
             const addCompletedDocument = (document: Document) => {
+                if (!uploadGenerationActiveRef.current) return;
                 addAttachedDocuments([document]);
                 setDroppedDocuments((prev) => {
                     const existing = new Set(
@@ -387,6 +400,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 });
             };
             const handleProgress = (progress: UploadProgress<Document>) => {
+                if (!uploadGenerationActiveRef.current) return;
                 if (
                     progress.status === "completed" ||
                     progress.status === "error"
@@ -410,6 +424,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     : await uploadStandaloneDocuments(uploadInputs, {
                           onProgress: handleProgress,
                       });
+                if (!uploadGenerationActiveRef.current) return;
                 const uploaded = outcomes.flatMap((outcome) =>
                     outcome.status === "completed" && outcome.result
                         ? [outcome.result]
@@ -423,6 +438,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                     setUploadWarning(failedUploadMessage(outcomes));
                 }
             } catch (error) {
+                if (!uploadGenerationActiveRef.current) return;
                 setUploadWarning(
                     error instanceof UploadBatchError
                         ? failedUploadMessage(error.outcomes)
@@ -432,7 +448,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                           ),
                 );
             } finally {
-                setUploadingFiles([]);
+                if (uploadGenerationActiveRef.current) setUploadingFiles([]);
             }
         },
         [
@@ -940,5 +956,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
                 onWarningClose={() => setUploadWarning(null)}
             />
         </>
+    );
+}
+
+const ChatInputForChat = forwardRef<ChatInputHandle, Props>(ChatInputForChatImpl);
+
+/**
+ * Chat composer whose draft and asynchronous uploads belong to one chat key.
+ * Changing the key remounts the stateful implementation; its layout cleanup
+ * invalidates callbacks before the replacement composer can be displayed.
+ */
+export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
+    props,
+    ref,
+) {
+    return (
+        <ChatInputForChat
+            key={props.chatKey ?? "new-chat"}
+            {...props}
+            ref={ref}
+        />
     );
 });

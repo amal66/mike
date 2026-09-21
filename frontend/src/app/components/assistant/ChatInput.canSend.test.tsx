@@ -1,11 +1,12 @@
 import { createRef } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
     uploadProjectDocuments,
     uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
+import type { Document } from "@/app/components/shared/types";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 
@@ -320,6 +321,96 @@ describe("ChatInput canSend gating", () => {
             expect(uploadStandaloneDocuments).toHaveBeenCalledOnce(),
         );
         expect(uploadProjectDocuments).not.toHaveBeenCalled();
+    });
+
+    it("discards an upload that finishes after switching chats", async () => {
+        let finishUpload!: (
+            outcomes: Awaited<ReturnType<typeof uploadStandaloneDocuments>>,
+        ) => void;
+        vi.mocked(uploadStandaloneDocuments).mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finishUpload = resolve;
+                }),
+        );
+        const ref = createRef<ChatInputHandle>();
+        const view = (chatKey: string) => (
+            <ChatInput
+                ref={ref}
+                chatKey={chatKey}
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+                enableGlobalFileDrop={false}
+                dropUploadsToProject={false}
+            />
+        );
+        const { rerender } = render(view("chat-a"));
+        const file = new File(["x"], "old-chat.pdf", {
+            type: "application/pdf",
+        });
+
+        ref.current?.addFiles([file]);
+        await waitFor(() =>
+            expect(uploadStandaloneDocuments).toHaveBeenCalledOnce(),
+        );
+        rerender(view("chat-b"));
+        await act(async () => {
+            finishUpload([
+                {
+                    clientId: "upload-1",
+                    filename: "old-chat.pdf",
+                    status: "completed",
+                    result: {
+                        id: "old-document",
+                        filename: "old-chat.pdf",
+                    } as Document,
+                    errorCode: null,
+                },
+            ]);
+        });
+
+        expect(screen.queryByText("old-chat.pdf")).toBeNull();
+        expect(
+            vi.mocked(AddDocumentsModal).mock.calls.at(-1)?.[0]
+                .externalUploadedDocuments,
+        ).toEqual([]);
+    });
+
+    it("discards an upload failure after switching chats", async () => {
+        let failUpload!: (error: Error) => void;
+        vi.mocked(uploadStandaloneDocuments).mockImplementationOnce(
+            () =>
+                new Promise((_resolve, reject) => {
+                    failUpload = reject;
+                }),
+        );
+        const ref = createRef<ChatInputHandle>();
+        const view = (chatKey: string) => (
+            <ChatInput
+                ref={ref}
+                chatKey={chatKey}
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+                enableGlobalFileDrop={false}
+                dropUploadsToProject={false}
+            />
+        );
+        const { rerender } = render(view("chat-a"));
+
+        ref.current?.addFiles(
+            [new File(["x"], "old-chat.pdf", { type: "application/pdf" })],
+        );
+        await waitFor(() =>
+            expect(uploadStandaloneDocuments).toHaveBeenCalledOnce(),
+        );
+        rerender(view("chat-b"));
+        await act(async () => {
+            failUpload(new Error("old chat upload failed"));
+        });
+
+        expect(screen.queryByText(/could not be uploaded/i)).toBeNull();
     });
 
     it("keeps picker attachments separate from the project just like dropped files", () => {
