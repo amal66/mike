@@ -105,7 +105,9 @@ vi.mock("../shared/views/SpreadsheetView", () => ({
 vi.mock("../shared/views/PdfView", () => ({
     PdfView: () => <div data-testid="pdf-viewer" />,
 }));
-vi.mock("./UserMessage", () => ({ UserMessage: () => null }));
+vi.mock("./UserMessage", () => ({
+    UserMessage: ({ content }: { content: string }) => <div>{content}</div>,
+}));
 vi.mock("./AssistantMessage", () => ({
     AssistantMessage: ({ minHeight }: { minHeight?: string }) => (
         <div data-testid="assistant-message" style={{ minHeight }} />
@@ -205,6 +207,59 @@ describe("ChatView header actions", () => {
         await waitFor(() =>
             expect(screen.getByTestId("assistant-message")).toHaveStyle({
                 minHeight: "calc(100dvh - 256px)",
+            }),
+        );
+    });
+
+    it("positions a detached chat after its full history replaces the live overlay", async () => {
+        const handleChat = vi.fn().mockResolvedValue("chat-2");
+        const view = (chatLoading: boolean, messages: Message[]) => (
+            <PageChromeContext.Provider value={{ mobileActionsContainer: null }}>
+                <ChatView
+                    chatId="chat-2"
+                    chat={{ ...activeChat, id: "chat-2" }}
+                    messages={messages}
+                    isResponseLoading
+                    chatLoading={chatLoading}
+                    handleChat={handleChat}
+                    cancel={vi.fn()}
+                    detach={vi.fn()}
+                />
+            </PageChromeContext.Provider>
+        );
+        const liveOverlay: Message[] = [
+            { id: "latest-user", role: "user", content: "Latest question" },
+            { id: "live-answer", role: "assistant", content: "Loading" },
+        ];
+        const { rerender } = render(view(true, liveOverlay));
+        const container = document.querySelector(
+            '[data-slot="chat-messages-content"]',
+        )?.parentElement as HTMLDivElement;
+        Object.defineProperty(container, "scrollTop", {
+            configurable: true,
+            value: 50,
+            writable: true,
+        });
+        vi.spyOn(container, "getBoundingClientRect").mockReturnValue({
+            top: 100,
+        } as DOMRect);
+
+        rerender(
+            view(false, [
+                { id: "old-user", role: "user", content: "Older question" },
+                { id: "old-answer", role: "assistant", content: "Older answer" },
+                ...liveOverlay,
+            ]),
+        );
+        const latest = screen.getByText("Latest question").parentElement!;
+        vi.spyOn(latest, "getBoundingClientRect").mockReturnValue({
+            top: 700,
+        } as DOMRect);
+
+        await waitFor(() =>
+            expect(container.scrollTo).toHaveBeenCalledWith({
+                top: 574,
+                behavior: "auto",
             }),
         );
     });

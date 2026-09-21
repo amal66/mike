@@ -681,9 +681,12 @@ export function ChatView({
     // opacity-0 gate would flash the message out and fade it back in on every
     // remount. Existing chats mount with messages === [] and fetch async, so
     // they still start hidden and reveal once loaded.
-    const hasScrolledRef = useRef(messages.length > 0);
+    const hasScrolledRef = useRef(messages.length > 0 && !chatLoading);
+    const positionedChatRef = useRef<string | undefined>(
+        messages.length > 0 && !chatLoading ? chatId : undefined,
+    );
     const [messagesVisible, setMessagesVisible] = useState(
-        () => messages.length > 0,
+        () => messages.length > 0 && !chatLoading,
     );
     const [showScrollButton, setShowScrollButton] = useState(false);
     const [inputHeight, setInputHeight] = useState(0);
@@ -739,35 +742,70 @@ export function ChatView({
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
-    const scrollLatestUserToTop = useCallback(() => {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                const container = messagesContainerRef.current;
-                const element = latestUserMessageRef.current;
-                if (!container || !element) return;
-                container.scrollTo({
-                    top: element.offsetTop - CHAT_MESSAGE_TOP_PADDING,
-                    behavior: "smooth",
+    const scrollLatestUserToTop = useCallback(
+        (
+            behavior: ScrollBehavior = "smooth",
+            onPositioned?: () => void,
+        ) => {
+            let frame = requestAnimationFrame(() => {
+                frame = requestAnimationFrame(() => {
+                    const container = messagesContainerRef.current;
+                    const element = latestUserMessageRef.current;
+                    if (!container || !element) return;
+                    // Measure both nodes in viewport coordinates. `offsetTop`
+                    // can be relative to the centered inner column rather
+                    // than this scrolling element, which positions a
+                    // revisited thread at the wrong message.
+                    const messageTop =
+                        element.getBoundingClientRect().top -
+                        container.getBoundingClientRect().top +
+                        container.scrollTop;
+                    container.scrollTo({
+                        top: Math.max(
+                            0,
+                            messageTop - CHAT_MESSAGE_TOP_PADDING,
+                        ),
+                        behavior,
+                    });
+                    onPositioned?.();
                 });
             });
-        });
-    }, []);
+            return () => cancelAnimationFrame(frame);
+        },
+        [],
+    );
 
     useEffect(() => {
+        if (chatLoading) return;
         const last = messages[messages.length - 1];
-        if (last?.role === "user") scrollLatestUserToTop();
-    }, [messages, scrollLatestUserToTop]);
+        if (last?.role === "user") return scrollLatestUserToTop();
+    }, [chatLoading, messages, scrollLatestUserToTop]);
 
     useEffect(() => {
-        if (isResponseLoading) scrollLatestUserToTop();
-    }, [isResponseLoading, scrollLatestUserToTop]);
+        // A detached turn attaches before its stored history arrives. Wait for
+        // that history so the ref points at the latest user message in the
+        // complete transcript, rather than the turn's temporary one-message
+        // overlay.
+        if (isResponseLoading && !chatLoading)
+            return scrollLatestUserToTop();
+    }, [chatLoading, isResponseLoading, scrollLatestUserToTop]);
 
+    /* eslint-disable react-hooks/set-state-in-effect -- visibility is synchronized with completion of the selected chat's DOM positioning */
     useEffect(() => {
+        const viewingUnpositionedChat = positionedChatRef.current !== chatId;
+        if (chatLoading) {
+            hasScrolledRef.current = false;
+            // A live detached turn keeps `messages` non-empty while history
+            // loads, so the chat id/loading state—not an empty transcript—is
+            // what resets the positioning gate.
+            setMessagesVisible(false);
+            return;
+        }
         if (messages.length === 0) {
             hasScrolledRef.current = false;
-            // eslint-disable-next-line react-hooks/set-state-in-effect -- hide messages until scroll position is restored to avoid a visible jump
+            positionedChatRef.current = undefined;
             setMessagesVisible(false);
-        } else if (!hasScrolledRef.current) {
+        } else if (!hasScrolledRef.current || viewingUnpositionedChat) {
             const userMsgCount = messages.filter(
                 (m) => m.role === "user",
             ).length;
@@ -776,26 +814,19 @@ export function ChatView({
                 latestUserMessageRef.current &&
                 messagesContainerRef.current
             ) {
-                setTimeout(() => {
-                    const container = messagesContainerRef.current;
-                    const element = latestUserMessageRef.current;
-                    if (container && element) {
-                        container.scrollTo({
-                            top:
-                                element.offsetTop -
-                                CHAT_MESSAGE_TOP_PADDING,
-                            behavior: "instant",
-                        });
-                    }
+                return scrollLatestUserToTop("auto", () => {
                     hasScrolledRef.current = true;
+                    positionedChatRef.current = chatId;
                     setMessagesVisible(true);
-                }, 100);
+                });
             } else {
                 hasScrolledRef.current = true;
+                positionedChatRef.current = chatId;
                 setMessagesVisible(true);
             }
         }
-    }, [messages]);
+    }, [chatId, chatLoading, messages, scrollLatestUserToTop]);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     useEffect(() => {
         if (panelMounted && window.innerWidth < 768) {

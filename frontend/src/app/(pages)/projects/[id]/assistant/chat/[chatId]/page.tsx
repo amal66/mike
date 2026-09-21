@@ -699,11 +699,11 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         return scrollLatestUserToTop("auto", () => {
             hasInitialScrolled.current = true;
         });
-    }, [chatLoaded, messages.length, scrollLatestUserToTop]);
+    }, [activeChatId, chatLoaded, messages.length, scrollLatestUserToTop]);
 
     useEffect(() => {
-        if (isResponseLoading) return scrollLatestUserToTop();
-    }, [isResponseLoading, scrollLatestUserToTop]);
+        if (chatLoaded && isResponseLoading) return scrollLatestUserToTop();
+    }, [chatLoaded, isResponseLoading, scrollLatestUserToTop]);
 
     // ── Tabs ──────────────────────────────────────────────────────────────────
     function openTab(
