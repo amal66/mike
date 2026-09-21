@@ -144,13 +144,12 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                     withAssistantHistoryStatus(
                         current,
                         chatId,
-                        chatId === routeChatIdRef.current
-                            ? undefined
-                            : change === "begin"
-                              ? "loading"
-                              : turn.assistant.error
-                                ? undefined
-                                : "complete",
+                        change === "begin"
+                            ? "loading"
+                            : chatId === routeChatIdRef.current ||
+                                turn.assistant.error
+                              ? undefined
+                              : "complete",
                     ),
                 );
             }),
@@ -164,7 +163,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 next = withAssistantHistoryStatus(
                     next,
                     routeChatId,
-                    undefined,
+                    hasAssistantTurn(routeChatId) ? "loading" : undefined,
                 );
             }
             for (const chat of chats ?? []) {

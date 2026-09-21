@@ -100,7 +100,7 @@ describe("AppSidebar account dropdown", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows detached responses loading, then complete until opened", async () => {
+  it("shows responses loading while selected and detached, then marks a detached response complete until opened", async () => {
     const user = userEvent.setup();
     state.pathname = "/assistant/chat/chat-1";
     state.chats = [
@@ -118,6 +118,12 @@ describe("AppSidebar account dropdown", () => {
       assistant: { role: "assistant", content: "" },
       cancel: vi.fn(),
     });
+
+    expect(
+      await screen.findByRole("status", {
+        name: "Quarterly filing response loading",
+      }),
+    ).toBeInTheDocument();
 
     state.pathname = "/assistant/chat/chat-2";
     view.rerender(<AppSidebar isOpen onToggle={vi.fn()} />);
@@ -149,6 +155,40 @@ describe("AppSidebar account dropdown", () => {
     ).toBeInTheDocument();
     expect(
       completedRow.parentElement?.querySelector("span[aria-hidden='true']"),
+    ).not.toHaveClass("hue-rotate-[285deg]");
+  });
+
+  it("does not mark a selected response green when it completes", async () => {
+    state.pathname = "/assistant/chat/chat-1";
+    state.chats = [
+      {
+        id: "chat-1",
+        title: "Quarterly filing",
+        user_id: "memory-menu-user",
+        created_at: new Date().toISOString(),
+        is_owner: true,
+      },
+    ];
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    const turn = beginAssistantTurn("chat-1", {
+      userMessage: { role: "user", content: "Summarize" },
+      assistant: { role: "assistant", content: "" },
+      cancel: vi.fn(),
+    });
+
+    expect(
+      await screen.findByRole("status", {
+        name: "Quarterly filing response loading",
+      }),
+    ).toBeInTheDocument();
+
+    act(() => turn.finish());
+
+    const selectedRow = await screen.findByRole("button", {
+      name: "Quarterly filing",
+    });
+    expect(
+      selectedRow.parentElement?.querySelector("span[aria-hidden='true']"),
     ).not.toHaveClass("hue-rotate-[285deg]");
   });
 
