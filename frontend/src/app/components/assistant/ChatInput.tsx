@@ -351,10 +351,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
 
     const handleDroppedFiles = useCallback(
         async (files: File[]) => {
-            if (!canSend) {
-                setUploadWarning(
-                    "Only someone with edit access can add documents.",
-                );
+            if (!composerOpen) {
+                if (canSend === false) {
+                    setUploadWarning(
+                        "Only someone with edit access can add documents.",
+                    );
+                }
                 return;
             }
             const { supported, unsupported } =
@@ -436,6 +438,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
         [
             addAttachedDocuments,
             canSend,
+            composerOpen,
             dropUploadsToProject,
             onDocumentsUploaded,
             projectId,
@@ -473,7 +476,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     }));
 
     useEffect(() => {
-        if (!enableGlobalFileDrop) return;
+        if (!enableGlobalFileDrop || !composerOpen) return;
         const hasFiles = (dataTransfer: DataTransfer | null) =>
             !!dataTransfer && Array.from(dataTransfer.types).includes("Files");
 
@@ -514,7 +517,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
             window.removeEventListener("dragleave", handleDragLeave);
             window.removeEventListener("drop", handleDrop);
         };
-    }, [enableGlobalFileDrop, handleDroppedFiles]);
+    }, [composerOpen, enableGlobalFileDrop, handleDroppedFiles]);
 
     const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setValue(e.target.value);

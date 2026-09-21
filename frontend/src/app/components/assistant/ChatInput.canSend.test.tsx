@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUserProfile } from "@/app/contexts/UserProfileContext";
 import {
-    uploadProjectDocument,
     uploadProjectDocuments,
     uploadStandaloneDocuments,
 } from "@/app/lib/mikeApi";
@@ -12,7 +11,6 @@ import { AddDocumentsModal } from "../modals/AddDocumentsModal";
 
 vi.mock("@/app/lib/mikeApi", () => ({
     listWorkflows: vi.fn(async () => []),
-    uploadProjectDocument: vi.fn(),
     uploadStandaloneDocument: vi.fn(),
     uploadProjectDocuments: vi.fn(),
     uploadStandaloneDocuments: vi.fn(),
@@ -218,7 +216,34 @@ describe("ChatInput canSend gating", () => {
         } as unknown as DataTransfer;
         fireEvent.drop(window, { dataTransfer });
 
-        expect(uploadProjectDocument).not.toHaveBeenCalled();
+        expect(uploadProjectDocuments).not.toHaveBeenCalled();
+    });
+
+    it("ignores file drops while chat history is loading", () => {
+        const ref = createRef<ChatInputHandle>();
+        render(
+            <ChatInput
+                ref={ref}
+                onSubmit={vi.fn()}
+                onCancel={vi.fn()}
+                isLoading={false}
+                canSend
+                chatLoading
+                projectId="p1"
+            />,
+        );
+
+        const file = new File(["x"], "dropped.pdf", {
+            type: "application/pdf",
+        });
+        const dataTransfer = {
+            types: ["Files"],
+            files: [file],
+        } as unknown as DataTransfer;
+        fireEvent.drop(window, { dataTransfer });
+        ref.current?.addFiles([file]);
+
+        expect(uploadProjectDocuments).not.toHaveBeenCalled();
     });
 
     it("stays neutral while the caller's standing is unknown", () => {

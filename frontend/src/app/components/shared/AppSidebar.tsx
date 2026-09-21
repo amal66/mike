@@ -39,6 +39,10 @@ import type { Project } from "@/app/components/shared/types";
 import { cn } from "@/app/lib/utils";
 import { WarningPopup } from "@/app/components/popups/WarningPopup";
 import {
+    hasAssistantTurn,
+    subscribeAssistantTurns,
+} from "@/app/lib/assistantTurns";
+import {
     LIQUID_GLASS_FLOAT_CLASS,
     LIQUID_GLASS_SELECTED_CLASS,
     LIQUID_GLASS_HOVER_CLASS,
@@ -63,6 +67,24 @@ const recentProjectsCache = new Map<
     string,
     { projects: Project[]; hasMore: boolean }
 >();
+
+type AssistantHistoryStatus = "loading" | "complete";
+
+function withAssistantHistoryStatus(
+    current: Record<string, AssistantHistoryStatus>,
+    chatId: string,
+    status?: AssistantHistoryStatus,
+) {
+    if (status) {
+        return current[chatId] === status
+            ? current
+            : { ...current, [chatId]: status };
+    }
+    if (!(chatId in current)) return current;
+    const next = { ...current };
+    delete next[chatId];
+    return next;
+}
 
 function isNearScrollEnd(element: HTMLDivElement) {
     return (
@@ -93,6 +115,11 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         );
         return projectChatMatch?.[1] ?? null;
     }, [pathname]);
+    const routeChatIdRef = useRef(routeChatId);
+    routeChatIdRef.current = routeChatId;
+    const [assistantHistoryStatuses, setAssistantHistoryStatuses] = useState<
+        Record<string, AssistantHistoryStatus>
+    >({});
     const [shouldAnimate, setShouldAnimate] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [projectsCollapsed, setProjectsCollapsed] = useState(false);
@@ -109,6 +136,52 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         recentProjects ??
         (userId ? recentProjectsCache.get(userId)?.projects : undefined) ??
         null;
+
+    useEffect(
+        () =>
+            subscribeAssistantTurns((chatId, change, turn) => {
+                setAssistantHistoryStatuses((current) =>
+                    withAssistantHistoryStatus(
+                        current,
+                        chatId,
+                        chatId === routeChatIdRef.current
+                            ? undefined
+                            : change === "begin"
+                              ? "loading"
+                              : turn.assistant.error
+                                ? undefined
+                                : "complete",
+                    ),
+                );
+            }),
+        [],
+    );
+
+    useEffect(() => {
+        setAssistantHistoryStatuses((current) => {
+            let next = current;
+            if (routeChatId) {
+                next = withAssistantHistoryStatus(
+                    next,
+                    routeChatId,
+                    undefined,
+                );
+            }
+            for (const chat of chats ?? []) {
+                if (
+                    chat.id !== routeChatId &&
+                    hasAssistantTurn(chat.id)
+                ) {
+                    next = withAssistantHistoryStatus(
+                        next,
+                        chat.id,
+                        "loading",
+                    );
+                }
+            }
+            return next;
+        });
+    }, [chats, routeChatId]);
 
     useEffect(() => {
         if (!userId) {
@@ -533,7 +606,20 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                                         chat.project_name ??
                                                         undefined
                                                     }
+                                                    responseStatus={
+                                                        assistantHistoryStatuses[
+                                                            chat.id
+                                                        ]
+                                                    }
                                                     onSelect={() => {
+                                                        setAssistantHistoryStatuses(
+                                                            (current) =>
+                                                                withAssistantHistoryStatus(
+                                                                    current,
+                                                                    chat.id,
+                                                                    undefined,
+                                                                ),
+                                                        );
                                                         setCurrentChatId(
                                                             chat.id,
                                                         );
