@@ -95,11 +95,22 @@ export function startAssistantTurnRun(args: {
     return run ? turnView(run) : null;
 }
 
+/**
+ * The turn with this id, if it belongs to `surface`.
+ *
+ * The surface check matters because a turn id is only unique within this
+ * process, not within a surface: without it, a tabular review chat could hand
+ * `/chats/:chatId/turn/:turnId/stream` the id of a WEB chat turn that happens
+ * to carry the same `chatId`, and the caller would attach to a thread the
+ * tabular access check never looked at.
+ */
 export function getAssistantTurnRun(
     turnId: string,
+    surface: AssistantTurnSurface = "chat",
 ): AssistantTurnRun | undefined {
     const run = getStreamRun<TurnMeta>(turnId);
-    return run ? turnView(run) : undefined;
+    if (!run || run.key !== turnKey(run.meta.chatId, surface)) return undefined;
+    return turnView(run);
 }
 
 /** What a client reloading the chat needs in order to attach. */
