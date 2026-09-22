@@ -1,3 +1,4 @@
+import { buildGoogleWorkspaceTools } from "../../../lib/integrations/googleWorkspace";
 import {
   streamChatWithTools,
   resolveModel,
@@ -297,6 +298,7 @@ export async function runLLMStream(params: {
     ...baseTools,
     ...mcpTools,
     ...googleDriveTools,
+    ...(await buildGoogleWorkspaceTools(userId, db)),
     ...(extraTools ?? []),
     ...(clientTools?.schemas ?? []),
   ];
