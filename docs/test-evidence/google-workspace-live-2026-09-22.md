@@ -119,19 +119,35 @@ backend Google Workspace/chat dispatch: 51 passed
 frontend inline approval/settings/message: 15 passed
 backend production build: passed
 frontend production build (webpack): passed
-frontend lint: passed with 33 pre-existing warnings and no errors
+frontend lint: passed with 32 pre-existing warnings and no errors
 ```
 
 The full branch verification completed before this live run:
 
 ```text
-backend unit/integration: 2,355 passed, 47 skipped
-frontend unit/component: 1,531 passed
+backend unit/integration: 2,362 passed, 47 skipped
+frontend unit/component: 1,541 passed
 web Playwright: 29 passed, 4 expected LLM-dependent skips
 local Supabase stack: 47 passed
 Word add-in: 338 passed
 Docker and security checks: passed
 ```
+
+Final-head verification was repeated on commit `da3c223b5ee4c6c08ebf9284feaaf3d80b97ad52` after the last rebase:
+
+| Verification | Result |
+| --- | --- |
+| `npm test --prefix backend` | 2,362 passed, 47 skipped, 0 failed |
+| `npm test --prefix frontend` | 1,541 passed, 0 failed |
+| `npm run test:e2e --prefix word-addin` | 338 passed across Chromium and WebKit |
+| `npm run build --prefix backend` | Passed |
+| `npm run build --prefix frontend -- --webpack` | Passed; 38 routes generated |
+| `npm run lint --prefix frontend` | Passed with 0 errors and 32 existing warnings |
+| `npm run typecheck --prefix word-addin` | Passed |
+| Word production build with documented example deployment URLs | Passed; webpack emitted three existing bundle-size warnings |
+| `git diff --check` and worktree status | Clean |
+
+The first backend and Word Playwright attempts were made inside a filesystem sandbox that rejects local `listen(2)` calls. They failed only with explicit `EPERM` errors on `0.0.0.0` and `127.0.0.1:3100`; both complete suites passed when rerun with local-port permission. Next's default Turbopack build encountered the same host restriction while creating an internal worker. The webpack production build passed locally, and the unrestricted GitHub frontend build check passed on the same source tree. A frontend keyboard-navigation test failed once while three complete suites ran concurrently, then passed 15/15 in isolation and passed again in the complete 1,541-test frontend rerun.
 
 ## Reviewer reproduction
 
