@@ -132,13 +132,47 @@ away costs nothing.
 - A second `POST /generate` while a run is still streaming answers
   `409 review_running`, handing back the lease it had just claimed.
 
+#### Word chat
+
+`POST /word-chat` registers a run under the `word` surface. `chatId` always
+exists by then — a cloud row's id, or the UUID `prepareWordChatStream` mints
+for `storage: "local"` — so every Word turn is keyed and resumable, local
+ones included.
+
+- `GET /word-chat/:chatId/turn/:turnId/stream?document_id=<uuid>&from=<seq>`
+- `POST /word-chat/:chatId/turn/:turnId/stop?document_id=<uuid>`
+- `GET /word-chat/:chatId` reports `active_turn`. Note that it filters the
+  reserved (still-empty) assistant row out of `messages`, so a turn in flight
+  is visible ONLY as `active_turn` and a reattaching pane appends its own
+  placeholder.
+- A second `POST /word-chat` into the same chat answers
+  `409 turn_in_progress`.
+
+Both endpoints authorise **from the run**: `run.userId` must be the caller and
+the run's `clientDocumentId` must be the `document_id` presented, otherwise
+`404 turn_not_found`. A local chat is never persisted, so there is no row to
+authorise against — and a cloud chat's row says nothing about which run is
+live either.
+
+Client tool calls need two things of the registry, both in `streamRuns.ts`:
+the adapter's `: tool-wait` keep-alives are comments, so they fan out live and
+are never buffered or numbered; and a `client_tool_call` frame is written with
+`{ replay: () => isClientToolCallPending(callId) }`, so a pane that reattaches
+while the call is outstanding is handed it and can answer the tool loop that
+is still waiting, while a call that has been answered, timed out (60 s) or
+cancelled is never replayed. Two panes attached at once would both execute a
+replayed call; the first result settles the bridge and the second is dropped
+by `submitClientToolResult`, but the document work has already happened twice.
+
 Runs live in process memory. A finished run is retained for
 `FINISHED_RUN_RETENTION_MS` (60 s) so a late reconnect still gets the
 terminal frames, and a run that outlives `MAX_RUN_LIFETIME_MS` (30 min) is
 stopped as a safety net. A resume therefore has to reach the replica that is
 generating: run one replica, or route by session, until the buffer is moved
-to shared storage. Word chat (`/word-chat`) still uses `openAssistantSse`,
-where a closed socket is still a cancel.
+to shared storage. `lib/assistantSse.ts` (`openAssistantSse`) survives only
+for the one case that cannot be a run: a tabular review chat whose
+preparation produced no chat id, so there is no key to register under and
+nothing that could ever attach.
 
 ### The service contract
 
