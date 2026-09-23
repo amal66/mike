@@ -10,6 +10,28 @@ security fixes in `30b25535`), based on `main` at
 **Status: automated verification is recorded below; fresh live Google acceptance
 is incomplete. This report is not a merge-readiness sign-off.**
 
+## Current automated gate: all checks pass
+
+All CI checks passed on `dca4586c`, based on `main` at `9014da53`:
+backend/frontend tests and builds, schema drift, all **47 Supabase stack tests**,
+web Playwright, Word Chromium/WebKit, all three Docker images, and security
+checks. The local full browser run also passed **41/41 with zero skips**,
+including the four live-model cases. Fork CI intentionally skips those four
+because repository model secrets are not available to fork pull requests.
+CodeRabbit's paused status is not a fresh review.
+
+The repeated CI startup failures were fixed, not waived. `supabase/setup-cli`
+forced the rate-limited GHCR registry, disabling the pinned CLI's built-in
+registry fallback. Startup now unsets that override for the command. The
+service exclusions also use current names (`mailpit`, `logflare`, `storage-api`,
+`postgres-meta`, and `supavisor`) instead of obsolete names that the CLI ignored.
+No assertions, required checks, or test coverage were removed. All three
+affected workflows completed successfully after the fix.
+
+- [Schema comparison and lifecycle checks](https://github.com/open-legal-products/mike/actions/runs/35904640943)
+- [47 real Supabase tests](https://github.com/open-legal-products/mike/actions/runs/35904641002)
+- [Production web browser suite](https://github.com/open-legal-products/mike/actions/runs/35904641015)
+
 ## Latest live flow: Drive search and read
 
 The Drive read was repeated successfully on `8af69de4` (application code
@@ -26,13 +48,35 @@ tool activity, and complete answer. It is a 16-second step recording, not a
 continuous video. It contains no mocked provider response. Drive writes are
 not implemented in this PR; Drive remains read-only.
 
-Gmail and Calendar read-only connections are confirmed, but live content reads
-and approved writes remain unproven. A separate write-access confirmation is
-pending. Chrome input subsequently timed out in Mike as well as Gmail; both the
-accessibility input API and the supported Playwright input API failed before
-the bounded Gmail/Calendar search could be submitted. Connection status alone
-is not counted as a successful read/write flow, and no corresponding success
-GIF is claimed.
+### Calendar positive read and read-only boundary
+
+After browser input recovered, Mike's live Gmail search and Calendar list-events
+tools both returned zero matches for the isolated synthetic marker. A subsequent
+request to prepare a draft and event while read-only exposed no write tools.
+Follow-up live Gmail message/draft and Calendar searches returned zero matching
+items, confirming no synthetic write occurred.
+
+![Live searches, unavailable write tools, and unchanged provider state](google-integrations-2026-09-23/13-live-readonly-boundary.gif)
+
+A private source event was then created directly in Google Calendar, with no
+guests, notifications, or busy-time effect. This fixture setup is **not** counted
+as a Mike write. Mike found the exact title `MIKE-GOOGLE-20260923-calendar-read`
+and invoked `google_calendar_read_event`. It returned September 25, 2026,
+10:00–10:15 in `America/Los_Angeles`, the source phrase **amber heron 4826**,
+and no guests, all matching the source editor.
+
+![Live Calendar request and verified event read](google-integrations-2026-09-23/12-live-calendar-read.gif)
+
+These are unmodified actual browser captures assembled as step recordings:
+four captured states / 20 seconds for the read-only boundary, and two states /
+12 seconds for the Calendar read. They do not claim continuous video, successful
+writes, or mocked provider output. The private event remains as an identifiable
+test fixture for later approved update/delete checks.
+
+Gmail positive message/thread reads and all approved writes remain unproven.
+The exact Gmail/Calendar write-access and self-addressed test-email confirmation
+is pending. Gmail Compose still triggers a browser-control failure; Mike and
+Calendar UI control recovered. No successful write GIF is claimed.
 
 ## Environment and evidence boundaries
 
