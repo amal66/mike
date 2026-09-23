@@ -64,6 +64,9 @@ the suite; this is not a claim that the whole app is accessibility-clean.
   project. All three services now remove their own local credentials; users can
   revoke the whole app in Google Account settings.
 - Removed CI branch filters added solely for the former child PR.
+- Fixed a CI-only startup race in the disposable database test: wait for the
+  final TCP listener instead of PostgreSQL's temporary initialization socket.
+  A fresh-container run passed after the fix; application code was unchanged.
 
 ## Fresh Google project checks
 
