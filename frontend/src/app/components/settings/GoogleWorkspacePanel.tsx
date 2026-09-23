@@ -16,9 +16,7 @@ import {
 } from "@/app/lib/mikeApi";
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
-import {
-  GoogleWorkspaceActionCard,
-} from "@/app/components/shared/GoogleWorkspaceActionCard";
+import { GoogleWorkspaceActionCard } from "@/app/components/shared/GoogleWorkspaceActionCard";
 import { SettingsCard } from "./SettingsCard";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
@@ -240,9 +238,9 @@ function ConnectionCard({
             {status.connected && (
               <p className="text-xs text-muted-foreground">
                 Enabling writes opens a new Google consent request. Every action
-                still needs your approval below. Disconnecting removes this
-                service from Mike; manage all app permissions in your Google
-                account.
+                still needs your approval in the Assistant conversation.
+                Disconnecting removes this service from Mike; manage all app
+                permissions in your Google account.
               </p>
             )}
           </>

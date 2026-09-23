@@ -15,6 +15,24 @@ test("Google Drive connect, cancel and disconnect", async ({
             body: "<p>Mock Google consent</p>",
         }),
     );
+    // Other connected providers also render Disconnect buttons. Keep this
+    // regression deterministic without depending on local Google grants.
+    for (const provider of ["gmail", "google-calendar"]) {
+        await page.route(`**/api/user/integrations/${provider}`, (route) =>
+            route.fulfill({
+                json: {
+                    configured: true,
+                    schemaReady: true,
+                    connected: true,
+                    writeEnabled: false,
+                    accountEmail: "fixture@example.com",
+                },
+            }),
+        );
+    }
+    await page.route("**/api/user/google-actions", (route) =>
+        route.fulfill({ json: { actions: [] } }),
+    );
     await page.route(
         "**/api/user/integrations/google-drive**",
         async (route) => {
@@ -48,23 +66,24 @@ test("Google Drive connect, cancel and disconnect", async ({
         },
     );
     await page.goto("/settings/connectors");
-    const connect = page.getByRole("button", { name: "Connect", exact: true });
+    const drive = page.getByRole("region", { name: "Google Drive connection" });
+    const connect = drive.getByRole("button", { name: "Connect", exact: true });
     await expect(connect).toBeEnabled();
     const firstPopup = context.waitForEvent("page");
     await connect.click();
     const popup = await firstPopup;
     await expect(
-        page.getByRole("button", { name: "Waiting for Google…" }),
+        drive.getByRole("button", { name: "Waiting for Google…" }),
     ).toBeDisabled();
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await expect(page.getByText("Authorization cancelled.")).toBeVisible();
+    await drive.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(drive.getByText("Authorization cancelled.")).toBeVisible();
     expect(cancelled).toBe(true);
     await expect(connect).toBeEnabled();
     if (!popup.isClosed()) await popup.close();
 
     await connect.click();
     connected = true; // Represents the successful server-side code exchange.
-    const disconnect = page.getByRole("button", {
+    const disconnect = drive.getByRole("button", {
         name: "Disconnect",
         exact: true,
     });
