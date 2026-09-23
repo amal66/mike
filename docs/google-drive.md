@@ -2,7 +2,7 @@
 
 Mike provides three first-party, read-only assistant tools over Drive REST v3:
 `google_drive_search`, `google_drive_list_recent`, and `google_drive_read_file`.
-Each Mike user connects their own Google account in Settings → Connectors.
+Each Mike user connects their own Google account in Settings → Connectors → Google accounts. Choose **Add** on the Google Drive card, then **Connect** in its details dialog; a connected card offers **Manage**.
 The integration does not require a Google MCP server or a service account.
 
 ## Technical approach
@@ -183,7 +183,8 @@ actual Cloud client, consent configuration and Workspace policy work together.
    `configured:true`, `schemaReady:true`, `connected:false`, and the exact
    registered redirect URI. These flags alone do not validate Google credentials
    or prove the lifecycle RPCs were deployed.
-2. **Consent:** click Connect, complete Mike MFA if enrolled, choose your test
+2. **Consent:** choose Add on the Google Drive card, then Connect in the details
+   dialog. Complete Mike MFA if enrolled, choose your test
    Google account, and approve Drive read access. Expect Connected, including
    after page reload and backend restart. No access/refresh tokens should appear
    in browser API responses. If Google denies consent, close the popup and use

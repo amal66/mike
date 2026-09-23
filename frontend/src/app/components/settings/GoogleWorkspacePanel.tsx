@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   GoogleWorkspaceProvider,
   GoogleWorkspaceStatus,
@@ -17,7 +17,8 @@ import {
 import { userFacingApiError } from "@/app/lib/userFacingError";
 import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import { GoogleWorkspaceActionCard } from "@/app/components/shared/GoogleWorkspaceActionCard";
-import { SettingsCard } from "./SettingsCard";
+import { GoogleConnectionCard } from "./GoogleConnectionCard";
+import { SettingsHeading } from "./SettingsHeading";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
 const names = { gmail: "Gmail", "google-calendar": "Google Calendar" };
@@ -156,8 +157,20 @@ function ConnectionCard({
     }
   };
   return (
-    <SettingsCard>
-      <section className="space-y-3 p-4" aria-label={`${name} connection`}>
+    <GoogleConnectionCard
+      name={name}
+      connected={!!status?.connected}
+      loading={!status && !error}
+      summary={
+        status
+          ? status.connected
+            ? `${status.accountEmail ?? "Connected"} · ${status.writeEnabled ? "Writes require approval" : "Read-only"}`
+            : "Not connected"
+          : error ? "Unavailable" : "Loading…"
+      }
+      onClose={() => abortRef.current?.abort()}
+    >
+      <section className="space-y-3" aria-label={`${name} connection`}>
         <div>
           <h3 className="text-sm font-medium">{name}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -190,7 +203,12 @@ function ConnectionCard({
             ) : null}
             {status.redirectUri && !status.connected && (
               <details className="text-xs text-muted-foreground">
-                <summary>Connection setup</summary>
+                <summary
+                  tabIndex={0}
+                  className="w-fit cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Connection setup
+                </summary>
                 <p className="mt-2 break-all">
                   Authorized redirect URI: {status.redirectUri}
                 </p>
@@ -254,10 +272,10 @@ function ConnectionCard({
           </p>
         )}
       </section>
-    </SettingsCard>
+    </GoogleConnectionCard>
   );
 }
-export function GoogleWorkspacePanel() {
+export function GoogleWorkspacePanel({ children }: { children?: ReactNode }) {
   const [actions, setActions] = useState<GoogleWorkspaceActionReview[] | null>(
     null,
   );
@@ -308,28 +326,39 @@ export function GoogleWorkspacePanel() {
     }
   };
   return (
-    <div className="mb-3 space-y-3">
-      <p className="text-xs text-muted-foreground">
-        Google sign-in never connects your email or calendar automatically. Each
-        connection below is optional.
-      </p>
-      <ConnectionCard
-        provider="gmail"
-        sensitive={sensitive}
-        changed={() => void refresh()}
-      />
-      <ConnectionCard
-        provider="google-calendar"
-        sensitive={sensitive}
-        changed={() => void refresh()}
-      />
-      <SettingsCard>
+    <section className="@container mt-6" aria-labelledby="google-connections-heading">
+      <div className="mb-4 space-y-1">
+        <SettingsHeading id="google-connections-heading">
+          Google accounts
+        </SettingsHeading>
+        <p className="text-xs text-muted-foreground">
+          Google sign-in never connects these services automatically. Choose any
+          Google account for each optional connection.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
+        {children}
+        <ConnectionCard
+          provider="gmail"
+          sensitive={sensitive}
+          changed={() => void refresh()}
+        />
+        <ConnectionCard
+          provider="google-calendar"
+          sensitive={sensitive}
+          changed={() => void refresh()}
+        />
+      </div>
+      <details className="mt-3">
+        <summary className="w-fit cursor-pointer rounded text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          Recent Google actions
+        </summary>
         <section
           id="google-actions"
           aria-label="Google action approvals"
           className="space-y-3 p-4"
         >
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-medium">Recent Google actions</h3>
             <PillButtonUI tone="white" onClick={() => void refresh()}>
               Refresh proposals
@@ -364,7 +393,7 @@ export function GoogleWorkspacePanel() {
             </p>
           )}
         </section>
-      </SettingsCard>
+      </details>
       <MfaVerificationPopup
         open={mfa}
         onCancel={() => {
@@ -386,6 +415,6 @@ export function GoogleWorkspacePanel() {
             );
         }}
       />
-    </div>
+    </section>
   );
 }

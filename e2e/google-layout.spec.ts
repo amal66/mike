@@ -2,11 +2,17 @@ import { test, expect } from "@playwright/test";
 
 // Real browser layout, deterministic synthetic provider data. This does not
 // grant Google access or establish live provider acceptance.
-for (const width of [390, 768, 1280]) {
-  test(`Google connection and approval cards fit a ${width}px viewport`, async ({
+for (const { width, darkMode } of [
+  { width: 390, darkMode: false },
+  { width: 768, darkMode: false },
+  { width: 1280, darkMode: false },
+  { width: 390, darkMode: true },
+  { width: 1280, darkMode: true },
+]) {
+  test(`Google connections fit ${width}px in ${darkMode ? "dark" : "light"} mode`, async ({
     page,
-  }) => {
-    await page.setViewportSize({ width, height: 900 });
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: width === 390 ? 700 : 900 });
     const accountEmail = `connector.acceptance+${"x".repeat(40)}@example.com`;
     const action = {
       id: "12345678-1234-1234-1234-123456789abc",
@@ -41,6 +47,7 @@ for (const width of [390, 768, 1280]) {
         return route.fulfill({
           json: {
             onboardingComplete: true,
+            darkMode,
             displayName: "Layout test",
             apiKeyStatus: {},
             creditsRemaining: 100,
@@ -61,19 +68,24 @@ for (const width of [390, 768, 1280]) {
       return route.fulfill({ json: [] });
     });
     await page.goto("/settings/connectors");
+    await expect(page.getByRole("button", { name: "Manage Gmail", exact: true })).toBeEnabled();
+    await expect(page.getByRole("article", { name: "Send email approval" })).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("google-cards.png"), fullPage: true, animations: "disabled" });
+    await page.locator("summary").filter({ hasText: "Recent Google actions" }).click();
     const approval = page.getByRole("article", { name: "Send email approval" });
     await expect(approval).toBeVisible();
     for (const card of [
       page.getByRole("region", {
-        name: "Google Drive connection",
+        name: "Google Drive connector",
         exact: true,
       }),
-      page.getByRole("region", { name: "Gmail connection", exact: true }),
+      page.getByRole("region", { name: "Gmail connector", exact: true }),
       page.getByRole("region", {
-        name: "Google Calendar connection",
+        name: "Google Calendar connector",
         exact: true,
       }),
       approval,
+      page.getByRole("region", { name: "Discover", exact: true }),
     ]) {
       const size = await card.evaluate((element) => {
         const bounds = element.getBoundingClientRect();
@@ -89,6 +101,25 @@ for (const width of [390, 768, 1280]) {
         size.overflow,
         `${await card.getAttribute("aria-label")} content overflow`,
       ).toBeLessThanOrEqual(1);
+    }
+    for (const name of ["Google Drive", "Gmail", "Google Calendar"]) {
+      await page.getByRole("button", { name: `Manage ${name}`, exact: true }).click();
+      const dialog = page.getByRole("dialog", { name, exact: true });
+      await expect(dialog).toBeVisible();
+      const bounds = await dialog.evaluate((element) => ({
+        left: element.getBoundingClientRect().left,
+        right: element.getBoundingClientRect().right,
+        overflow: element.scrollWidth - element.clientWidth,
+      }));
+      expect(bounds.left).toBeGreaterThanOrEqual(0);
+      expect(bounds.right).toBeLessThanOrEqual(width);
+      expect(bounds.overflow).toBeLessThanOrEqual(1);
+      if (name === "Gmail") {
+        await page.screenshot({ path: testInfo.outputPath("gmail-details.png"), animations: "disabled" });
+        await expect(dialog.getByRole("button", { name: "Disconnect", exact: true })).toBeInViewport();
+      }
+      await dialog.getByRole("button", { name: "Close", exact: true }).click();
+      await expect(page.getByRole("button", { name: `Manage ${name}`, exact: true })).toBeFocused();
     }
     await expect(
       approval.getByRole("button", { name: "Approve send email" }),

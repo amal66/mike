@@ -3,7 +3,7 @@
 PR: [#434](https://github.com/open-legal-products/mike/pull/434). The former
 Gmail/Calendar PR #522 is closed as superseded; all implementation is in #434.
 
-Implementation revision for the final browser/build rerun: `118ad041` (Google
+Implementation revision for the earlier full browser/build rerun: `118ad041` (Google
 security fixes in `30b25535`), based on `main` at
 `4ad85e463ea769809c9e177fbe7a84548c71d546`.
 
@@ -25,7 +25,7 @@ is incomplete. This report is not a merge-readiness sign-off.**
   [September 22 report](google-workspace-live-2026-09-22.md) is now a retirement
   notice, not evidence for the current client.
 
-## Automated results
+## Earlier combined-integration baseline
 
 | Check | Result |
 | --- | --- |
@@ -126,6 +126,57 @@ the running API uses the real key already saved in the disposable test user's
 profile. The marker is not a credential. Focused project table/page tests and
 ESLint were also run after the Create-button fix.
 
+## Alignment with the current Connectors UI
+
+Fetched `origin/main` again on September 23: it remains `4ad85e46`, already an
+ancestor of this branch. No additional rebase was necessary. The Google cards
+now use the existing compact two-column card layout, small pill controls, and
+shared detail dialogs. Both Google and MCP grids now use the available content
+width to decide when two columns fit; MCP actions and dialogs are unchanged.
+
+Each Google service has Add/Manage controls; account selection, read/write
+permissions, and disconnect live in its dialog. Closing an active authorization
+dialog cancels its pending OAuth state. Recent action history is collapsed;
+primary action approval remains inside Assistant.
+
+The focused regression run passed **41 tests**, including both new close-during-
+OAuth cases and existing inline approval rendering. The full frontend run passed
+**1,640 tests across 212 files**. The test-file type check then caught an unsupported
+Testing Library selector option; removing it changed no runtime behavior, and all
+**24 connector-page tests** plus the full frontend type check passed afterward.
+The production webpack build and changed-file ESLint passed. The new browser
+layout cases cover 390/768/1280px light mode and 390/1280px dark mode, including
+long account names, dialog bounds, focus return, and keyboard access to setup.
+The first browser run passed 40/41 and caught a 61px card overflow at 768px with
+both sidebars open. The fix uses container width for the grid and wraps narrow
+Google-card controls; the recovery-history header also wraps. Extending the check
+to Discover caught a further 6px overflow in the existing MCP cards. Those cards
+now wrap their controls as well. The final styling change passed all **34 Google
+connection/MCP page component tests**, frontend types, and changed-file ESLint.
+After the final production rebuild, the focused browser run passed **8/8**, then
+the entire web suite passed **41/41, zero skipped and zero failed**, including
+all four live-model cases. The five responsive/theme cases and both connection
+lifecycle tests pass on the final UI. Screenshots were visually inspected.
+Backend/database/Word results above are the unchanged baseline; this update only
+changes the frontend, browser tests, and documentation.
+
+### Current UI screenshots (synthetic provider fixtures)
+
+These screenshots come from the real production frontend in Chromium, with
+explicitly mocked Google status/action responses and synthetic account names.
+They prove layout, not a Google grant or successful provider operation. The
+screenshots finish CSS transitions before capture; no visual content is fabricated.
+
+| View | Screenshot |
+| --- | --- |
+| Desktop, 1280px, light | [Open](google-integrations-2026-09-23/04-connectors-desktop.png) |
+| Desktop, 1280px, dark | [Open](google-integrations-2026-09-23/05-connectors-dark.png) |
+| Tablet, 768px, both sidebars open | [Open](google-integrations-2026-09-23/06-connectors-tablet.png) |
+| Mobile, 390px, light | [Open](google-integrations-2026-09-23/07-connectors-mobile.png) |
+| Mobile Gmail details, dark | [Open](google-integrations-2026-09-23/08-gmail-dialog-mobile.png) |
+
+![Current compact connector cards — synthetic data](google-integrations-2026-09-23/04-connectors-desktop.png)
+
 ## Fresh Google project checks
 
 | Check | Observed result |
@@ -145,7 +196,8 @@ test users is distinct from granting that access. The uncompleted Drive popup
 timed out normally without creating a connection. Chrome’s extension connection
 also became unavailable during the final rerun; reconnection has been requested.
 
-The current local UI shows all services disconnected with explicit opt-in controls:
+Before the compact-card alignment, the local UI showed all services disconnected
+with explicit opt-in controls (historical screenshot, not the latest layout):
 
 ![Opt-in service connections](google-integrations-2026-09-23/01-opt-in-connections.png)
 
@@ -159,7 +211,8 @@ the authoritative operator guide.
 
 ## UI flow recording
 
-The following GIF shows actual Mike-side OAuth **cancellation** flows for Drive,
+The following GIF predates the compact-card alignment and shows actual Mike-side
+OAuth **cancellation** flows for Drive,
 Gmail, and Calendar using the newly configured client. Each starts authorization,
 shows the pending state, cancels, and returns to a disconnected state with a
 usable Connect button. These are seven captured screen states, held for three

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
+import { GoogleConnectionCard } from "@/app/components/settings/GoogleConnectionCard";
 import { GoogleWorkspacePanel } from "@/app/components/settings/GoogleWorkspacePanel";
 import { NewCustomMcpModal } from "@/app/components/settings/NewCustomMcpModal";
 import type { McpConnectorFormDraft } from "@/app/components/settings/McpConnectorForm";
@@ -405,9 +406,19 @@ function GoogleDriveCard({
   });
 
   return (
-    <section aria-label="Google Drive connection">
-      <SettingsCard>
-        <div className="flex items-center justify-between gap-3 px-4 py-5">
+    <GoogleConnectionCard
+      name="Google Drive"
+      connected={!!status?.connected}
+      loading={!status && !error}
+      summary={
+        status
+          ? status.connected ? "Connected · Read-only" : "Not connected"
+          : error ? "Unavailable" : "Loading…"
+      }
+      onClose={() => abortRef.current?.abort()}
+    >
+      <section aria-label="Google Drive connection">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
           <div className="min-w-0">
             <SettingsLabel>Google Drive</SettingsLabel>
             <SettingsDescription>
@@ -445,7 +456,7 @@ function GoogleDriveCard({
         {status !== null &&
           !status.connected &&
           status.schemaReady === false && (
-            <p className="px-4 pb-4 text-xs text-muted-foreground">
+            <p className="pb-4 text-xs text-muted-foreground">
               Not available on this server yet: the database is missing the
               Google Drive migration
               (backend/migrations/20260921_02_google_drive_integration.sql). The
@@ -456,7 +467,7 @@ function GoogleDriveCard({
           !status.connected &&
           status.schemaReady !== false &&
           !status.configured && (
-            <div className="px-4 pb-4 text-xs text-muted-foreground">
+            <div className="pb-4 text-xs text-muted-foreground">
               <p>
                 Not available on this server: the administrator needs to
                 configure a Google OAuth client (see &ldquo;Google Drive
@@ -477,18 +488,18 @@ function GoogleDriveCard({
             tone="white"
             size="xs"
             onClick={() => abortRef.current?.abort()}
-            className="mx-4 mb-4"
+            className="mb-4"
           >
             Cancel
           </PillButtonUI>
         )}
         {error && (
-          <p className="px-4 pb-4 whitespace-pre-wrap text-xs text-destructive">
+          <p className="pb-4 whitespace-pre-wrap text-xs text-destructive">
             {error}
           </p>
         )}
-      </SettingsCard>
-    </section>
+      </section>
+    </GoogleConnectionCard>
   );
 }
 
@@ -1266,7 +1277,7 @@ export default function ConnectorsPage() {
   };
 
   return (
-    <div>
+    <div className="@container">
       <div className="mb-4">
         <div className="flex items-center justify-between gap-3">
           <SettingsHeading>Installed</SettingsHeading>
@@ -1289,19 +1300,10 @@ export default function ConnectorsPage() {
         </div>
       )}
 
-      <div className="mb-3">
-        <GoogleDriveCard
-          runSensitiveAction={runSensitiveAction}
-          handleRef={googleDriveHandleRef}
-        />
-      </div>
-
-      <GoogleWorkspacePanel />
-
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
         {!loading &&
           (connectors.length === 0 ? (
-            <div className="sm:col-span-2">
+            <div className="@min-[32rem]:col-span-2">
               <SettingsCard>
                 <div className="p-4">
                   <SettingsDescription>No connectors yet.</SettingsDescription>
@@ -1321,13 +1323,20 @@ export default function ConnectorsPage() {
           ))}
       </div>
 
+      <GoogleWorkspacePanel>
+        <GoogleDriveCard
+          runSensitiveAction={runSensitiveAction}
+          handleRef={googleDriveHandleRef}
+        />
+      </GoogleWorkspacePanel>
+
       <section className="mt-6" aria-labelledby="discover-connectors-heading">
         <div className="mb-4">
           <SettingsHeading id="discover-connectors-heading">
             Discover
           </SettingsHeading>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
           {CONNECTOR_PRESETS.map((preset) => {
             const isAdded = connectors.some(
               (connector) =>
@@ -1347,14 +1356,17 @@ export default function ConnectorsPage() {
 
             return (
               <SettingsCard key={preset.serverUrl}>
-                <div className="flex items-center gap-3 p-4">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
-                    <ConnectorBrandIcon name={preset.name} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <SettingsLabel>{preset.name}</SettingsLabel>
+                <div className="flex flex-wrap items-center gap-3 p-4">
+                  <div className="flex min-w-0 flex-[1_0_8rem] items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+                      <ConnectorBrandIcon name={preset.name} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <SettingsLabel>{preset.name}</SettingsLabel>
+                    </div>
                   </div>
                   <PillButtonUI
+                    className="ml-auto"
                     tone="blue"
                     size="sm"
                     onClick={() => {

@@ -1,5 +1,5 @@
 vi.mock("@/app/components/settings/GoogleWorkspacePanel", () => ({
-    GoogleWorkspacePanel: () => null,
+    GoogleWorkspacePanel: ({ children }: { children: import("react").ReactNode }) => children,
 }));
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -824,6 +824,7 @@ describe("Google Drive connection lifecycle", () => {
     async function openCard() {
         render(<ConnectorsPage />);
         await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
         await act(async () => {
             fireEvent.click(screen.getByRole("button", { name: "Connect" }));
             await flushMicrotasks();
@@ -840,6 +841,7 @@ describe("Google Drive connection lifecycle", () => {
 
         render(<ConnectorsPage />);
         await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
 
         expect(
             screen.getByText(
@@ -865,6 +867,7 @@ describe("Google Drive connection lifecycle", () => {
 
         render(<ConnectorsPage />);
         await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
 
         expect(
             screen.getByText(/missing the Google Drive migration/i),
@@ -914,6 +917,16 @@ describe("Google Drive connection lifecycle", () => {
         expect(getGoogleDriveStatus).toHaveBeenCalledTimes(count);
     });
 
+    it("cancels pending consent when its details dialog closes", async () => {
+        await openCard();
+        fireEvent.keyDown(window, { key: "Escape" });
+        await act(flushMicrotasks);
+        expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state);
+        expect(screen.queryByRole("dialog", { name: "Google Drive" })).toBeNull();
+        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
+        expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
+    });
+
     it("honors cancellation while the start request is still in flight", async () => {
         let resolveStart!: (value: { authorizationUrl: string }) => void;
         vi.mocked(startGoogleDriveOAuth).mockReturnValue(
@@ -961,6 +974,7 @@ describe("Google Drive connection lifecycle", () => {
         );
         render(<ConnectorsPage />);
         await act(flushMicrotasks);
+        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
         expect(
             screen.getByText(/Could not load Google Drive status/),
         ).toBeTruthy();

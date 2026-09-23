@@ -65,9 +65,16 @@ afterEach(() => {
 });
 const gmail = () =>
   within(screen.getByRole("region", { name: "Gmail connection" }));
+async function openPanel() {
+  render(<GoogleWorkspacePanel />);
+  const button = await screen.findByRole("button", { name: /^(Set up|Manage) Gmail$/ });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  fireEvent.click(screen.getByText("Recent Google actions", { selector: "summary" }));
+}
 describe("opt-in Google connections and action review", () => {
   it("does not start OAuth or request write access when visiting settings, even for Google sign-in", async () => {
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText("Not connected");
     expect(api.startGoogleWorkspaceOAuth).not.toHaveBeenCalled();
     expect(api.decideGoogleWorkspaceAction).not.toHaveBeenCalled();
@@ -85,7 +92,7 @@ describe("opt-in Google connections and action review", () => {
       accountEmail: "other-account@example.com",
       grantId: "g1",
     });
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText(/Connected as other-account@example.com/);
     expect(
       gmail().getByRole("button", { name: "Enable writes with approval" }),
@@ -102,7 +109,7 @@ describe("opt-in Google connections and action review", () => {
         resolve = r;
       }),
     );
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByRole("button", { name: "Disconnect" });
     fireEvent.click(gmail().getByRole("button", { name: "Disconnect" }));
     expect(gmail().getByRole("button", { name: "Disconnect" })).toBeDisabled();
@@ -121,7 +128,7 @@ describe("opt-in Google connections and action review", () => {
     vi.mocked(api.listGoogleWorkspaceActions).mockResolvedValue({
       actions: [pending],
     });
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findByText("Exact proposed body");
     expect(screen.getByText("recipient@example.com")).toBeVisible();
     expect(screen.getByText(/Account: mail-account/)).toBeVisible();
@@ -142,7 +149,7 @@ describe("opt-in Google connections and action review", () => {
     vi.mocked(api.listGoogleWorkspaceActions).mockResolvedValue({
       actions: [pending, { ...pending, id: "a2", expiresAt: "2000-01-01" }],
     });
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText("Exact proposed body");
     expect(
       screen.getAllByRole("button", { name: "Approve send email" })[1],
@@ -161,7 +168,7 @@ describe("opt-in Google connections and action review", () => {
     vi.mocked(api.startGoogleWorkspaceOAuth).mockResolvedValue({
       authorizationUrl: "https://accounts.google.com/auth?state=state",
     });
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText("Not connected");
     vi.mocked(api.getGoogleWorkspaceStatus).mockResolvedValue({
       ...base,
@@ -186,7 +193,7 @@ describe("opt-in Google connections and action review", () => {
     vi.mocked(api.startGoogleWorkspaceOAuth).mockResolvedValue({
       authorizationUrl: "https://accounts.google.com/auth?state=state",
     });
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText(/Connected as old/);
     fireEvent.click(
       gmail().getByRole("button", { name: "Enable writes with approval" }),
@@ -224,7 +231,7 @@ describe("opt-in Google connections and action review", () => {
       .mockResolvedValueOnce({
         authorizationUrl: "https://accounts.google.com/auth?state=state",
       });
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText("Not connected");
     fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
     await screen.findByRole("button", { name: "Verify test MFA" });
@@ -239,6 +246,22 @@ describe("opt-in Google connections and action review", () => {
       expect(popups[1].location.href).toContain("accounts.google.com"),
     );
   });
+  it("keeps connections opt-in and cancels pending consent when its dialog closes", async () => {
+    vi.spyOn(window, "open").mockReturnValue({ location: { href: "" }, close: vi.fn() } as unknown as Window);
+    vi.mocked(api.startGoogleWorkspaceOAuth).mockResolvedValue({ authorizationUrl: "https://accounts.google.com/auth?state=closing" });
+    render(<GoogleWorkspacePanel />);
+    const setup = await screen.findByRole("button", { name: "Set up Gmail" });
+    await waitFor(() => expect(setup).toBeEnabled());
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect read-only" })).toBeNull();
+    fireEvent.click(setup);
+    expect(api.startGoogleWorkspaceOAuth).not.toHaveBeenCalled();
+    fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
+    await waitFor(() => expect(api.startGoogleWorkspaceOAuth).toHaveBeenCalledWith("gmail", false));
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(api.cancelGoogleWorkspaceOAuth).toHaveBeenCalledWith("gmail", "closing"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
   it("cancels server state when cancellation occurs while start is in flight", async () => {
     let resolve!: (v: { authorizationUrl: string }) => void;
     vi.mocked(api.startGoogleWorkspaceOAuth).mockReturnValue(
@@ -248,7 +271,7 @@ describe("opt-in Google connections and action review", () => {
       location: { href: "" },
       close: vi.fn(),
     } as unknown as Window);
-    render(<GoogleWorkspacePanel />);
+    await openPanel();
     await screen.findAllByText("Not connected");
     fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
     fireEvent.click(

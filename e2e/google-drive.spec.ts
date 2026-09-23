@@ -66,6 +66,7 @@ test("Google Drive connect, cancel and disconnect", async ({
         },
     );
     await page.goto("/settings/connectors");
+    await page.getByRole("button", { name: "Set up Google Drive" }).click();
     const drive = page.getByRole("region", { name: "Google Drive connection" });
     const connect = drive.getByRole("button", { name: "Connect", exact: true });
     await expect(connect).toBeEnabled();
