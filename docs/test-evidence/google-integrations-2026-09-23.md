@@ -186,15 +186,54 @@ screenshots finish CSS transitions before capture; no visual content is fabricat
 | Three localhost callbacks | Saved for Drive, Gmail, and Calendar via localhost:3000/api |
 | Test-user eligibility | Configured; fresh Drive OAuth passed the prior access-denied screen |
 | Optional scopes | gmail.modify and calendar.events saved alongside the existing read scopes |
-| Final Drive consent | Reached the read/download consent screen; grant not yet submitted |
+| Final Drive consent | Approved by the user and completed; Mike displayed Connected · Read-only |
 | Gmail/Calendar consent and live provider operations | Pending |
-| Actual Assistant Google tool selection and inline mutation approval | Pending |
+| Actual Assistant Google tool selection | Drive search and native Google Doc export/read passed with a real Claude Sonnet 4.6 response |
+| Inline mutation approval and provider writes | Pending Gmail/Calendar grants |
 
-The account consent request is awaiting user approval because it grants the local
-Mike server ongoing access to Google account data. Configuring Cloud scopes and
-test users is distinct from granting that access. The uncompleted Drive popup
-timed out normally without creating a connection. Chrome’s extension connection
-also became unavailable during the final rerun; reconnection has been requested.
+On the resumed September 23 session, Chrome reconnected and the local Docker,
+Supabase, storage, frontend, and backend services were restored. The user
+explicitly approved Drive read access. Google accepted the callback and Mike
+persisted the connection. Gmail reached its consent flow, but Gmail/Calendar
+read consent is still awaiting approval. Write upgrades have not been granted.
+
+A new private synthetic Google Doc, `MIKE-GOOGLE-20260923-native-doc`, was
+created in the selected Google account through Google's UI. A real Assistant
+request searched for that exact title and read only that document. Its answer
+matched all four source assertions: **18 months**, **California**, **45 days**,
+and **violet otter 7391**. This ran on `ecf95dae` before the subsequent rebase,
+using the requested MikeOSS client. The screenshot below shows the actual
+`Google Drive: read_file` activity. The completed answer was verified in the
+accessibility tree; the screenshot viewport does not show the full answer table.
+
+![Private synthetic source, cropped to exclude account chrome](google-integrations-2026-09-23/09-live-drive-source.png)
+
+![Actual Drive read tool activity](google-integrations-2026-09-23/10-live-drive-tool.png)
+
+File upload via the Chrome extension was blocked by its file-URL permission.
+No synthetic upload succeeded. Native Google Docs creation/read succeeded
+independently. Chrome subsequently timed out and reported that the browser was
+unavailable, before a full-answer capture or the remaining provider flows.
+The full-flow GIF requirement remains outstanding.
+
+### New main rebase and log-redaction fix
+
+A fresh fetch found 27 new main commits. The combined branch was rebased without
+conflicts onto `9014da53` (PR #525); code head after the rebase is `3d804330`.
+The compact Connectors UI remains intact. Previous CI and browser results below
+are historical and do not sign off this new head.
+
+The live OAuth callback exposed a shared development-log issue: auth diagnostics
+included the request query string. Auth/MFA diagnostics and both internal-error
+reporting paths now omit query strings, keeping authorization codes and state
+out of their path fields. Request handling itself is unchanged. Regression tests
+cover successful MFA checks, MFA-required rejection, and both error-reporting
+paths. The focused pre-rebase run passed **38 tests**; backend build and test
+types passed. An initial sandbox run could not bind test HTTP listeners and was
+rerun with the required local permission. A pre-rebase broad run was stopped
+when newer main was discovered; it is not counted as a passing run.
+
+Post-rebase full regression results are pending.
 
 Before the compact-card alignment, the local UI showed all services disconnected
 with explicit opt-in controls (historical screenshot, not the latest layout):
@@ -228,10 +267,11 @@ this recording.
 
 ## Remaining acceptance before sign-off
 
-1. Grant read-only consent separately for Drive, Gmail, and Calendar through the
-   requested project's client; confirm the selected account for each service.
-2. Use a real Assistant conversation to search/read a synthetic Drive document,
-   synthetic email/thread, and bounded calendar events. Verify the results in Google.
+1. Complete Gmail and Calendar read-only consent through the requested project's
+   client; Drive consent is complete. Confirm the selected account for each service.
+2. Repeat the successful Drive read on the final rebased head; complete the synthetic
+   email/thread and bounded calendar-event reads. Enable Chrome extension file-URL
+   access for binary/text upload fixtures. Verify provider state and record full flows.
 3. Grant the separate Gmail/Calendar write upgrades. In Assistant, create a draft
    and an event, reject a second proposal, and separately approve edit/delete or
    Trash actions. Verify exact content, no writes before approval, and one effect
