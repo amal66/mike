@@ -10,6 +10,30 @@ security fixes in `30b25535`), based on `main` at
 **Status: automated verification is recorded below; fresh live Google acceptance
 is incomplete. This report is not a merge-readiness sign-off.**
 
+## Latest live flow: Drive search and read
+
+The Drive read was repeated successfully on `8af69de4` (application code
+`c26a2d72`) using the requested MikeOSS client. A fresh Assistant conversation
+searched only for `MIKE-GOOGLE-20260923-native-doc`, invoked the live Drive read
+tool, and returned **18 months**, **California**, **45 days**, and **violet otter
+7391**, matching the private synthetic source. The complete answer was visually
+checked after scrolling to the bottom.
+
+![Live Drive request, tool activity, and verified answer](google-integrations-2026-09-23/11-live-drive-read.gif)
+
+This GIF assembles three unmodified browser screenshots of the actual request,
+tool activity, and complete answer. It is a 16-second step recording, not a
+continuous video. It contains no mocked provider response. Drive writes are
+not implemented in this PR; Drive remains read-only.
+
+Gmail and Calendar read-only connections are confirmed, but live content reads
+and approved writes remain unproven. A separate write-access confirmation is
+pending. Chrome input subsequently timed out in Mike as well as Gmail; both the
+accessibility input API and the supported Playwright input API failed before
+the bounded Gmail/Calendar search could be submitted. Connection status alone
+is not counted as a successful read/write flow, and no corresponding success
+GIF is claimed.
+
 ## Environment and evidence boundaries
 
 - Production Next.js web server on localhost:3000, Express on localhost:3001.
@@ -325,8 +349,8 @@ this recording.
 
 1. Read-only consent and persisted connection status are confirmed for Drive,
    Gmail, and Calendar through the requested project's client.
-2. Repeat the successful Drive read on the final rebased head; complete the synthetic
-   email/thread and bounded calendar-event reads. Enable Chrome extension file-URL
+2. Drive search/read now passes on the rebased code with the GIF above. Complete
+   the synthetic email/thread and bounded calendar-event reads. Enable Chrome extension file-URL
    access for binary/text upload fixtures. Verify provider state and record full flows.
 3. Grant the separate Gmail/Calendar write upgrades. In Assistant, create a draft
    and an event, reject a second proposal, and separately approve edit/delete or
