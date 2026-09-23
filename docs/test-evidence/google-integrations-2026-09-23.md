@@ -3,12 +3,12 @@
 PR: [#434](https://github.com/open-legal-products/mike/pull/434). The former
 Gmail/Calendar PR #522 is closed as superseded; all implementation is in #434.
 
-Previous full regression baseline: `0824e7f43f321c23d427374116ada1652d4739b1`, rebased onto
-`main` at `4ad85e463ea769809c9e177fbe7a84548c71d546`.
+Implementation revision for the final browser/build rerun: `118ad041` (Google
+security fixes in `30b25535`), based on `main` at
+`4ad85e463ea769809c9e177fbe7a84548c71d546`.
 
-**Status: the baseline automated verification passed. Subsequent review/UI fixes
-are undergoing a fresh rerun; live Google acceptance is incomplete. This report
-is not a merge-readiness sign-off.**
+**Status: automated verification is recorded below; fresh live Google acceptance
+is incomplete. This report is not a merge-readiness sign-off.**
 
 ## Environment and evidence boundaries
 
@@ -29,12 +29,12 @@ is not a merge-readiness sign-off.**
 
 | Check | Result |
 | --- | --- |
-| Backend unit/integration suite | 2,433 passed; 47 local-stack tests skipped in this command |
+| Backend unit/integration suite | 2,446 passed; 47 local-stack tests skipped in this command |
 | Local Supabase stack suite | All 47 of those tests passed against the local stack |
-| Frontend unit/component suite | 1,635 passed |
-| Full web Playwright suite | 33 passed, zero skipped, zero failed |
+| Frontend unit/component suite | 1,636 passed on `30b25535`; 17 focused project-table/page tests passed after the subsequent Create-button fix |
+| Full web Playwright suite | 39 passed, zero skipped, zero failed on `118ad041` |
 | Live model subset of web suite | Chat rename/delete, project chat, PDF upload/question all ran with real model responses |
-| Word add-in browser suite | 346 passed across Chromium and WebKit |
+| Word add-in browser suite | Previous local baseline: 346 passed across Chromium and WebKit; Chromium/WebKit CI also passed on `118ad041` |
 | Disposable Google Workspace database checks | Migration replay, grants/RLS, ownership, expiry, replacement, and concurrent approval claims passed |
 | Disconnect regression tests | 69 Drive lifecycle/Workspace tests passed; Drive disconnect makes no project-wide revocation request |
 | Backend and frontend production builds | Passed (Next webpack build) |
@@ -43,11 +43,15 @@ is not a merge-readiness sign-off.**
 | Frontend lint | Zero errors; 32 existing warnings |
 | Diff whitespace check | Passed |
 
-Frontend and Word suites were run on the same integration source before the final
-backend-only disconnect fix. The complete backend suite and build were repeated
-after that fix. The Google connector browser tests use mocked Google endpoints;
-the four live model tests do not exercise Google tool selection. Neither is a
-substitute for the outstanding real Google acceptance below.
+The full frontend suite preceded the small project Create-button fix; its focused
+component/page tests, typecheck, production build, and full browser rerun followed
+that fix. Backend integration source is unchanged after its full passing run.
+The Word implementation is unchanged from the previous baseline.
+
+The Google connector UI tests use mocked provider responses. The callback tests
+use the real local gateway/API/session and deliberately invalid state, without
+contacting Google. The four live model tests do not exercise Google tool selection.
+These checks do not substitute for real Google acceptance below.
 
 The browser accessibility scans found no critical violations. They report existing
 serious issues (including color contrast and focusable scrolling) without failing
@@ -71,7 +75,7 @@ the suite; this is not a claim that the whole app is accessibility-clean.
   final TCP listener instead of PostgreSQL's temporary initialization socket.
   A fresh-container run passed after the fix; application code was unchanged.
 
-## Review and responsive-layout fixes awaiting final rerun
+## Review and responsive-layout fixes
 
 - Bind OAuth completion to the initiating Mike user. Provider callbacks relay to
   a fixed frontend gateway so its session cookies are available even when the
@@ -86,9 +90,41 @@ the suite; this is not a claim that the whole app is accessibility-clean.
   checks reproduced the original issue at 390px and 768px; regression coverage
   now checks 390px, 768px, and 1280px.
 
-Backend production compilation and test type checking passed for these changes.
-The full automated suites/build/browser rerun is still in progress; the earlier
-counts above are not presented as proof of this subsequent code revision.
+- Disable the project Assistant empty-state Create button until edit permission
+  is resolved, preventing a first click from being silently ignored.
+
+### Failures found and retested
+
+The original layout overflow was reproduced at 390px and 768px before the fix;
+all three viewport checks now pass. The first broad browser run exposed the
+project Create race, an anonymous-test fixture that inherited login cookies, and
+a tabular-review page-load timeout under contention. The fixture now explicitly
+uses an empty cookie store; the completed production build is served during the
+clean rerun. An attempted callback-only run overlapped a rebuild and failed at
+login setup, so it was discarded as an invalid test environment.
+
+The first stack rerun passed 46/47 because the active API upload worker claimed a
+queue fixture before the test. With API workers stopped, all 47 passed.
+
+### Commands used
+
+```bash
+npm test --prefix backend -- --maxWorkers=2
+npm run test:stack --prefix backend -- --maxWorkers=2
+npm run build --prefix backend
+npm run typecheck:test --prefix backend
+npm test --prefix frontend -- --maxWorkers=2
+npm run typecheck --prefix frontend
+npm run lint --prefix frontend
+npm run build --prefix frontend -- --webpack
+ANTHROPIC_API_KEY=stored-in-test-user-profile npm run test:e2e
+git diff --check
+```
+
+The environment marker in the last test command enables the live-model cases;
+the running API uses the real key already saved in the disposable test user's
+profile. The marker is not a credential. Focused project table/page tests and
+ESLint were also run after the Create-button fix.
 
 ## Fresh Google project checks
 
@@ -106,7 +142,8 @@ counts above are not presented as proof of this subsequent code revision.
 The account consent request is awaiting user approval because it grants the local
 Mike server ongoing access to Google account data. Configuring Cloud scopes and
 test users is distinct from granting that access. The uncompleted Drive popup
-timed out normally without creating a connection.
+timed out normally without creating a connection. Chrome’s extension connection
+also became unavailable during the final rerun; reconnection has been requested.
 
 The current local UI shows all services disconnected with explicit opt-in controls:
 
