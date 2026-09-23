@@ -233,7 +233,36 @@ types passed. An initial sandbox run could not bind test HTTP listeners and was
 rerun with the required local permission. A pre-rebase broad run was stopped
 when newer main was discovered; it is not counted as a passing run.
 
-Post-rebase full regression results are pending.
+Post-rebase code revision: `c26a2d72`. CI initially caught two failures in
+main's new chat/Sentry test: its empty database stub lacked `maybeSingle`, so
+disconnected Google tool discovery emitted three unrelated errors. The stub now
+returns no token row, preserving the real discovery path and all original event
+count assertions. All **18 focused Sentry/logging tests** then passed locally.
+
+| Current-code verification | Result |
+| --- | --- |
+| Backend CI unit/integration | **2,509 passed**, 47 stack-dependent tests excluded |
+| Backend CI build, test types, contracts | Passed |
+| Frontend CI coverage | **1,669 passed** across 213 files |
+| Frontend CI lint, types, production build, catalog build | Passed; zero lint errors, 32 existing warnings |
+| Word Chromium/WebKit CI | Passed |
+| Backend/frontend/Word Docker images | All passed |
+| CodeQL, dependency audits, gitleaks | Passed |
+| CI schema drift, Supabase stack, web browser | Infrastructure failure while pulling Supabase images: registry `toomanyrequests`; schema retry failed for the same reason |
+| First local stack attempt | 38 passed, nine unrun because the pagination setup hook exceeded 20 seconds |
+| Serial local stack rerun | 35 passed, 12 unrun because GoTrue returned retryable timeouts while creating synthetic users |
+| Final local production web/browser rerun | Incomplete; frontend rebuild remained in compilation under heavy host load |
+
+The serial stack command used `--maxWorkers=1 --hookTimeout=120000`; assertions
+were unchanged. No database blocking transactions were present when inspected
+afterward. These setup failures are not passing stack results. The earlier
+47/47 stack and 41/41 browser runs remain historical. Duplicate local broad
+unit runs were stopped after the full current-code CI suites passed, to reduce
+memory pressure; they are not counted as completed local runs.
+
+Current-head code checks are green apart from the three infrastructure-blocked
+jobs above. CodeRabbit remains paused. Live Gmail/Calendar acceptance and
+full-flow GIFs remain required before sign-off.
 
 Before the compact-card alignment, the local UI showed all services disconnected
 with explicit opt-in controls (historical screenshot, not the latest layout):
