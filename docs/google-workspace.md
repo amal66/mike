@@ -1,6 +1,6 @@
 # Gmail and Google Calendar
 
-This is the child feature of [Drive PR #434](https://github.com/open-legal-products/mike/pull/434), designed in [#521](https://github.com/open-legal-products/mike/issues/521).
+Drive, Gmail, and Calendar are delivered together in [PR #434](https://github.com/open-legal-products/mike/pull/434). The Gmail/Calendar design is recorded in [#521](https://github.com/open-legal-products/mike/issues/521).
 
 ## User behavior
 
@@ -8,7 +8,7 @@ This is the child feature of [Drive PR #434](https://github.com/open-legal-produ
 
 Workspace administrators and Google Cloud audience settings can restrict which accounts may authorize the app. Configure an External audience to support accounts outside the Cloud project's organization. Testing mode also requires those accounts in the test-user list. Account selection cannot override Google's policy.
 
-Read permissions expose search/read tools in the assistant. **Enable writes with approval** requests additional Google permissions for that service; it does not authorize any particular send or modification. The assistant can then prepare proposals. Follow its link to Settings → Connectors → Review Google actions, inspect the exact account, recipients, content, and affected item, and choose Approve or Reject. Approval can require Mike MFA. Approving sends the action immediately; it is not another draft or preview step.
+Read permissions expose search/read tools in the assistant. **Enable writes with approval** requests additional Google permissions for that service; it does not authorize any particular send or modification. The assistant can then prepare proposals. Inspect the exact account, recipients, content, and affected item in the approval card inside the Assistant conversation, and choose Approve or Reject there. Settings → Connectors retains recent action history for recovery. Approval can require Mike MFA. Approving sends the action immediately; it is not another draft or preview step.
 
 | Service | Reads | Optional approved changes |
 | --- | --- | --- |
@@ -37,8 +37,32 @@ Gmail Trash is recoverable through Gmail; permanently deleting received/sent mai
    | Gmail | `openid`, `email`, `https://www.googleapis.com/auth/gmail.readonly` | `https://www.googleapis.com/auth/gmail.modify` |
    | Calendar | `openid`, `email`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`, `https://www.googleapis.com/auth/calendar.events.readonly` | `https://www.googleapis.com/auth/calendar.events` |
 
-   OpenID/email identifies the selected account for the connection card and approval preview. No Mike login email is passed as a hint or used to restrict account choice. Public distribution is subject to Google's scope verification requirements; see [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes) and [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth).
+   OpenID/email identifies the selected account for the connection card and approval preview. No Mike login email is passed as a hint or used to restrict account choice. Each deployment's OAuth audience and use determine Google's verification requirements; see the self-hosting guidance below, [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), and [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth).
 6. Restart the backend after environment changes. In Testing mode, add each intended Google account as a test user. Verify that the saved client ID matches the one used by Mike; enabling an API does not fix an OAuth redirect mismatch.
+
+## Shipping to self-hosted deployments
+
+This feature ships as software that each operator configures and hosts. **Every deployment supplies its own Google Cloud project and OAuth client.** Mike does not distribute a shared client secret, and releasing these PRs does not require publishing one central Mike OAuth app for all installations. A successful test of our development client does not authorize a customer's client.
+
+Choose the audience for the accounts that will connect to that installation:
+
+| Deployment | Google configuration | Remaining operator work |
+| --- | --- | --- |
+| One Workspace organization, only its members | An organization-owned project with an **Internal** OAuth audience | A Workspace administrator may need to allow the client and requested services/scopes. Internal apps qualify for Google's internal-use verification exception; external Gmail accounts cannot connect. |
+| Development or evaluation with personal Gmail or external accounts | **External / Testing**, with every account explicitly listed as a test user | Suitable for acceptance tests, not unattended long-term use: these scopes receive refresh tokens that expire after seven days, and test-user limits apply. |
+| An installation serving accounts outside its organization | **External**, with publication/verification appropriate to that deployment | Complete branding, authorized domains, public policy information, and Google's sensitive/restricted-scope verification or establish an applicable exception. Restricted-scope server-side use can require a security assessment. Self-hosting alone is not a verification exception. |
+
+Google also documents personal-use and development/testing exceptions. Operators must use the exception that actually describes their deployment; changing the audience to Internal to remove a warning would exclude users outside that organization. Workspace administrators can block an app even when it is verified. See [Google's audience settings](https://support.google.com/cloud/answer/15549945), [verification exceptions](https://support.google.com/cloud/answer/13464323), [restricted-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification), and [refresh-token expiration](https://developers.google.com/identity/protocols/oauth2#expiration).
+
+For each production installation:
+
+1. Apply the Drive and Workspace migrations through the normal deployment procedure; configure a stable encryption secret and keep all OAuth secrets on the backend.
+2. Enable Drive, Gmail, and Calendar REST APIs in that installation's project. Configure the read scopes and only the optional write capabilities the installation intends to offer.
+3. Set `FRONTEND_URL` and `API_PUBLIC_URL` to the installation's public HTTPS origins. Register all three exact callback URLs derived from `API_PUBLIC_URL`, ending in `/user/integrations/{google-drive,gmail,google-calendar}/oauth/callback`. For a same-origin gateway, `API_PUBLIC_URL=https://mike.example.com/api`; for a separate public API, it may be `https://api.example.com`. Preserve the separate Supabase SSO callback if Google sign-in is enabled.
+4. Complete the audience-specific Google and Workspace-admin steps above, restart Mike, and run the acceptance checklist with synthetic data using that installation's own client.
+5. Verify read-only connection, separate write consent, inline approval/rejection, token refresh after restart, account replacement, and disconnect. Keep the resulting proof with the deployment record.
+
+Locally, the recommended callback origin is `http://localhost:3000/api`: Next's gateway forwards the server request to Express on `3001`. The fact that the frontend also uses port 3000 does not make the OAuth code exchange browser-side. Registering port 3001 instead works only when Mike is configured to emit that exact direct-API callback; changing Google's setting alone creates a mismatch.
 
 ## Technical approach and boundaries
 
@@ -60,7 +84,7 @@ Use two test Google accounts and synthetic mail/events; do not use real client i
 2. Connect Gmail read-only using a different Google account from the Mike login. Verify the chooser and connected email. Connect Calendar using another account. Reload and restart: the correct service-specific identity persists.
 3. Search for a synthetic email marker and read the message and thread. Verify text, headers, labels, attachment metadata, pagination, and truncation. List calendars and events in a known time range, including an all-day event and a recurring occurrence.
 4. Ask to send/edit/delete while connected read-only. No mutation occurs. Enable writes explicitly and inspect Google's requested permissions. Cancelling consent must preserve the prior read-only grant. A successful upgrade changes the card only when a new grant is saved.
-5. Ask for a new email to a test recipient. Verify it has not been sent. Review every recipient, subject, body, and connected account in Settings, then approve. Verify exactly one email in Gmail Sent and the test inbox. Double-click/reload must not send it again. Reject a second proposal and verify no send.
+5. Ask for a new email to a test recipient. Verify it has not been sent. Review every recipient, subject, body, and connected account in the Assistant conversation, then approve its inline card. Verify exactly one email in Gmail Sent and the test inbox. Double-click/reload must not send it again. Reject a second proposal and verify no send.
 6. Create a draft, replace its content, and delete it, approving each separately. Modify a test message's labels and move another to Trash. Try header-injection text and attachment-bearing draft replacement; both must be rejected safely.
 7. Create a calendar event with a test attendee, then edit and delete it, approving each action. Verify invitation/update/cancellation notices. Change an event directly in Calendar after creating a proposal: approval must reject the stale version. Entire recurring-series edits must be rejected; a single occurrence is supported.
 8. Let a proposal expire; approval must fail. Sign into a second Mike user and attempt the first user's action ID; it must fail. Change Google accounts or disconnect with a proposal pending; it must not execute against either account.
@@ -83,4 +107,4 @@ npm run lint --prefix frontend
 
 The database script uses a new throwaway PostgreSQL container, no host ports, and removes it on exit. It verifies actual grants/RLS configuration, cross-user and expired/replayed/replaced authorization, migration replay, and concurrent action claims. It never connects to your configured Supabase database.
 
-Stacked PRs targeting `codex/**` branches run the same CI, image, schema, security, stack, browser, and add-in checks as PRs targeting main. The temporary `codex/pr434-google-drive-base` branch pins #434's tested head. Merge #434 first, then rebase this child onto main and retarget the child PR to main; do not merge the child into the snapshot branch as the final delivery step.
+PR #434 contains the complete integration and targets `main`. It includes both migrations and all three service connections; there is no separate child PR to merge. CI verifies application builds/tests, production images, schema drift, security, Supabase, browser behavior, and the Word add-in.

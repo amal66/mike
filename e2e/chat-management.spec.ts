@@ -10,7 +10,7 @@
  */
 import { test, expect, type Page } from "@playwright/test";
 import { hasLlmKey, LLM_SKIP_REASON } from "./llm";
-import { selectClaudeModel } from "./helpers";
+import { createProject, selectClaudeModel } from "./helpers";
 
 /* ─── Helpers ────────────────────────────────────────────────────────────────── */
 
@@ -275,11 +275,7 @@ test("delete chat: sidebar delete action removes the chat from history", async (
 
 test("project assistant: create a new chat and submit a question", async ({ page }) => {
     test.skip(!hasLlmKey, LLM_SKIP_REASON);
-    // REGRESSION: fails if the project chat creation route is broken — specifically if
-    // handleNewChat() in ProjectPage.tsx (lines 515-519) fails to call saveChat() or
-    // router.push to /projects/[id]/assistant/chat/[chatId]. (Verified by temporarily
-    // removing that router.push: "+ Create New" then no longer navigates and the
-    // Step 8 waitForURL below fails.)
+    // Verify the empty composer route, then persistence after the first send.
 
     // This test creates a project then a chat (two sequential write round-trips
     // plus a navigation each) and ends with an LLM-backed submit, so give it
@@ -313,14 +309,8 @@ test("project assistant: create a new chat and submit a question", async ({ page
     await page.goto(assistantUrl);
     await expect(createNewBtn).toBeVisible({ timeout: 20_000 });
 
-    // ── Step 7-8: click "Create" and wait for the project chat URL ───────────────
-    // handleNewChat (ProjectPage.tsx:515-519) calls saveChat(projectId) then
-    // router.push(`/projects/${projectId}/assistant/chat/${id}`).
-    //
-    // REGRESSION (the target of this test): if handleNewChat's router.push is
-    // removed — or saveChat itself is broken — no navigation happens and the
-    // waitForURL below fails.
-    const chatUrl = /\/projects\/.+\/assistant\/chat\/.+/;
+    // Opening a composer does not persist an empty chat. The first send does.
+    const chatUrl = /\/projects\/[^/]+\/assistant\/chat$/;
     await createNewBtn.click();
     await page.waitForURL(chatUrl, { timeout: 20_000 });
 
@@ -372,4 +362,7 @@ test("project assistant: create a new chat and submit a question", async ({ page
     }
     // Final assertion surfaces a genuinely broken send (never clears).
     await expect(chatInput).toHaveValue("", { timeout: 5_000 });
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/assistant\/chat\/[^/]+$/, {
+        timeout: 20_000,
+    });
 });
