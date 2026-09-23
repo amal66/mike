@@ -87,7 +87,7 @@ test("rename chat: sidebar rename interaction updates the title", async ({ page 
     // / DB is under load, so allow extra headroom over the default 30s test cap.
     test.setTimeout(90_000);
 
-    const message = `Rename test ${Date.now()}`;
+    const message = `Reply only with hello. UI rename test marker ${Date.now()}.`;
     const newTitle = `Renamed Chat ${Date.now()}`;
 
     // ── Step 1: create a new chat ─────────────────────────────────────────────────
@@ -124,16 +124,9 @@ test("rename chat: sidebar rename interaction updates the title", async ({ page 
     // ── Step 3: ensure the sidebar is open ───────────────────────────────────────
     await ensureSidebarOpen(page);
 
-    // ── Step 4: locate the active chat item ──────────────────────────────────────
-    // SidebarChatItem.tsx renders a `div.group.relative` wrapper for each chat.
-    // When isActive=true the wrapper carries APP_SURFACE_ACTIVE_CLASS
-    // ("bg-app-surface-active"); inactive items carry APP_SURFACE_HOVER_CLASS
-    // ("hover:bg-app-surface-hover", a different token), so matching
-    // "bg-app-surface-active" distinguishes the active item. (The olp liquid-
-    // surface refresh renamed the old "bg-gray-200/60" active token.)
-    const activeItem = page
-        .locator('div.group.relative[class*="bg-app-surface-active"]')
-        .first();
+    // The newly created chat is prepended; avoid coupling to theme classes
+    // that represent its selected state.
+    const activeItem = page.locator("div.group.relative.h-8.rounded-md").first();
 
     // The active item's trigger is already opacity-100, but hover is harmless and
     // keeps parity with the inactive-item path.
@@ -189,7 +182,7 @@ test("delete chat: sidebar delete action removes the chat from history", async (
     // / DB is under load, so allow extra headroom over the default 30s test cap.
     test.setTimeout(90_000);
 
-    const message = `Delete test ${Date.now()}`;
+    const message = `Reply only with hello. UI delete test marker ${Date.now()}.`;
 
     // ── Step 1: create a new chat ─────────────────────────────────────────────────
     await page.goto("/assistant");
