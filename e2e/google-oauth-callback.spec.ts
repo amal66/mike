@@ -21,7 +21,10 @@ for (const provider of ["google-drive", "gmail", "google-calendar"]) {
     expect(await page.locator("body").innerText()).not.toContain(
       "invalid-code",
     );
-    const anonymous = await playwright.request.newContext({ baseURL });
+    const anonymous = await playwright.request.newContext({
+      baseURL,
+      storageState: { cookies: [], origins: [] },
+    });
     try {
       const denied = await anonymous.get(callback);
       expect(denied.status()).toBe(401);
