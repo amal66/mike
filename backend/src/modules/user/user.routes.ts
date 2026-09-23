@@ -642,9 +642,34 @@ userRouter.post(
     },
 );
 
-// GET /user/integrations/google-drive/oauth/callback
+// Google may return to a separate API origin that cannot receive the web
+// session cookie. Relay only OAuth parameters to our fixed frontend gateway;
+// completion there requires the same authenticated Mike user who started it.
+for (const provider of ["google-drive", "gmail", "google-calendar"]) {
+    userRouter.get(`/integrations/${provider}/oauth/callback`, (req, res) => {
+        const finish = new URL(
+            frontendUrl(`/api/user/integrations/${provider}/oauth/finish`),
+        );
+        for (const key of ["state", "code", "error"]) {
+            if (typeof req.query[key] === "string")
+                finish.searchParams.set(key, req.query[key]);
+        }
+        res.set("Cache-Control", "no-store")
+            .set("Referrer-Policy", "no-referrer")
+            .redirect(303, finish.toString());
+    });
+    userRouter.use(`/integrations/${provider}/oauth/finish`, (_req, res, next) => {
+        res.set("Cache-Control", "no-store")
+            .set("Referrer-Policy", "no-referrer");
+        next();
+    });
+}
+
+// GET /user/integrations/google-drive/oauth/finish
 userRouter.get(
-    "/integrations/google-drive/oauth/callback",
+    "/integrations/google-drive/oauth/finish",
+    requireAuth,
+    requireMfaIfEnrolled,
     async (req, res) => {
         const nonce = crypto.randomBytes(16).toString("base64");
         const state =
@@ -656,7 +681,9 @@ userRouter.get(
             if (error) throw new Error(error);
             if (!state || !code)
                 throw new Error("OAuth callback is missing state or code.");
-            await completeGoogleDriveOAuth(state, code, createServerSupabase());
+            await completeGoogleDriveOAuth(
+                res.locals.userId, state, code, createServerSupabase(),
+            );
             res.set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
                 .type("html")
                 .send(
@@ -805,7 +832,9 @@ for (const provider of ["gmail", "google-calendar"] as const) {
         }),
     );
     userRouter.get(
-        `${path}/oauth/callback`,
+        `${path}/oauth/finish`,
+        requireAuth,
+        requireMfaIfEnrolled,
         asyncRoute(async (req, res) => {
             const nonce = crypto.randomBytes(16).toString("base64");
             res.set("Content-Security-Policy", mcpOAuthPopupCsp(nonce)).type(
@@ -822,6 +851,7 @@ for (const provider of ["gmail", "google-calendar"] as const) {
                     );
                 await completeWorkspaceOAuth(
                     createServerSupabase(),
+                    res.locals.userId,
                     provider,
                     req.query.state,
                     req.query.code,

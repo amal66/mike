@@ -91,6 +91,32 @@ describe("opt-in Google connections and action review", () => {
       gmail().getByRole("button", { name: "Enable writes with approval" }),
     ).toBeVisible();
   });
+  it("does not show authorization controls while disconnecting", async () => {
+    vi.mocked(api.getGoogleWorkspaceStatus).mockResolvedValue({
+      ...base,
+      connected: true,
+    });
+    let resolve!: () => void;
+    vi.mocked(api.disconnectGoogleWorkspace).mockReturnValue(
+      new Promise<void>((r) => {
+        resolve = r;
+      }),
+    );
+    render(<GoogleWorkspacePanel />);
+    await screen.findAllByRole("button", { name: "Disconnect" });
+    fireEvent.click(gmail().getByRole("button", { name: "Disconnect" }));
+    expect(gmail().getByRole("button", { name: "Disconnect" })).toBeDisabled();
+    expect(
+      gmail().queryByRole("button", { name: "Cancel authorization" }),
+    ).toBeNull();
+    expect(gmail().queryByText("Waiting for Google…")).toBeNull();
+    await act(async () => {
+      resolve();
+    });
+    await waitFor(() =>
+      expect(gmail().getByRole("button", { name: "Disconnect" })).toBeEnabled(),
+    );
+  });
   it("shows exact content and recipients and never approves on render", async () => {
     vi.mocked(api.listGoogleWorkspaceActions).mockResolvedValue({
       actions: [pending],

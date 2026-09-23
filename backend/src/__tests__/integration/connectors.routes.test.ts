@@ -326,10 +326,10 @@ describe("GET /user/integrations/google-drive", () => {
 });
 
 describe("Google Drive callback and disconnect", () => {
-    it("completes the callback without requiring a Mike session in the Google popup", async () => {
+    it("completes only for the authenticated Mike user", async () => {
         completeGoogleDriveOAuth.mockResolvedValue({ userId: "u1" });
         const res = await request(app).get(
-            "/user/integrations/google-drive/oauth/callback?state=s&code=c",
+            "/user/integrations/google-drive/oauth/finish?state=s&code=c",
         );
         expect(res.status).toBe(200);
         expect(res.text).toContain("Authorization complete");
@@ -337,6 +337,7 @@ describe("Google Drive callback and disconnect", () => {
             "script-src 'nonce-",
         );
         expect(completeGoogleDriveOAuth).toHaveBeenCalledWith(
+            "u1",
             "s",
             "c",
             expect.anything(),
@@ -348,7 +349,7 @@ describe("Google Drive callback and disconnect", () => {
             new Error("secret-internal-sentinel</script>"),
         );
         const res = await request(app).get(
-            "/user/integrations/google-drive/oauth/callback?state=s&code=c",
+            "/user/integrations/google-drive/oauth/finish?state=s&code=c",
         );
         expect(res.status).toBe(400);
         expect(res.text).not.toContain("secret-internal-sentinel");
@@ -362,7 +363,7 @@ describe("Google Drive callback and disconnect", () => {
 
     it("sanitizes denied and missing-parameter callbacks without contacting Google", async () => {
         const res = await request(app).get(
-            "/user/integrations/google-drive/oauth/callback?error=secret-sentinel",
+            "/user/integrations/google-drive/oauth/finish?error=secret-sentinel",
         );
         expect(res.status).toBe(400);
         expect(res.text).not.toContain("secret-sentinel");
@@ -370,7 +371,7 @@ describe("Google Drive callback and disconnect", () => {
         expect(
             (
                 await request(app).get(
-                    "/user/integrations/google-drive/oauth/callback",
+                    "/user/integrations/google-drive/oauth/finish",
                 )
             ).status,
         ).toBe(400);

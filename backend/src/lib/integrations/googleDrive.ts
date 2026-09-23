@@ -166,6 +166,7 @@ export async function startGoogleDriveOAuth(
 }
 
 export async function completeGoogleDriveOAuth(
+    completingUserId: string,
     state: string,
     code: string,
     db: Db = createServerSupabase(),
@@ -174,6 +175,7 @@ export async function completeGoogleDriveOAuth(
         .from("google_drive_oauth_states")
         .select("*")
         .eq("state_hash", stateHash(state))
+        .eq("user_id", completingUserId)
         .gt("expires_at", new Date().toISOString())
         .maybeSingle();
     if (error) throw error;

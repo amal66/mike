@@ -73,6 +73,7 @@ async function connected(
     );
   await completeWorkspaceOAuth(
     store.db,
+    "u1",
     provider,
     new URL(authorizationUrl).searchParams.get("state")!,
     "code",
@@ -162,16 +163,36 @@ describe("Google Workspace opt-in and OAuth", () => {
     );
     const state = new URL(start.authorizationUrl).searchParams.get("state")!;
     await expect(
-      completeWorkspaceOAuth(s.db, "google-calendar", state, "code"),
+      completeWorkspaceOAuth(s.db, "u1", "google-calendar", state, "code"),
     ).rejects.toThrow("expired");
     await cancelWorkspaceOAuth(s.db, "u2", "gmail", state);
     expect(s.tables.google_workspace_oauth_states).toHaveLength(1);
     await cancelWorkspaceOAuth(s.db, "u1", "gmail", state);
     await expect(
-      completeWorkspaceOAuth(s.db, "gmail", state, "code"),
+      completeWorkspaceOAuth(s.db, "u1", "gmail", state, "code"),
     ).rejects.toThrow("expired");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  it.each(["gmail", "google-calendar"] as const)(
+    "rejects %s consent from a different Mike user before token exchange",
+    async (provider) => {
+      const s = workspaceDb();
+      const { authorizationUrl } = await startWorkspaceOAuth(
+        s.db,
+        "attacker",
+        provider,
+        "https://mike.test/api/callback",
+        false,
+      );
+      const state = new URL(authorizationUrl).searchParams.get("state")!;
+      await expect(
+        completeWorkspaceOAuth(s.db, "victim", provider, state, "code"),
+      ).rejects.toThrow("expired");
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(s.tables.user_google_workspace_tokens).toHaveLength(0);
+      expect(s.tables.google_workspace_oauth_states).toHaveLength(1);
+    },
+  );
   it("rejects missing write scopes and never saves a partial grant", async () => {
     const s = workspaceDb();
     const start = await startWorkspaceOAuth(
@@ -192,6 +213,7 @@ describe("Google Workspace opt-in and OAuth", () => {
     await expect(
       completeWorkspaceOAuth(
         s.db,
+        "u1",
         "gmail",
         new URL(start.authorizationUrl).searchParams.get("state")!,
         "code",
@@ -223,6 +245,7 @@ describe("Google Workspace opt-in and OAuth", () => {
     await expect(
       completeWorkspaceOAuth(
         s.db,
+        "u1",
         "gmail",
         new URL(start.authorizationUrl).searchParams.get("state")!,
         "code",
@@ -580,6 +603,7 @@ describe("additional Google service regression coverage", () => {
       );
     await completeWorkspaceOAuth(
       s.db,
+      "u1",
       "gmail",
       new URL(start.authorizationUrl).searchParams.get("state")!,
       "code",
@@ -625,6 +649,7 @@ describe("additional Google service regression coverage", () => {
     await expect(
       completeWorkspaceOAuth(
         s.db,
+        "u1",
         "gmail",
         new URL(started.authorizationUrl).searchParams.get("state")!,
         "code",
@@ -727,6 +752,43 @@ describe("additional Google service regression coverage", () => {
       ).rejects.toThrow("changed");
       expect(mutation).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+  it.each(["In-Reply-To", "References", "in-reply-to"])(
+    "refuses replacement of reply drafts identified by %s",
+    async (name) => {
+      const draft = {
+        id: "d",
+        message: {
+          id: "m",
+          historyId: "h",
+          payload: { headers: [{ name, value: "<original@example.com>" }] },
+        },
+      };
+      fetchMock.mockResolvedValueOnce(json(draft));
+      await expect(
+        prepareWorkspaceAction(
+          "gmail",
+          "gmail_propose_save_draft",
+          { ...email, draft_id: "d" },
+          "token",
+        ),
+      ).rejects.toThrow("reply drafts");
+      const mutate = vi.fn();
+      fetchMock.mockResolvedValueOnce(json(draft));
+      await expect(
+        executeWorkspaceAction(
+          "gmail",
+          {
+            tool: "gmail_propose_save_draft",
+            args: { ...email, draft_id: "d" },
+            before: { message: { id: "m", historyId: "h" } },
+          },
+          "token",
+          mutate,
+        ),
+      ).rejects.toThrow("reply drafts");
+      expect(mutate).not.toHaveBeenCalled();
     },
   );
   it("refuses attachment-bearing draft replacement", async () => {

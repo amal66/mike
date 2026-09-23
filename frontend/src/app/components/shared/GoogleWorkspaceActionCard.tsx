@@ -77,7 +77,7 @@ export function GoogleWorkspaceActionCard({
       >
         <div>
           <h4 className="text-sm font-medium">{name}</h4>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 break-all text-xs text-muted-foreground">
             Account: {action.proposal.accountEmail}
           </p>
           <p className="text-xs text-muted-foreground">

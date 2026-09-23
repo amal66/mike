@@ -46,7 +46,7 @@ async function connected() {
         "fetch",
         vi.fn(async () => json(tokens)),
     );
-    await completeGoogleDriveOAuth(state, "code", store.db);
+    await completeGoogleDriveOAuth("u1", state, "code", store.db);
     return store;
 }
 
@@ -81,9 +81,9 @@ describe("Google Drive OAuth lifecycle", () => {
             return json(tokens);
         });
         vi.stubGlobal("fetch", fetchMock);
-        expect(await completeGoogleDriveOAuth(state, "code", store.db)).toEqual(
-            { userId: "u1" },
-        );
+        expect(
+            await completeGoogleDriveOAuth("u1", state, "code", store.db),
+        ).toEqual({ userId: "u1" });
         expect(store.states).toHaveLength(0);
         const row = store.tokens[0];
         expect(row.user_id).toBe("u1");
@@ -97,12 +97,24 @@ describe("Google Drive OAuth lifecycle", () => {
             ),
         ).toBe("refresh-secret");
         await expect(
-            completeGoogleDriveOAuth(state, "code", store.db),
+            completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow(/invalid or expired/);
         expect(fetchMock).toHaveBeenCalledOnce();
         expect((await getGoogleDriveStatus("u2", store.db)).connected).toBe(
             false,
         );
+    });
+    it("rejects another Mike user's authorization URL before token exchange", async () => {
+        const store = driveDb();
+        const state = await begin(store, "attacker");
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+        await expect(
+            completeGoogleDriveOAuth("victim", state, "code", store.db),
+        ).rejects.toThrow(/invalid or expired/);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(store.tokens).toHaveLength(0);
+        expect(store.states).toHaveLength(1);
     });
     it("rejects expired state before contacting Google", async () => {
         const store = driveDb();
@@ -111,7 +123,7 @@ describe("Google Drive OAuth lifecycle", () => {
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
         await expect(
-            completeGoogleDriveOAuth(state, "code", store.db),
+            completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow(/invalid or expired/);
         expect(fetchMock).not.toHaveBeenCalled();
     });
@@ -129,7 +141,7 @@ describe("Google Drive OAuth lifecycle", () => {
                 vi.fn(async () => json(token)),
             );
             await expect(
-                completeGoogleDriveOAuth(state, "code", store.db),
+                completeGoogleDriveOAuth("u1", state, "code", store.db),
             ).rejects.toThrow();
             expect(store.tokens).toHaveLength(0);
         },
@@ -142,7 +154,7 @@ describe("Google Drive OAuth lifecycle", () => {
             vi.fn(async () => json({ error: "invalid_grant" }, 400)),
         );
         await expect(
-            completeGoogleDriveOAuth(state, "code", store.db),
+            completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow();
         expect(store.tokens).toHaveLength(0);
     });
@@ -158,7 +170,7 @@ describe("Google Drive OAuth lifecycle", () => {
             vi.fn(async () => json(tokens)),
         );
         await expect(
-            completeGoogleDriveOAuth(state, "code", store.db),
+            completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow("internal sentinel");
         expect(store.tokens).toHaveLength(0);
         expect(store.states).toHaveLength(1);
@@ -176,7 +188,7 @@ describe("Google Drive OAuth lifecycle", () => {
             }),
         );
         await expect(
-            completeGoogleDriveOAuth(state, "code", store.db),
+            completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow(/cancelled/);
         expect(store.tokens).toHaveLength(0);
     });
@@ -191,7 +203,7 @@ describe("Google Drive OAuth lifecycle", () => {
             }),
         );
         await expect(
-            completeGoogleDriveOAuth(state, "code", store.db),
+            completeGoogleDriveOAuth("u1", state, "code", store.db),
         ).rejects.toThrow(/cancelled/);
         expect(store.tokens).toHaveLength(0);
     });

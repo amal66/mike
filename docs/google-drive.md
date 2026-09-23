@@ -11,6 +11,10 @@ The integration does not require a Google MCP server or a service account.
   `drive.readonly`, offline access, and explicit consent. State is hashed in the
   database; its verifier and redirect URI are encrypted. State expires after
   ten minutes. The backend owns the client secret; no token reaches the browser.
+  The callback relays to the fixed frontend API gateway and completes only
+  with the session of the Mike user who initiated that state; a different user
+  or an unauthenticated popup cannot attach a Google grant.
+
 - **Persistence:** both Drive tables have RLS, no user policies, and no
   anon/authenticated grants. The backend service role stores AES-GCM encrypted
   access and refresh tokens using the existing connector encryption helpers.

@@ -196,8 +196,8 @@ services:
         psql "$$DB" -v ON_ERROR_STOP=1 -f /org-access-followup-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /memory-followup-migration.sql;
         psql "$$DB" -v ON_ERROR_STOP=1 -f /chat-activity-migration.sql;
-        psql "$$DB" -v ON_ERROR_STOP=1 -f /google-drive-migration.sql;
-        psql "$$DB" -v ON_ERROR_STOP=1 -f /google-workspace-migration.sql;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /google-drive-migration.sql || exit 1;
+        psql "$$DB" -v ON_ERROR_STOP=1 -f /google-workspace-migration.sql || exit 1;
         psql "$$DB" -c "grant usage on schema public to service_role;
           grant all privileges on all tables in schema public to service_role;
           grant all privileges on all sequences in schema public to service_role;

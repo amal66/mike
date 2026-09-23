@@ -38,6 +38,7 @@ function ConnectionCard({
   const [status, setStatus] = useState<GoogleWorkspaceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const name = names[provider];
   useEffect(() => {
@@ -57,6 +58,7 @@ function ConnectionCard({
   const connect = async (write = false) => {
     const controller = new AbortController();
     abortRef.current = controller;
+    setAuthorizing(true);
     setBusy(true);
     setError(null);
     const popup = window.open(
@@ -133,6 +135,7 @@ function ConnectionCard({
         /* Google may sever window.opener. */
       }
       setBusy(false);
+      setAuthorizing(false);
     }
   };
   const disconnect = async () => {
@@ -171,7 +174,7 @@ function ConnectionCard({
           </p>
         ) : (
           <>
-            <p className="text-sm">
+            <p className="break-all text-sm">
               {status.connected
                 ? `Connected as ${status.accountEmail ?? "your selected Google account"} · ${status.writeEnabled ? "Writes require approval" : "Read-only"}`
                 : "Not connected"}
@@ -221,7 +224,7 @@ function ConnectionCard({
                   Disconnect
                 </PillButtonUI>
               )}
-              {busy && (
+              {authorizing && (
                 <PillButtonUI
                   tone="white"
                   onClick={() => abortRef.current?.abort()}
@@ -230,7 +233,7 @@ function ConnectionCard({
                 </PillButtonUI>
               )}
             </div>
-            {busy && (
+            {authorizing && (
               <p role="status" className="text-xs">
                 Waiting for Google…
               </p>

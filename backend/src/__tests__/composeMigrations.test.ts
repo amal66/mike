@@ -27,6 +27,12 @@ describe("docker-compose db-init migration replay", () => {
         .filter((f) => f >= REPLAY_FROM)
         .sort();
 
+    it.each(["google-drive", "google-workspace"])(
+        "fails closed when the %s migration fails",
+        (name) => {
+            expect(compose).toContain(`-f /${name}-migration.sql || exit 1;`);
+        },
+    );
     it("uses a unique date and sequence for every dated migration", () => {
         const slots = migrations
             .map((file) => file.match(/^\d{8}_\d{2}_/)?.[0])
@@ -57,7 +63,8 @@ describe("docker-compose db-init migration replay", () => {
             .split(":")[0]
             .trim();
         expect(
-            compose.includes(`-f ${containerPath};`),
+            compose.includes(`-f ${containerPath};`) ||
+                compose.includes(`-f ${containerPath} || exit 1;`),
             `docker-compose.yml mounts ${file} at ${containerPath} but never psql's it`,
         ).toBe(true);
     });

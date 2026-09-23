@@ -79,6 +79,46 @@ describe("Google Workspace routes", () => {
       );
     },
   );
+  it.each(["google-drive", "gmail", "google-calendar"])(
+    "relays %s callbacks to the fixed frontend and rejects unauthenticated completion",
+    async (provider) => {
+      vi.stubEnv("FRONTEND_URL", "https://app.mike.test");
+      mocks.auth = false;
+      const relay = await request(app)
+        .get(`/user/integrations/${provider}/oauth/callback`)
+        .query({ state: "s", code: "c", redirect_uri: "https://attacker.test" })
+        .set("Host", "attacker.test");
+      expect(relay.status).toBe(303);
+      expect(relay.headers.location).toBe(
+        `https://app.mike.test/api/user/integrations/${provider}/oauth/finish?state=s&code=c`,
+      );
+      expect(relay.headers["cache-control"]).toBe("no-store");
+      expect(relay.headers["referrer-policy"]).toBe("no-referrer");
+      const finish = `/user/integrations/${provider}/oauth/finish?state=s&code=c`;
+      expect((await request(app).get(finish)).status).toBe(401);
+      mocks.auth = true;
+      mocks.mfa = false;
+      expect((await request(app).get(finish)).status).toBe(403);
+      expect(mocks.complete).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["gmail", "google-calendar"])(
+    "binds %s completion to the authenticated user",
+    async (provider) => {
+      mocks.complete.mockResolvedValue(undefined);
+      const res = await request(app).get(
+        `/user/integrations/${provider}/oauth/finish?state=s&code=c`,
+      );
+      expect(res.status).toBe(200);
+      expect(mocks.complete).toHaveBeenCalledWith(
+        {},
+        "owner",
+        provider,
+        "s",
+        "c",
+      );
+    },
+  );
   it("only enables writes through an explicit boolean", async () => {
     expect(
       (
@@ -143,7 +183,7 @@ describe("Google Workspace routes", () => {
     expect(JSON.stringify(start.body)).not.toContain("secret");
     mocks.complete.mockRejectedValue(new Error("secret token"));
     const callback = await request(app).get(
-      "/user/integrations/gmail/oauth/callback?state=s&code=c",
+      "/user/integrations/gmail/oauth/finish?state=s&code=c",
     );
     expect(callback.status).toBe(400);
     expect(callback.text).not.toContain("secret");

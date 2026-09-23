@@ -540,9 +540,25 @@ export async function prepareWorkspaceAction(
       throw new GoogleWorkspaceError(
         "Editing drafts with attachments is not supported. Edit this draft in Gmail.",
       );
+    if (name === "gmail_propose_save_draft") rejectReplyDraft(draft.message);
     action.before = { id: draft.id, message };
   }
   return action;
+}
+// Replacing MIME would discard reply headers and can detach the message from
+// its conversation. Until reply composition is supported, leave these in Gmail.
+function rejectReplyDraft(message: unknown) {
+  const headers = list(asRecord(asRecord(message).payload).headers);
+  if (
+    headers.some((h) =>
+      ["in-reply-to", "references"].includes(
+        text(asRecord(h).name).toLowerCase(),
+      ),
+    )
+  )
+    throw new GoogleWorkspaceError(
+      "Editing reply drafts is not supported. Edit this draft in Gmail.",
+    );
 }
 function rawMail(args: Record<string, unknown>, sender?: string) {
   if (sender && !address.safeParse(sender).success)
@@ -609,6 +625,8 @@ export async function executeWorkspaceAction(
         `/drafts/${segment(args.draft_id)}`,
         { format: "full" },
       );
+      if (tool.name === "gmail_propose_save_draft")
+        rejectReplyDraft(current.message);
       // Gmail has no conditional draft update. Detect edits before execution;
       // a concurrent edit after this read remains a documented limitation.
       const before = asRecord(asRecord(action.before).message);

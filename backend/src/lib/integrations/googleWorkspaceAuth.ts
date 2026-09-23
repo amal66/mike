@@ -217,6 +217,7 @@ function tokenPatch(
 }
 export async function completeWorkspaceOAuth(
   db: Db,
+  completingUserId: string,
   provider: GoogleProvider,
   state: string,
   code: string,
@@ -225,6 +226,7 @@ export async function completeWorkspaceOAuth(
     .from("google_workspace_oauth_states")
     .select("*")
     .eq("state_hash", stateHash(state))
+    .eq("user_id", completingUserId)
     .eq("provider", provider)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();

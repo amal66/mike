@@ -3,11 +3,12 @@
 PR: [#434](https://github.com/open-legal-products/mike/pull/434). The former
 Gmail/Calendar PR #522 is closed as superseded; all implementation is in #434.
 
-Implementation tested: `0824e7f43f321c23d427374116ada1652d4739b1`, rebased onto
+Previous full regression baseline: `0824e7f43f321c23d427374116ada1652d4739b1`, rebased onto
 `main` at `4ad85e463ea769809c9e177fbe7a84548c71d546`.
 
-**Status: automated regression verification passed; fresh live Google acceptance
-is incomplete. This report is not a merge-readiness sign-off.**
+**Status: the baseline automated verification passed. Subsequent review/UI fixes
+are undergoing a fresh rerun; live Google acceptance is incomplete. This report
+is not a merge-readiness sign-off.**
 
 ## Environment and evidence boundaries
 
@@ -18,9 +19,11 @@ is incomplete. This report is not a merge-readiness sign-off.**
 - Requested Google project: `soy-oarlock-503613-m7`, OAuth client MikeOSS.
   Organization-owned project; OAuth audience is **External / Testing**.
   This is not evidence of an Internal Workspace audience or administrator policy.
-- The old `mikeamal` connections were removed before this run. The
-  [September 22 report](google-workspace-live-2026-09-22.md) covers that older
-  project and service-driven/seeded UI tests, not a model-driven Google workflow.
+- The old `mikeamal` connections were removed before this run. All eight old-client
+  screenshots were subsequently removed from both PR branches, and old testing
+  comments/descriptions were replaced with current-evidence pointers. The
+  [September 22 report](google-workspace-live-2026-09-22.md) is now a retirement
+  notice, not evidence for the current client.
 
 ## Automated results
 
@@ -68,6 +71,25 @@ the suite; this is not a claim that the whole app is accessibility-clean.
   final TCP listener instead of PostgreSQL's temporary initialization socket.
   A fresh-container run passed after the fix; application code was unchanged.
 
+## Review and responsive-layout fixes awaiting final rerun
+
+- Bind OAuth completion to the initiating Mike user. Provider callbacks relay to
+  a fixed frontend gateway so its session cookies are available even when the
+  public API has a separate origin. Anonymous, wrong-owner, and MFA failures are
+  rejected before token exchange. The registered Google callback URLs stay the same.
+- Reject replacement of Gmail reply drafts at preparation and execution, rather
+  than dropping their reply headers and conversation association.
+- Stop Compose initialization if either Google migration fails.
+- Separate disconnect state from authorization state, so Disconnect no longer
+  displays a misleading Cancel authorization button or Waiting for Google status.
+- Fix long account-address overflow in connection and approval cards. Browser
+  checks reproduced the original issue at 390px and 768px; regression coverage
+  now checks 390px, 768px, and 1280px.
+
+Backend production compilation and test type checking passed for these changes.
+The full automated suites/build/browser rerun is still in progress; the earlier
+counts above are not presented as proof of this subsequent code revision.
+
 ## Fresh Google project checks
 
 | Check | Observed result |
@@ -97,6 +119,22 @@ It proves the disconnected negative case only; its generic setup prose is not
 the authoritative operator guide.
 
 ![Actual Assistant response while disconnected](google-integrations-2026-09-23/02-disconnected-assistant.png)
+
+## UI flow recording
+
+The following GIF shows actual Mike-side OAuth **cancellation** flows for Drive,
+Gmail, and Calendar using the newly configured client. Each starts authorization,
+shows the pending state, cancels, and returns to a disconnected state with a
+usable Connect button. These are seven captured screen states, held for three
+seconds each; it is a step recording, not continuous video. Google account
+chooser windows and unrelated account history are excluded for privacy.
+
+![Drive, Gmail, and Calendar cancellation flows](google-integrations-2026-09-23/03-oauth-cancellation.gif)
+
+This proves cancellation only. Full consent/read/write/inline-approval flow GIFs
+remain outstanding until account access is approved and the corresponding live
+tests pass. No old-client screenshots or seeded successful actions are used in
+this recording.
 
 ## Remaining acceptance before sign-off
 
