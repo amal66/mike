@@ -251,7 +251,7 @@ count assertions. All **18 focused Sentry/logging tests** then passed locally.
 | CI schema drift, Supabase stack, web browser | Infrastructure failure while pulling Supabase images: registry `toomanyrequests`; schema retry failed for the same reason |
 | First local stack attempt | 38 passed, nine unrun because the pagination setup hook exceeded 20 seconds |
 | Serial local stack rerun | 35 passed, 12 unrun because GoTrue returned retryable timeouts while creating synthetic users |
-| Final local production web/browser rerun | Incomplete; frontend rebuild remained in compilation under heavy host load |
+| Final local production web/browser rerun | Production rebuild and frontend types passed; **41/41 browser tests passed**, zero skipped, one worker, 2.3 minutes |
 
 The serial stack command used `--maxWorkers=1 --hookTimeout=120000`; assertions
 were unchanged. No database blocking transactions were present when inspected
@@ -263,6 +263,33 @@ memory pressure; they are not counted as completed local runs.
 Current-head code checks are green apart from the three infrastructure-blocked
 jobs above. CodeRabbit remains paused. Live Gmail/Calendar acceptance and
 full-flow GIFs remain required before sign-off.
+
+### Read-only connections confirmed after the rebase
+
+On `b3450213` (application code `c26a2d72`), the rebuilt local production app
+confirmed all three Google services connected. Gmail and Calendar each displayed
+the explicitly selected test account with **Read-only** access; Drive retained
+its existing read-only connection through the server restart. The selected Google
+account differs from the local Mike test user's login, exercising independent
+account selection. No Gmail or Calendar write upgrade was granted in this step.
+
+This confirms OAuth completion and persisted connection status, not successful
+Gmail/Calendar data reads. Preparing a synthetic Gmail draft was interrupted when
+Chrome reported another extension UI blocking automation. The user was asked to
+dismiss that UI. Control briefly resumed, but clicking Compose reproduced the
+block; the user was asked to open an empty Compose window manually. Full live
+read/write tests and their recordings remain pending.
+Raw connection screenshots are retained locally; they are not published because
+they contain the account email address.
+
+The latest documentation-head CI still passes backend/frontend, Word, image,
+and security checks. The schema job again failed during Supabase image pulls
+with registry `toomanyrequests`, before schema assertions ran. The existing local
+servers were healthy when the one-worker browser rerun started. That run completed
+with **41 passed, zero skipped and zero failed**, including all four real-model
+flows, Google callback session checks, mocked provider lifecycle/approval checks,
+and the five responsive/theme layout cases. Existing serious accessibility
+findings remain logged without failing the suite; critical checks passed.
 
 Before the compact-card alignment, the local UI showed all services disconnected
 with explicit opt-in controls (historical screenshot, not the latest layout):
@@ -296,8 +323,8 @@ this recording.
 
 ## Remaining acceptance before sign-off
 
-1. Complete Gmail and Calendar read-only consent through the requested project's
-   client; Drive consent is complete. Confirm the selected account for each service.
+1. Read-only consent and persisted connection status are confirmed for Drive,
+   Gmail, and Calendar through the requested project's client.
 2. Repeat the successful Drive read on the final rebased head; complete the synthetic
    email/thread and bounded calendar-event reads. Enable Chrome extension file-URL
    access for binary/text upload fixtures. Verify provider state and record full flows.
