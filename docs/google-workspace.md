@@ -19,7 +19,7 @@ Gmail Trash is recoverable through Gmail; permanently deleting received/sent mai
 
 ## Operator setup
 
-1. Apply `backend/migrations/20260922_01_google_workspace.sql` to the intended deployment after the parent Drive migration. Fresh installs include it in `backend/schema.sql`; Compose's db-init replays it. No remote database changes are performed by the tests below.
+1. Apply `backend/migrations/20260922_01_google_workspace.sql` to the intended deployment after the Drive migration. Fresh installs include it in `backend/schema.sql`; Compose's db-init replays it. No remote database changes are performed by the tests below.
 2. Enable **Gmail API** (`gmail.googleapis.com`) and **Google Calendar API** (`calendar-json.googleapis.com`) in the OAuth client's Google Cloud project. These are the REST APIs, not the Google MCP preview services.
 3. Configure a Web application OAuth client. The existing Drive client may be reused. Register these exact local redirect URIs:
 
@@ -42,7 +42,7 @@ Gmail Trash is recoverable through Gmail; permanently deleting received/sent mai
 
 ## Shipping to self-hosted deployments
 
-This feature ships as software that each operator configures and hosts. **Every deployment supplies its own Google Cloud project and OAuth client.** Mike does not distribute a shared client secret, and releasing these PRs does not require publishing one central Mike OAuth app for all installations. A successful test of our development client does not authorize a customer's client.
+This feature ships as software that each operator configures and hosts. **Every deployment supplies its own Google Cloud project and OAuth client.** Mike does not distribute a shared client secret, and releasing this PR does not require publishing one central Mike OAuth app for all installations. A successful test of our development client does not authorize a customer's client.
 
 Choose the audience for the accounts that will connect to that installation:
 
@@ -73,7 +73,7 @@ Locally, the recommended callback origin is `http://localhost:3000/api`: Next's 
 - RLS is enabled and browser roles have no direct grant/state/proposal-table or lifecycle-RPC access. Mutation routes require authentication, trusted-origin checks through existing auth middleware, and MFA when enrolled. Disconnect/cancel/reject/approve are scoped to the authenticated user. Account deletion cascades all three tables.
 - Calendar patch/delete uses the reviewed ETag via `If-Match`, rejecting changes made after proposal creation. Entire recurring series are rejected. Gmail does not offer equivalent conditional draft writes: Mike checks draft message ID/history before execution, but a concurrent Gmail edit after that check can still race. Avoid editing a draft in Gmail while approving its replacement in Mike.
 - Approvals are **at most once**, not exactly-once delivery. Network failures or server crashes can leave an uncertain/executing result even if Google completed the change. No automatic retry is performed; inspect Google before creating another proposal. Disconnect cannot retract an already approved request that is in flight.
-- Disconnecting Gmail or Calendar deletes that local connection without Google-wide revocation, because revoking a shared OAuth client can invalidate the other services too. Remove all access in Google's account settings when desired. The parent Drive disconnect still attempts Google revocation and may require reconnecting other services sharing that client.
+- Disconnecting Gmail or Calendar deletes that local connection without Google-wide revocation, because revoking a shared OAuth client can invalidate the other services too. Remove all access in Google's account settings when desired. Drive uses the same local-only disconnect behavior. Google project-wide revocation would invalidate all services and OAuth clients sharing that grant.
 - Proposals remain visible for 24 hours and older non-executing rows are removed lazily on the user's next proposal. This is not a scheduled deletion guarantee. Executing/uncertain outcomes must be investigated; tokens and stored proposal contents are never returned to the model as credentials or logged.
 
 ## Manual acceptance checklist

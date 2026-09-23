@@ -26,8 +26,9 @@ The integration does not require a Google MCP server or a service account.
   A refresh response without a new refresh token preserves the encrypted one.
   A new connection must supply offline access and the requested permission.
 - **Disconnect/cancel:** disconnect atomically removes tokens and all pending
-  states for that user, then attempts Google revocation. Revocation failure
-  cannot preserve the local connection. Cancel removes just the caller's
+  states for that user. It does not revoke the entire Google project grant,
+  which would also break Gmail and Calendar sharing the project. To revoke
+  every service, remove the app in Google Account settings. Cancel removes just the caller's
   selected attempt; after cancellation the card rechecks status in case consent
   completed first. A disconnected account cannot be recreated by an in-flight
   callback. A new, deliberately initiated connection can still succeed.

@@ -250,7 +250,7 @@ describe("Google Drive OAuth lifecycle", () => {
         expect(JSON.parse(result.content).ok).toBe(false);
         expect(store.tokens).toHaveLength(0);
     });
-    it("removes local authorization even if revocation fails", async () => {
+    it("disconnects only Drive without revoking the shared Google project grant", async () => {
         const store = await connected();
         await begin(store);
         await begin(store, "u2");
@@ -263,9 +263,7 @@ describe("Google Drive OAuth lifecycle", () => {
         await disconnectGoogleDrive("u1", store.db);
         expect(store.tokens).toHaveLength(0);
         expect(store.states.map((s) => s.user_id)).toEqual(["u2"]);
-        expect(
-            JSON.stringify(vi.mocked(console.warn).mock.calls),
-        ).not.toContain("provider-secret");
+        expect(fetch).not.toHaveBeenCalled();
     });
     it("disconnect still works when ciphertext cannot be decrypted", async () => {
         const store = await connected();

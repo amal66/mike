@@ -2,12 +2,21 @@
 
 Date: 2026-09-22
 
-Pull request: [#522](https://github.com/open-legal-products/mike/pull/522)
+Pull request: [#434](https://github.com/open-legal-products/mike/pull/434) (consolidated from the now-closed #522).
 
 Environment: local Mike web app at `http://localhost:3000`, local API at `http://localhost:3001`, local Supabase, Google OAuth project `mikeamal`
 Google account: personal test account; address redacted from public evidence
 
 ## Result
+
+**Historical scope:** this report tests the earlier `mikeamal` OAuth project, not
+`soy-oarlock-503613-m7`. Provider reads and proposal preparation were invoked
+through the backend's exported integration services. Assistant messages and tool
+results were seeded to exercise the inline approval UI; approval then executed
+real Google API operations. These screenshots demonstrate consent, provider
+behavior, and the approval UI, but do **not** demonstrate a model selecting tools
+and completing a conversation end to end. The automated LLM-dependent tests were
+skipped in this run. Use the subsequent combined-PR report for current verification.
 
 Drive, Gmail, and Google Calendar passed live OAuth and provider API tests. Gmail and Calendar remain opt-in and independent of Mike sign-in. They connect read-only by default; write scopes require a separate Google consent flow. Every write was prepared as an immutable proposal and required an explicit user decision in the Assistant conversation before Mike called Google.
 
@@ -161,4 +170,9 @@ The first backend and Word Playwright attempts were made inside a filesystem san
 8. In Assistant, ask for a synthetic Gmail draft/send or Calendar create/edit/delete. Confirm that the exact proposal appears inline and Google remains unchanged before approval.
 9. Approve or reject the card in the conversation. Confirm the same card shows the final status and verify the provider state directly.
 
-The Google OAuth app is intentionally in Testing status for this run. Production rollout still requires the normal OAuth consent-screen publication and Google verification work for sensitive scopes, plus production redirect URIs and public policy links.
+The Google OAuth app was intentionally in Testing status for this run. Each
+self-hosted operator supplies their own OAuth client and production redirect
+URIs. Their audience and scope choices determine publication and verification
+requirements or an applicable personal/internal/development exception; distributing
+Mike does not require a centrally verified Mike OAuth app. See
+[the self-hosted setup guide](../google-workspace.md).

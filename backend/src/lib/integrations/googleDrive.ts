@@ -41,7 +41,6 @@ import {
 
 const GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
-const GOOGLE_REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 
 /** Read-only is all the shipped tools need; keep the consent ask minimal. */
@@ -381,40 +380,14 @@ export async function disconnectGoogleDrive(
     userId: string,
     db: Db = createServerSupabase(),
 ): Promise<void> {
-    // Delete local state first, atomically with pending OAuth attempts. Provider
-    // failure or corrupt ciphertext must never keep a local connection alive.
-    const { data, error } = await db.rpc("disconnect_google_drive", {
+    // Google revocation is project-wide: it would also invalidate Gmail,
+    // Calendar, and other clients sharing this project's grant. Remove this
+    // service's local credentials and pending states atomically instead.
+    // Users can revoke the whole app from their Google Account settings.
+    const { error } = await db.rpc("disconnect_google_drive", {
         p_user_id: userId,
     });
     if (error) throw error;
-    const row = data as TokenRow | null;
-    try {
-        const token =
-            row &&
-            (decryptString(
-                row.encrypted_refresh_token,
-                row.refresh_token_iv,
-                row.refresh_token_tag,
-            ) ||
-                decryptString(
-                    row.encrypted_access_token,
-                    row.access_token_iv,
-                    row.access_token_tag,
-                ));
-        if (token)
-            await googleDriveRequest(GOOGLE_REVOKE_ENDPOINT, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: new URLSearchParams({ token }),
-            });
-    } catch (error) {
-        console.warn(
-            "[google-drive] remote revocation failed",
-            safeError(error),
-        );
-    }
 }
 
 export async function cancelGoogleDriveOAuth(

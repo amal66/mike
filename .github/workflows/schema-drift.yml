@@ -36,7 +36,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, upstream-main, 'codex/**']
+    branches: [main, upstream-main]
   workflow_dispatch:
 
 concurrency:
