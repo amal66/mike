@@ -81,6 +81,13 @@ for (const addressKind of ["normal", "long"] as const) {
         const card = page.getByRole("region", { name: `${name} connector`, exact: true });
         await expect(card.getByText(accountEmail, { exact: true })).toBeVisible();
         await expect(card.getByText("Writes require approval", { exact: true })).toBeVisible();
+        if (addressKind === "normal") {
+          const emailSize = await card.getByText(accountEmail, { exact: true }).evaluate((element) => ({
+            height: element.getBoundingClientRect().height,
+            lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+          }));
+          expect(emailSize.height, `${name} normal email should fit one line`).toBeLessThanOrEqual(emailSize.lineHeight + 1);
+        }
         for (const text of await card.locator("p").all()) {
           const overflow = await text.evaluate((element) => ({
             horizontal: element.scrollWidth - element.clientWidth,

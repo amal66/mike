@@ -6,7 +6,7 @@ The connector cards now use the official Google Drive, Gmail, and Google Calenda
 
 **Screenshots 15–17 are the earlier real Google read-flow captures** from MikeOSS in `soy-oarlock-503613-m7`, with synthetic source data. They are not newly repeated tests. Gmail positive message reads and live approved writes remain outstanding. Google-owned account chooser/consent screens are not represented by the fixture screenshots. Drive remains read-only.
 
-Validation for the logo change: 34 connector component tests; 11 browser tests covering account selection/write upgrade/approval and normal/long addresses at 390/768/1280px in light/dark layouts; changed-file lint; production Webpack build and TypeScript. All passed. The local Turbopack attempt stalled after a sandbox port-binding error; CI retains the standard build command.
+Validation for the logo change: 35 connector/Settings component tests; 11 browser tests covering account selection/write upgrade/approval and normal/long addresses at 390/768/1280px in light/dark layouts; changed-file lint; production Webpack build and TypeScript. All passed. The local Turbopack attempt stalled after a sandbox port-binding error; CI retains the standard build command.
 
 ## 1. Connectors before opting in
 
