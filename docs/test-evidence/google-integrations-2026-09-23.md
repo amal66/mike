@@ -10,9 +10,15 @@ security fixes in `30b25535`), based on `main` at
 **Status: automated verification is recorded below; fresh live Google acceptance
 is incomplete. This report is not a merge-readiness sign-off.**
 
-## Current automated gate: all checks pass
+## Product-logo update and screenshot walkthrough
 
-All CI checks passed on `dca4586c`, based on `main` at `9014da53`:
+The Google cards now show the separate Drive, Gmail, and Calendar product logos. [View all 17 screenshots](google-integrations-screenshot-walkthrough.md): opt-in setup, read-only connections, optional write access, inline Assistant approval/completion/rejection, and earlier live read evidence. Fixture UI captures and live Google proofs are explicitly distinguished. Desktop, dark, tablet, mobile, and Gmail dialog images below have been refreshed.
+
+The logo change passed 34 focused component tests, six browser tests (including five responsive/theme combinations and successful local logo loads), changed-file lint, and production Webpack build/typechecking. Standard CI reruns on the new PR head.
+
+## Automated baseline: all checks pass
+
+All CI checks passed on both `dca4586c` and documentation head `76ee6f0e`, based on `main` at `9014da53`:
 backend/frontend tests and builds, schema drift, all **47 Supabase stack tests**,
 web Playwright, Word Chromium/WebKit, all three Docker images, and security
 checks. The local full browser run also passed **41/41 with zero skips**,

@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import Image from "next/image";
 import { Modal } from "@/app/components/modals/Modal";
-import { GoogleIconUI } from "@/shared/ui/GoogleIconUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { SettingsCard } from "./SettingsCard";
 import { SettingsLabel } from "./SettingsText";
 
 /** Keep account and permission controls in the same detail surface as MCP. */
 export function GoogleConnectionCard({
+  provider,
   name,
   connected,
   loading,
@@ -16,6 +17,7 @@ export function GoogleConnectionCard({
   onClose,
   children,
 }: {
+  provider: "google-drive" | "gmail" | "google-calendar";
   name: string;
   connected: boolean;
   loading: boolean;
@@ -31,7 +33,15 @@ export function GoogleConnectionCard({
           <div className="flex flex-wrap items-center gap-3 p-4">
             <div className="flex min-w-0 flex-[1_0_8rem] items-center gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center">
-                <GoogleIconUI className="h-6 w-6" />
+                <Image
+                  src={`/icons/integrations/${provider}.png`}
+                  alt=""
+                  aria-hidden="true"
+                  width={24}
+                  height={24}
+                  unoptimized
+                  className="h-6 w-6 object-contain"
+                />
               </div>
               <div className="min-w-0 flex-1">
                 <SettingsLabel>{name}</SettingsLabel>

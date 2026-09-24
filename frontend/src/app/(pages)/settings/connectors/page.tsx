@@ -407,6 +407,7 @@ function GoogleDriveCard({
 
   return (
     <GoogleConnectionCard
+      provider="google-drive"
       name="Google Drive"
       connected={!!status?.connected}
       loading={!status && !error}

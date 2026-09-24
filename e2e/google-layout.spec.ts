@@ -69,6 +69,11 @@ for (const { width, darkMode } of [
     });
     await page.goto("/settings/connectors");
     await expect(page.getByRole("button", { name: "Manage Gmail", exact: true })).toBeEnabled();
+    for (const provider of ["google-drive", "gmail", "google-calendar"]) {
+      const logo = page.locator(`img[src="/icons/integrations/${provider}.png"]`);
+      await expect(logo).toBeVisible();
+      await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    }
     await expect(page.getByRole("article", { name: "Send email approval" })).toBeHidden();
     await page.screenshot({ path: testInfo.outputPath("google-cards.png"), fullPage: true, animations: "disabled" });
     await page.locator("summary").filter({ hasText: "Recent Google actions" }).click();
@@ -114,8 +119,8 @@ for (const { width, darkMode } of [
       expect(bounds.left).toBeGreaterThanOrEqual(0);
       expect(bounds.right).toBeLessThanOrEqual(width);
       expect(bounds.overflow).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: testInfo.outputPath(`${name.toLowerCase().replaceAll(" ", "-")}-details.png`), animations: "disabled" });
       if (name === "Gmail") {
-        await page.screenshot({ path: testInfo.outputPath("gmail-details.png"), animations: "disabled" });
         await expect(dialog.getByRole("button", { name: "Disconnect", exact: true })).toBeInViewport();
       }
       await dialog.getByRole("button", { name: "Close", exact: true }).click();

@@ -158,6 +158,7 @@ function ConnectionCard({
   };
   return (
     <GoogleConnectionCard
+      provider={provider}
       name={name}
       connected={!!status?.connected}
       loading={!status && !error}
