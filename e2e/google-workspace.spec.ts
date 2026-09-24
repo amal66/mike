@@ -129,7 +129,7 @@ test("Google SSO does not auto-connect Gmail; account choice, write upgrade and 
   const popupPromise = context.waitForEvent("page");
   await discover.getByRole("button", { name: "Add Gmail", exact: true }).click();
   const popup = await popupPromise;
-  await expect(popup).toHaveURL(/accounts.google.com/);
+  await expect(popup).toHaveURL(/^https:\/\/accounts\.google\.com\//);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(discover.getByText("Waiting for Google…")).toBeVisible();
   connected = true;
@@ -190,7 +190,7 @@ test("Calendar Add opens Google account selection directly with read-only access
   const popupPromise = context.waitForEvent("page");
   await add.click();
   const popup = await popupPromise;
-  await expect(popup).toHaveURL(/accounts.google.com/);
+  await expect(popup).toHaveURL(/^https:\/\/accounts\.google\.com\//);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel Google Calendar authorization", exact: true }).click();
   await expect(add).toBeEnabled();

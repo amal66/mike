@@ -78,7 +78,7 @@ test("Google Drive connect, cancel and disconnect", async ({
     const firstPopup = context.waitForEvent("page");
     await connect.click();
     const popup = await firstPopup;
-    await expect(popup).toHaveURL(/accounts.google.com/);
+    await expect(popup).toHaveURL(/^https:\/\/accounts\.google\.com\//);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(drive.getByText("Waiting for Google…")).toBeVisible();
     await drive.getByRole("button", { name: "Cancel Google Drive authorization", exact: true }).click();
