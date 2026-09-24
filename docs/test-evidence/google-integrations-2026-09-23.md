@@ -10,6 +10,31 @@ security fixes in `30b25535`), based on `main` at
 **Status: automated verification is recorded below; fresh live Google acceptance
 is incomplete. This report is not a merge-readiness sign-off.**
 
+## September 24 live Assistant review
+
+A fresh Chrome conversation, **Google Integrations Acceptance Review**, was run
+against the real local deployment and the requested MikeOSS client. No provider
+responses were mocked. Drive search/read returned the four expected fixture
+values (18 months, California, 45 days, violet otter 7391), independently checked
+against the source Google Doc. Calendar list/search/read returned the synthetic
+event for September 25 at 10:00–10:15 America/Los_Angeles, with amber heron 4826
+and no guests; the Google Calendar source was opened and matched.
+
+Gmail label listing, scoped message search, and scoped draft listing succeeded.
+Both searches returned no matching synthetic fixture, so positive message,
+thread, and draft-content reads remain untested. All three connections were
+read-only; no write or proposal tools were exposed. No email was sent and no
+provider data was changed during this review.
+
+The live run exposed incorrect Assistant instructions claiming a Mike
+administrator must provision write tools. Tool descriptions now explain the
+actual permission state and the user-facing Manage → Enable writes with approval
+path. A live follow-up in the same conversation correctly explained both Gmail
+and Calendar setup, and retained the per-action approval requirement. The fix
+passed 59 focused tests, all 2,513 backend tests (47 separate stack cases excluded
+from that command), and the backend build. The review still awaits explicit
+consent for isolated live Gmail/Calendar write acceptance.
+
 ## Current Discover layout and direct OAuth flow
 
 Drive, Gmail, and Calendar now share the Discover grid with the other connectors.

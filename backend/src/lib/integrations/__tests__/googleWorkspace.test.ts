@@ -292,6 +292,47 @@ describe("Google Workspace opt-in and OAuth", () => {
 });
 
 describe("Google action approval boundary", () => {
+  it.each([
+    ["gmail", false],
+    ["google-calendar", false],
+    ["gmail", true],
+    ["google-calendar", true],
+  ] as const)(
+    "advertises accurate permission guidance for %s (writes: %s)",
+    async (provider, write) => {
+      const s = await connected(write, provider);
+      const tools = (await buildGoogleWorkspaceTools("u1", s.db)) as Array<{
+        function: { name: string; description: string };
+      }>;
+      expect(tools.length).toBeGreaterThan(0);
+      expect(
+        tools.some((tool) => tool.function.name.includes("_propose_")),
+      ).toBe(write);
+      for (const tool of tools) {
+        expect(tool.function.description).toContain(
+          "approval in the Assistant conversation",
+        );
+        if (write) {
+          expect(tool.function.description).toContain(
+            "Write access is enabled",
+          );
+          expect(tool.function.description).not.toContain(
+            "connection is read-only",
+          );
+        } else {
+          expect(tool.function.description).toContain(
+            "connection is read-only",
+          );
+          expect(tool.function.description).toContain(
+            "Manage → Enable writes with approval",
+          );
+          expect(tool.function.description).toContain(
+            "user can do this themselves",
+          );
+        }
+      }
+    },
+  );
   it("hides write tools by default and rejects fabricated direct calls including a model approval flag", async () => {
     const s = await connected();
     const tools = await buildGoogleWorkspaceTools("u1", s.db);

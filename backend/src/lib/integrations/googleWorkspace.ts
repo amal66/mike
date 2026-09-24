@@ -31,6 +31,10 @@ export async function buildGoogleWorkspaceTools(
     try {
       const row = await loadWorkspaceGrant(db, userId, provider);
       if (!row) continue;
+      const accessGuidance =
+        row.write_enabled === true
+          ? "Write access is enabled. Write tools only prepare proposals; each action requires the user's explicit approval in the Assistant conversation before execution."
+          : `This ${GOOGLE_PROVIDERS[provider].name} connection is read-only. To enable write proposals, the user opens Settings → Connectors → Discover → ${GOOGLE_PROVIDERS[provider].name} → Manage → Enable writes with approval, then grants Google's requested permissions. The user can do this themselves; do not say an administrator must provision Mike tools. Each write still requires approval in the Assistant conversation.`;
       for (const t of WORKSPACE_TOOLS.filter(
         (t) =>
           t.provider === provider && (!t.write || row.write_enabled === true),
@@ -39,7 +43,7 @@ export async function buildGoogleWorkspaceTools(
           type: "function",
           function: {
             name: t.name,
-            description: t.description,
+            description: `${t.description} ${accessGuidance}`,
             parameters: z.toJSONSchema(t.schema, {
               target: "draft-7",
               io: "input",
