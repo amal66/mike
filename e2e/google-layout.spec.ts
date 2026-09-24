@@ -72,6 +72,10 @@ for (const addressKind of ["normal", "long"] as const) {
       });
       await page.goto("/settings/connectors");
       await expect(page.getByRole("button", { name: "Manage Gmail", exact: true })).toBeEnabled();
+      await expect(page.getByRole("heading", { name: "Google accounts", exact: true })).toHaveCount(0);
+      for (const name of ["Google Drive", "Gmail", "Google Calendar"]) {
+        await expect(page.getByRole("region", { name: "Discover", exact: true }).getByRole("region", { name: `${name} connector`, exact: true })).toBeVisible();
+      }
       for (const provider of ["google-drive", "gmail", "google-calendar"]) {
         const logo = page.locator(`img[src="/icons/integrations/${provider}.png"]`);
         await expect(logo).toBeVisible();
@@ -98,7 +102,7 @@ for (const addressKind of ["normal", "long"] as const) {
         }
       }
       await expect(page.getByRole("article", { name: "Send email approval" })).toBeHidden();
-      await page.getByRole("region", { name: "Google accounts", exact: true }).scrollIntoViewIfNeeded();
+      await page.getByRole("region", { name: "Discover", exact: true }).scrollIntoViewIfNeeded();
       await page.screenshot({ path: testInfo.outputPath("google-cards.png"), fullPage: true, animations: "disabled" });
       await page.locator("summary").filter({ hasText: "Recent Google actions" }).click();
       const approval = page.getByRole("article", { name: "Send email approval" });

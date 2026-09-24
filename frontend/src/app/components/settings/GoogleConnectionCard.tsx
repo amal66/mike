@@ -7,7 +7,7 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { SettingsCard } from "./SettingsCard";
 import { SettingsLabel } from "./SettingsText";
 
-/** Keep account and permission controls in the same detail surface as MCP. */
+/** Add goes straight to OAuth; connected cards retain account management. */
 export function GoogleConnectionCard({
   provider,
   name,
@@ -15,6 +15,9 @@ export function GoogleConnectionCard({
   loading,
   accountEmail,
   summary,
+  onConnect,
+  connecting = false,
+  error,
   onClose,
   children,
 }: {
@@ -24,10 +27,14 @@ export function GoogleConnectionCard({
   loading: boolean;
   accountEmail?: string | null;
   summary: string;
+  onConnect?: () => void;
+  connecting?: boolean;
+  error?: string | null;
   onClose: () => void;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const actionLabel = connected ? "Manage" : onConnect ? "Add" : "Set up";
   return (
     <>
       <section aria-label={`${name} connector`} className="min-w-0">
@@ -62,12 +69,30 @@ export function GoogleConnectionCard({
               tone={connected ? "white" : "blue"}
               size="sm"
               disabled={loading}
-              aria-label={`${connected ? "Manage" : "Set up"} ${name}`}
-              onClick={() => setOpen(true)}
+              aria-label={
+                connecting
+                  ? `Cancel ${name} authorization`
+                  : `${actionLabel} ${name}`
+              }
+              onClick={() => {
+                if (connecting) onClose();
+                else if (!connected && onConnect) onConnect();
+                else setOpen(true);
+              }}
             >
-              {loading ? "Loading…" : connected ? "Manage" : "Add"}
+              {loading ? "Loading…" : connecting ? "Cancel" : actionLabel}
             </PillButtonUI>
           </div>
+          {!open && connecting && (
+            <p role="status" className="px-4 pb-4 text-xs text-muted-foreground">
+              Waiting for Google…
+            </p>
+          )}
+          {!open && error && (
+            <p role="alert" className="px-4 pb-4 text-xs text-destructive [overflow-wrap:anywhere]">
+              {error}
+            </p>
+          )}
         </SettingsCard>
       </section>
       <Modal

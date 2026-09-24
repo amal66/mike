@@ -1,11 +1,17 @@
 import { test, expect } from "@playwright/test";
 
 // Exercise the actual settings page/popup/polling in Chromium while replacing
-// only the Google integration endpoints. No Google credentials or consent UI.
+// the auth/profile and integration endpoints. No Google credentials or consent UI.
 test("Google Drive connect, cancel and disconnect", async ({
     page,
     context,
 }) => {
+    await page.route("**/api/**", async (route) => {
+        const path = new URL(route.request().url()).pathname;
+        if (path === "/api/auth/session") return route.fulfill({ json: { user: { id: "fixture-user", email: "login@example.com" } } });
+        if (path === "/api/user/profile") return route.fulfill({ json: { onboardingComplete: true, displayName: "Test user", apiKeyStatus: {}, creditsRemaining: 100 } });
+        return route.fulfill({ json: [] });
+    });
     let connected = false;
     let cancelled = false;
     const state = "a".repeat(32);
@@ -66,17 +72,16 @@ test("Google Drive connect, cancel and disconnect", async ({
         },
     );
     await page.goto("/settings/connectors");
-    await page.getByRole("button", { name: "Set up Google Drive" }).click();
-    const drive = page.getByRole("region", { name: "Google Drive connection" });
-    const connect = drive.getByRole("button", { name: "Connect", exact: true });
+    const drive = page.getByRole("region", { name: "Google Drive connector" });
+    const connect = drive.getByRole("button", { name: "Add Google Drive", exact: true });
     await expect(connect).toBeEnabled();
     const firstPopup = context.waitForEvent("page");
     await connect.click();
     const popup = await firstPopup;
-    await expect(
-        drive.getByRole("button", { name: "Waiting for Google…" }),
-    ).toBeDisabled();
-    await drive.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(popup).toHaveURL(/accounts.google.com/);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(drive.getByText("Waiting for Google…")).toBeVisible();
+    await drive.getByRole("button", { name: "Cancel Google Drive authorization", exact: true }).click();
     await expect(drive.getByText("Authorization cancelled.")).toBeVisible();
     expect(cancelled).toBe(true);
     await expect(connect).toBeEnabled();
@@ -84,12 +89,16 @@ test("Google Drive connect, cancel and disconnect", async ({
 
     await connect.click();
     connected = true; // Represents the successful server-side code exchange.
-    const disconnect = drive.getByRole("button", {
+    await page.getByRole("button", { name: "Manage Google Drive" }).click();
+    const details = page.getByRole("region", { name: "Google Drive connection" });
+    const disconnect = details.getByRole("button", {
         name: "Disconnect",
         exact: true,
     });
     await expect(disconnect).toBeVisible();
     await disconnect.click();
+    await expect(details.getByRole("button", { name: "Connect", exact: true })).toBeEnabled();
+    await page.getByRole("dialog", { name: "Google Drive", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
     await expect(connect).toBeEnabled();
     expect(connected).toBe(false);
 });

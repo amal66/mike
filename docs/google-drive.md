@@ -2,7 +2,7 @@
 
 Mike provides three first-party, read-only assistant tools over Drive REST v3:
 `google_drive_search`, `google_drive_list_recent`, and `google_drive_read_file`.
-Each Mike user connects their own Google account in Settings → Connectors → Google accounts. Choose **Add** on the Google Drive card, then **Connect** in its details dialog; a connected card offers **Manage**.
+Each Mike user connects their own Google account in Settings → Connectors → Discover. Choose **Add** on the Google Drive card to open Google OAuth directly and select the account there; a connected card offers **Manage**.
 The integration does not require a Google MCP server or a service account.
 
 ## Technical approach

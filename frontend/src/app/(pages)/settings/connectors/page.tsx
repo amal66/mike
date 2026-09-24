@@ -411,6 +411,9 @@ function GoogleDriveCard({
       name="Google Drive"
       connected={!!status?.connected}
       loading={!status && !error}
+      onConnect={status?.configured && status.schemaReady !== false ? () => void connect() : undefined}
+      connecting={busy && !status?.connected}
+      error={error}
       summary={
         status
           ? status.connected ? "Connected · Read-only" : "Not connected"
@@ -1324,21 +1327,14 @@ export default function ConnectorsPage() {
           ))}
       </div>
 
-      <GoogleWorkspacePanel>
-        <GoogleDriveCard
-          runSensitiveAction={runSensitiveAction}
-          handleRef={googleDriveHandleRef}
-        />
-      </GoogleWorkspacePanel>
-
       <section className="mt-6" aria-labelledby="discover-connectors-heading">
         <div className="mb-4">
           <SettingsHeading id="discover-connectors-heading">
             Discover
           </SettingsHeading>
         </div>
-        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
-          {CONNECTOR_PRESETS.map((preset) => {
+        <GoogleWorkspacePanel
+          additionalConnectors={CONNECTOR_PRESETS.map((preset) => {
             const isAdded = connectors.some(
               (connector) =>
                 normalizedServerUrl(connector.serverUrl) ===
@@ -1357,7 +1353,7 @@ export default function ConnectorsPage() {
 
             return (
               <SettingsCard key={preset.serverUrl}>
-                <div className="flex flex-wrap items-center gap-3 p-4">
+                <div className="flex min-h-24 flex-wrap items-center gap-3 p-4">
                   <div className="flex min-w-0 flex-[1_0_8rem] items-center gap-3">
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
                       <ConnectorBrandIcon name={preset.name} />
@@ -1398,7 +1394,12 @@ export default function ConnectorsPage() {
               </SettingsCard>
             );
           })}
-        </div>
+        >
+          <GoogleDriveCard
+            runSensitiveAction={runSensitiveAction}
+            handleRef={googleDriveHandleRef}
+          />
+        </GoogleWorkspacePanel>
       </section>
 
       <NewCustomMcpModal

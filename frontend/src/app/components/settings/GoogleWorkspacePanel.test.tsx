@@ -64,12 +64,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 const gmail = () =>
-  within(screen.getByRole("region", { name: "Gmail connection" }));
+  within(screen.queryByRole("region", { name: "Gmail connection" }) ?? screen.getByRole("region", { name: "Gmail connector" }));
 async function openPanel() {
   render(<GoogleWorkspacePanel />);
-  const button = await screen.findByRole("button", { name: /^(Set up|Manage) Gmail$/ });
+  const button = await screen.findByRole("button", { name: /^(Add|Manage) Gmail$/ });
   await waitFor(() => expect(button).toBeEnabled());
-  fireEvent.click(button);
+  if (button.textContent === "Manage") fireEvent.click(button);
   fireEvent.click(screen.getByText("Recent Google actions", { selector: "summary" }));
 }
 describe("opt-in Google connections and action review", () => {
@@ -79,10 +79,10 @@ describe("opt-in Google connections and action review", () => {
     expect(api.startGoogleWorkspaceOAuth).not.toHaveBeenCalled();
     expect(api.decideGoogleWorkspaceAction).not.toHaveBeenCalled();
     expect(
-      screen.getByText(/Google sign-in never connects/),
-    ).toBeInTheDocument();
+      screen.queryByRole("dialog"),
+    ).toBeNull();
     expect(
-      gmail().getByRole("button", { name: "Connect read-only" }),
+      screen.getByRole("button", { name: "Add Gmail" }),
     ).toBeEnabled();
   });
   it("shows the selected account, independently of the Mike login", async () => {
@@ -176,8 +176,9 @@ describe("opt-in Google connections and action review", () => {
       accountEmail: "new@example.com",
       grantId: "new",
     });
-    fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
-    await screen.findByText(/Connected as new@example.com/);
+    fireEvent.click(screen.getByRole("button", { name: "Add Gmail" }));
+    await screen.findByRole("button", { name: "Manage Gmail" });
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.startGoogleWorkspaceOAuth).toHaveBeenCalledWith("gmail", false);
     expect(popup.close).toHaveBeenCalled();
   });
@@ -233,7 +234,7 @@ describe("opt-in Google connections and action review", () => {
       });
     await openPanel();
     await screen.findAllByText("Not connected");
-    fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Gmail" }));
     await screen.findByRole("button", { name: "Verify test MFA" });
     vi.mocked(api.getGoogleWorkspaceStatus).mockResolvedValue({
       ...base,
@@ -246,19 +247,18 @@ describe("opt-in Google connections and action review", () => {
       expect(popups[1].location.href).toContain("accounts.google.com"),
     );
   });
-  it("keeps connections opt-in and cancels pending consent when its dialog closes", async () => {
+  it("opens Google directly on Add and cancels consent from the card", async () => {
     vi.spyOn(window, "open").mockReturnValue({ location: { href: "" }, close: vi.fn() } as unknown as Window);
     vi.mocked(api.startGoogleWorkspaceOAuth).mockResolvedValue({ authorizationUrl: "https://accounts.google.com/auth?state=closing" });
     render(<GoogleWorkspacePanel />);
-    const setup = await screen.findByRole("button", { name: "Set up Gmail" });
+    const setup = await screen.findByRole("button", { name: "Add Gmail" });
     await waitFor(() => expect(setup).toBeEnabled());
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("button", { name: "Connect read-only" })).toBeNull();
     fireEvent.click(setup);
-    expect(api.startGoogleWorkspaceOAuth).not.toHaveBeenCalled();
-    fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() => expect(api.startGoogleWorkspaceOAuth).toHaveBeenCalledWith("gmail", false));
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Gmail authorization" }));
     await waitFor(() => expect(api.cancelGoogleWorkspaceOAuth).toHaveBeenCalledWith("gmail", "closing"));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -273,10 +273,8 @@ describe("opt-in Google connections and action review", () => {
     } as unknown as Window);
     await openPanel();
     await screen.findAllByText("Not connected");
-    fireEvent.click(gmail().getByRole("button", { name: "Connect read-only" }));
-    fireEvent.click(
-      gmail().getByRole("button", { name: "Cancel authorization" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add Gmail" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel Gmail authorization" }));
     await act(async () =>
       resolve({
         authorizationUrl: "https://accounts.google.com/auth?state=pending",

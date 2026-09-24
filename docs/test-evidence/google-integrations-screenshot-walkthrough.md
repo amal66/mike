@@ -1,5 +1,7 @@
 # Google integrations: screenshot walkthrough
 
+**Historical layout:** the separate Google accounts section and preconnection dialogs shown below have been superseded. [See the current Discover layout and direct OAuth flow](google-discover-2026-09-24.md). The inline Assistant and earlier live-read captures remain useful evidence for their recorded states.
+
 The connector cards now use the official Google Drive, Gmail, and Google Calendar product logos, served locally. The Google sign-in button keeps the Google identity logo. Emails and permissions now occupy separate lines without ellipsis; long addresses wrap and cards grow as needed. These content-fitting rules are saved in AGENTS.md and the design-system guide.
 
 **Screenshots 1–14 are actual screenshots of the rebuilt application with synthetic API fixtures.** They demonstrate the user interface, including inline approvals and resulting states. No email was sent and no event was created by these fixture captures. They do not establish live Google write acceptance.

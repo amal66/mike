@@ -18,7 +18,6 @@ import { userFacingApiError } from "@/app/lib/userFacingError";
 import { MfaVerificationPopup } from "@/app/components/popups/MfaVerificationPopup";
 import { GoogleWorkspaceActionCard } from "@/app/components/shared/GoogleWorkspaceActionCard";
 import { GoogleConnectionCard } from "./GoogleConnectionCard";
-import { SettingsHeading } from "./SettingsHeading";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
 const names = { gmail: "Gmail", "google-calendar": "Google Calendar" };
@@ -163,6 +162,9 @@ function ConnectionCard({
       connected={!!status?.connected}
       loading={!status && !error}
       accountEmail={status?.connected ? status.accountEmail : null}
+      onConnect={status?.configured && status.schemaReady ? () => void connect(false) : undefined}
+      connecting={authorizing}
+      error={error}
       summary={
         status
           ? status.connected
@@ -178,9 +180,7 @@ function ConnectionCard({
           <p className="mt-1 text-xs text-muted-foreground">
             {provider === "gmail"
               ? "Search and read email."
-              : "Search calendars and read events."}{" "}
-            Connect any Google account you choose, independently of your Mike
-            sign-in.
+              : "Search calendars and read events."}
           </p>
         </div>
         {!status ? (
@@ -277,7 +277,13 @@ function ConnectionCard({
     </GoogleConnectionCard>
   );
 }
-export function GoogleWorkspacePanel({ children }: { children?: ReactNode }) {
+export function GoogleWorkspacePanel({
+  children,
+  additionalConnectors,
+}: {
+  children?: ReactNode;
+  additionalConnectors?: ReactNode;
+}) {
   const [actions, setActions] = useState<GoogleWorkspaceActionReview[] | null>(
     null,
   );
@@ -328,16 +334,7 @@ export function GoogleWorkspacePanel({ children }: { children?: ReactNode }) {
     }
   };
   return (
-    <section className="@container mt-6" aria-labelledby="google-connections-heading">
-      <div className="mb-4 space-y-1">
-        <SettingsHeading id="google-connections-heading">
-          Google accounts
-        </SettingsHeading>
-        <p className="text-xs text-muted-foreground">
-          Google sign-in never connects these services automatically. Choose any
-          Google account for each optional connection.
-        </p>
-      </div>
+    <>
       <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
         {children}
         <ConnectionCard
@@ -350,6 +347,7 @@ export function GoogleWorkspacePanel({ children }: { children?: ReactNode }) {
           sensitive={sensitive}
           changed={() => void refresh()}
         />
+        {additionalConnectors}
       </div>
       <details className="mt-3">
         <summary className="w-fit cursor-pointer rounded text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -417,6 +415,6 @@ export function GoogleWorkspacePanel({ children }: { children?: ReactNode }) {
             );
         }}
       />
-    </section>
+    </>
   );
 }

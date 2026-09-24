@@ -120,25 +120,23 @@ test("Google SSO does not auto-connect Gmail; account choice, write upgrade and 
     return route.fulfill({ json: [] });
   });
   await page.goto("/settings/connectors");
-  await page.getByRole("button", { name: "Set up Gmail" }).click();
-  const gmail = page.getByRole("region", { name: "Gmail connection" });
-  const closeDetails = page.getByRole("dialog", { name: "Gmail", exact: true }).getByRole("button", { name: "Close", exact: true });
-  await expect(closeDetails).toBeFocused();
-  await closeDetails.press("Tab");
-  await expect(gmail.locator("summary")).toBeFocused();
-  await gmail.locator("summary").press("Enter");
-  await expect(gmail.getByText(/Authorized redirect URI/)).toBeVisible();
-  await gmail.locator("summary").press("Tab");
-  await expect(gmail.getByRole("button", { name: "Connect read-only", exact: true })).toBeFocused();
-  await expect(gmail.getByText("Not connected", { exact: true })).toBeVisible();
+  const discover = page.getByRole("region", { name: "Discover", exact: true });
+  await expect(discover.getByRole("button", { name: "Add Gmail", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Google accounts", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(starts).toBe(0);
   expect(approves).toBe(0);
-  await gmail
-    .getByRole("button", { name: "Connect read-only", exact: true })
-    .click();
-  await expect(gmail.getByText("Waiting for Google…")).toBeVisible();
+  const popupPromise = context.waitForEvent("page");
+  await discover.getByRole("button", { name: "Add Gmail", exact: true }).click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/accounts.google.com/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(discover.getByText("Waiting for Google…")).toBeVisible();
   connected = true;
   grant++;
+  await page.getByRole("button", { name: "Manage Gmail", exact: true }).click();
+  const gmail = page.getByRole("region", { name: "Gmail connection" });
+  await expect(page.getByRole("dialog", { name: "Gmail", exact: true }).getByRole("button", { name: "Close", exact: true })).toBeFocused();
   await expect(
     gmail.getByText(/Connected as mail-test@example.com.*Read-only/),
   ).toBeVisible();
@@ -162,4 +160,40 @@ test("Google SSO does not auto-connect Gmail; account choice, write upgrade and 
   await page.getByRole("button", { name: "Manage Gmail" }).click();
   await gmail.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(gmail.getByText("Not connected", { exact: true })).toBeVisible();
+});
+
+test("Calendar Add opens Google account selection directly with read-only access", async ({ page, context }) => {
+  let starts = 0;
+  let cancellations = 0;
+  await context.route("https://accounts.google.com/**", route => route.fulfill({ contentType: "text/html", body: "<p>Test OAuth destination</p>" }));
+  await page.route("**/api/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/auth/session") return route.fulfill({ json: { user: { id: "calendar-user", email: "login@example.com", createdWithGoogle: true } } });
+    if (path === "/api/user/profile") return route.fulfill({ json: { onboardingComplete: true, displayName: "Test user", apiKeyStatus: {}, creditsRemaining: 100 } });
+    if (path === "/api/user/google-actions") return route.fulfill({ json: { actions: [] } });
+    if (path.endsWith("/google-calendar/oauth/start")) {
+      starts++;
+      expect(route.request().postDataJSON()).toEqual({ write: false });
+      return route.fulfill({ json: { authorizationUrl: "https://accounts.google.com/auth?state=" + "c".repeat(32) } });
+    }
+    if (path.endsWith("/google-calendar/oauth/cancel")) {
+      cancellations++;
+      return route.fulfill({ status: 204 });
+    }
+    if (path.includes("/integrations/")) return route.fulfill({ json: { configured: true, schemaReady: true, connected: false, writeEnabled: false } });
+    return route.fulfill({ json: [] });
+  });
+  await page.goto("/settings/connectors");
+  const add = page.getByRole("region", { name: "Discover", exact: true }).getByRole("button", { name: "Add Google Calendar", exact: true });
+  await expect(add).toBeEnabled();
+  expect(starts).toBe(0);
+  const popupPromise = context.waitForEvent("page");
+  await add.click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/accounts.google.com/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel Google Calendar authorization", exact: true }).click();
+  await expect(add).toBeEnabled();
+  expect(starts).toBe(1);
+  expect(cancellations).toBe(1);
 });

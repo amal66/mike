@@ -10,11 +10,22 @@ security fixes in `30b25535`), based on `main` at
 **Status: automated verification is recorded below; fresh live Google acceptance
 is incomplete. This report is not a merge-readiness sign-off.**
 
-## Product-logo update and screenshot walkthrough
+## Current Discover layout and direct OAuth flow
 
-The Google cards now show the separate Drive, Gmail, and Calendar product logos. Account emails and permissions remain fully visible on separate lines; long values wrap. Settings navigation now switches layout according to available content width, preventing the two-sidebar squeeze on tablets. Normal emails are asserted to fit on one line at every tested width. Persistent content-fitting principles are saved in AGENTS.md and the design-system guide. [View all 17 screenshots](google-integrations-screenshot-walkthrough.md): opt-in setup, read-only connections, optional write access, inline Assistant approval/completion/rejection, and earlier live read evidence. Fixture UI captures and live Google proofs are explicitly distinguished. Desktop, dark, tablet, mobile, and Gmail dialog images below have been refreshed.
+Drive, Gmail, and Calendar now share the Discover grid with the other connectors.
+The separate Google accounts section and preliminary account-selection dialogs
+are removed. Add opens Google OAuth directly; account choice happens on Google's
+screen. Connected services retain Manage for permissions and disconnect.
+[View the current 11-screenshot walkthrough](google-discover-2026-09-24.md).
 
-The logo change passed 35 focused component tests, 11 browser tests (including ten normal/long-email responsive/theme combinations, full text visibility, and successful local logo loads), changed-file lint, and production Webpack build/typechecking. Standard CI reruns on the new PR head.
+The revision passed all **1,669 frontend tests**, **34 focused component tests**,
+**13 browser tests**, changed-file lint, and a production Webpack build/TypeScript.
+The browser checks cover direct OAuth launch and cancellation for all three
+services, plus normal/long emails at mobile/tablet/desktop widths in light/dark
+modes. These use synthetic provider fixtures and do not establish live writes.
+The earlier product-logo gallery and layout captures below show the prior UI;
+the linked current gallery supersedes their section/setup layout. Product logos
+and persistent content-fitting principles remain in place.
 
 ## Automated baseline: all checks pass
 
@@ -67,9 +78,8 @@ items, confirming no synthetic write occurred.
 A private source event was then created directly in Google Calendar, with no
 guests, notifications, or busy-time effect. This fixture setup is **not** counted
 as a Mike write. Mike found the exact title `MIKE-GOOGLE-20260923-calendar-read`
-and invoked `google_calendar_read_event`. It returned September 25, 2026,
-10:00–10:15 in `America/Los_Angeles`, the source phrase **amber heron 4826**,
-and no guests, all matching the source editor.
+and invoked `google_calendar_read_event`. It returned September 25, 2026 in `America/Los_Angeles`, the source phrase
+**amber heron 4826**, and no guests. The GIF records the returned event details.
 
 ![Live Calendar request and verified event read](google-integrations-2026-09-23/12-live-calendar-read.gif)
 

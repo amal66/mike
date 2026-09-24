@@ -1,5 +1,5 @@
 vi.mock("@/app/components/settings/GoogleWorkspacePanel", () => ({
-    GoogleWorkspacePanel: ({ children }: { children: import("react").ReactNode }) => children,
+    GoogleWorkspacePanel: ({ children, additionalConnectors }: { children: import("react").ReactNode; additionalConnectors?: import("react").ReactNode }) => <>{children}{additionalConnectors}</>,
 }));
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -824,9 +824,9 @@ describe("Google Drive connection lifecycle", () => {
     async function openCard() {
         render(<ConnectorsPage />);
         await act(flushMicrotasks);
-        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
+        expect(screen.queryByRole("dialog", { name: "Google Drive" })).toBeNull();
         await act(async () => {
-            fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+            fireEvent.click(screen.getByRole("button", { name: "Add Google Drive" }));
             await flushMicrotasks();
         });
     }
@@ -892,6 +892,7 @@ describe("Google Drive connection lifecycle", () => {
         await act(async () => {
             await vi.advanceTimersByTimeAsync(1500);
         });
+        fireEvent.click(screen.getByRole("button", { name: "Manage Google Drive" }));
         expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
         expect(cancelGoogleDriveOAuth).not.toHaveBeenCalled();
         await act(async () => {
@@ -905,7 +906,7 @@ describe("Google Drive connection lifecycle", () => {
     it("cancels the server-side attempt and stops polling", async () => {
         await openCard();
         await act(async () => {
-            fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+            fireEvent.click(screen.getByRole("button", { name: "Cancel Google Drive authorization" }));
             await flushMicrotasks();
         });
         expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state);
@@ -917,14 +918,13 @@ describe("Google Drive connection lifecycle", () => {
         expect(getGoogleDriveStatus).toHaveBeenCalledTimes(count);
     });
 
-    it("cancels pending consent when its details dialog closes", async () => {
+    it("starts OAuth directly and cancels pending consent from the card", async () => {
         await openCard();
-        fireEvent.keyDown(window, { key: "Escape" });
+        fireEvent.click(screen.getByRole("button", { name: "Cancel Google Drive authorization" }));
         await act(flushMicrotasks);
         expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state);
         expect(screen.queryByRole("dialog", { name: "Google Drive" })).toBeNull();
-        fireEvent.click(screen.getByRole("button", { name: "Set up Google Drive" }));
-        expect(screen.getByRole("button", { name: "Connect" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Add Google Drive" })).toBeEnabled();
     });
 
     it("honors cancellation while the start request is still in flight", async () => {
@@ -935,7 +935,7 @@ describe("Google Drive connection lifecycle", () => {
             }),
         );
         await openCard();
-        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        fireEvent.click(screen.getByRole("button", { name: "Cancel Google Drive authorization" }));
         await act(async () => {
             resolveStart({
                 authorizationUrl: `https://accounts.google.com/authorize?state=${state}`,
@@ -943,7 +943,7 @@ describe("Google Drive connection lifecycle", () => {
             await flushMicrotasks();
         });
         expect(cancelGoogleDriveOAuth).toHaveBeenCalledWith(state);
-        expect(screen.getByRole("button", { name: "Connect" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Add Google Drive" })).toBeTruthy();
     });
 
     it("shows a completed connection if consent wins the cancellation race", async () => {
@@ -953,9 +953,10 @@ describe("Google Drive connection lifecycle", () => {
             connected: true,
         });
         await act(async () => {
-            fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+            fireEvent.click(screen.getByRole("button", { name: "Cancel Google Drive authorization" }));
             await flushMicrotasks();
         });
+        fireEvent.click(screen.getByRole("button", { name: "Manage Google Drive" }));
         expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     });
 
