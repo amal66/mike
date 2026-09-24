@@ -13,6 +13,7 @@ export function GoogleConnectionCard({
   name,
   connected,
   loading,
+  accountEmail,
   summary,
   onClose,
   children,
@@ -21,6 +22,7 @@ export function GoogleConnectionCard({
   name: string;
   connected: boolean;
   loading: boolean;
+  accountEmail?: string | null;
   summary: string;
   onClose: () => void;
   children: ReactNode;
@@ -30,7 +32,7 @@ export function GoogleConnectionCard({
     <>
       <section aria-label={`${name} connector`} className="min-w-0">
         <SettingsCard>
-          <div className="flex flex-wrap items-center gap-3 p-4">
+          <div className="flex min-h-24 flex-wrap items-center gap-3 p-4">
             <div className="flex min-w-0 flex-[1_0_8rem] items-center gap-3">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center">
                 <Image
@@ -45,10 +47,12 @@ export function GoogleConnectionCard({
               </div>
               <div className="min-w-0 flex-1">
                 <SettingsLabel>{name}</SettingsLabel>
-                <p
-                  className="truncate text-xs text-muted-foreground"
-                  title={summary}
-                >
+                {accountEmail && (
+                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {accountEmail}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                   {summary}
                 </p>
               </div>

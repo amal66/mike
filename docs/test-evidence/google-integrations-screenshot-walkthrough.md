@@ -1,12 +1,12 @@
 # Google integrations: screenshot walkthrough
 
-The connector cards now use the official Google Drive, Gmail, and Google Calendar product logos, served locally. The Google sign-in button keeps the Google identity logo.
+The connector cards now use the official Google Drive, Gmail, and Google Calendar product logos, served locally. The Google sign-in button keeps the Google identity logo. Emails and permissions now occupy separate lines without ellipsis; long addresses wrap and cards grow as needed. These content-fitting rules are saved in AGENTS.md and the design-system guide.
 
 **Screenshots 1–14 are actual screenshots of the rebuilt application with synthetic API fixtures.** They demonstrate the user interface, including inline approvals and resulting states. No email was sent and no event was created by these fixture captures. They do not establish live Google write acceptance.
 
 **Screenshots 15–17 are the earlier real Google read-flow captures** from MikeOSS in `soy-oarlock-503613-m7`, with synthetic source data. They are not newly repeated tests. Gmail positive message reads and live approved writes remain outstanding. Google-owned account chooser/consent screens are not represented by the fixture screenshots. Drive remains read-only.
 
-Validation for the logo change: 34 connector component tests; six browser tests covering account selection/write upgrade/approval and 390/768/1280px light/dark layouts; changed-file lint; production Webpack build and TypeScript. All passed. The local Turbopack attempt stalled after a sandbox port-binding error; CI retains the standard build command.
+Validation for the logo change: 34 connector component tests; 11 browser tests covering account selection/write upgrade/approval and normal/long addresses at 390/768/1280px in light/dark layouts; changed-file lint; production Webpack build and TypeScript. All passed. The local Turbopack attempt stalled after a sandbox port-binding error; CI retains the standard build command.
 
 ## 1. Connectors before opting in
 

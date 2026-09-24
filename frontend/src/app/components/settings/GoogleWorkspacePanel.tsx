@@ -162,10 +162,11 @@ function ConnectionCard({
       name={name}
       connected={!!status?.connected}
       loading={!status && !error}
+      accountEmail={status?.connected ? status.accountEmail : null}
       summary={
         status
           ? status.connected
-            ? `${status.accountEmail ?? "Connected"} · ${status.writeEnabled ? "Writes require approval" : "Read-only"}`
+            ? status.writeEnabled ? "Writes require approval" : "Read-only"
             : "Not connected"
           : error ? "Unavailable" : "Loading…"
       }

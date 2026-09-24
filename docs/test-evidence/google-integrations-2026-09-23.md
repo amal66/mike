@@ -12,9 +12,9 @@ is incomplete. This report is not a merge-readiness sign-off.**
 
 ## Product-logo update and screenshot walkthrough
 
-The Google cards now show the separate Drive, Gmail, and Calendar product logos. [View all 17 screenshots](google-integrations-screenshot-walkthrough.md): opt-in setup, read-only connections, optional write access, inline Assistant approval/completion/rejection, and earlier live read evidence. Fixture UI captures and live Google proofs are explicitly distinguished. Desktop, dark, tablet, mobile, and Gmail dialog images below have been refreshed.
+The Google cards now show the separate Drive, Gmail, and Calendar product logos. Account emails and permissions remain fully visible on separate lines; long values wrap. Persistent content-fitting principles are saved in AGENTS.md and the design-system guide. [View all 17 screenshots](google-integrations-screenshot-walkthrough.md): opt-in setup, read-only connections, optional write access, inline Assistant approval/completion/rejection, and earlier live read evidence. Fixture UI captures and live Google proofs are explicitly distinguished. Desktop, dark, tablet, mobile, and Gmail dialog images below have been refreshed.
 
-The logo change passed 34 focused component tests, six browser tests (including five responsive/theme combinations and successful local logo loads), changed-file lint, and production Webpack build/typechecking. Standard CI reruns on the new PR head.
+The logo change passed 34 focused component tests, 11 browser tests (including ten normal/long-email responsive/theme combinations, full text visibility, and successful local logo loads), changed-file lint, and production Webpack build/typechecking. Standard CI reruns on the new PR head.
 
 ## Automated baseline: all checks pass
 
