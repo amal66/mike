@@ -52,14 +52,19 @@ is replayed to a late subscriber only while the predicate holds. A run is
 registered under a `key` — what may only have one run at a time — and carries
 an opaque `meta` for the surface that owns it.
 
-Two surfaces use it.
+An SSE **comment** line (`: tool-wait`) written through `write` fans out live
+but is never buffered or numbered: it is a keep-alive, so replaying it to a
+late subscriber would be noise and would move every real frame's sequence
+number.
+
+Every streaming surface uses it.
 
 #### Chat turns
 
 The chat and project-chat streams (`POST /chat`, `POST /projects/:id/chat`)
 register a run per assistant turn through `lib/assistantTurnRuns.ts`, the
-chat-shaped view of the registry (key `chat:<chatId>`, the assistant row id in
-`meta`). `attachAssistantTurnSse(res, run)` hands back the same
+chat-shaped view of the registry (key `<surface>:<chatId>`, the assistant row
+id in `meta`). `attachAssistantTurnSse(res, run)` hands back the same
 `{ signal, write, finish }` the older `openAssistantSse` did.
 
 - `GET /chat/:chatId/turn/:turnId/stream?from=<seq>` attaches to a run (a
@@ -75,6 +80,27 @@ chat-shaped view of the registry (key `chat:<chatId>`, the assistant row id in
   attach rather than treat the hidden reservation row as "no answer".
 - A chat has at most one run at a time: a second `POST` while one is
   generating answers `409 turn_in_progress`.
+
+#### Tabular review chat
+
+`POST /tabular-review/:reviewId/chat` registers the same kind of run under the
+`tabular` surface (key `tabular:<chatId>`), so the two surfaces cannot collide
+on a shared id and a lookup by turn id is scoped to the surface that asked.
+The endpoints mirror chat's, with the tabular access model: seeing the review
+is enough to attach, and stopping needs what writing the thread needs (review
+chats are creator-write).
+
+- `GET /tabular-review/:reviewId/chats/:chatId/turn/:turnId/stream?from=<seq>`
+- `POST /tabular-review/:reviewId/chats/:chatId/turn/:turnId/stop`
+- `GET /tabular-review/:reviewId/chats` reports `active_turn` per row, which
+  is how a panel that has just loaded knows to attach. The messages endpoint
+  keeps its bare array: it is the transcript, and the running turn is not in
+  it yet.
+- A second `POST /chat` into the same thread answers `409 turn_in_progress`.
+
+`prepareTabularChat` is allowed to return no chat id, and a request with no
+thread to key a run on keeps the old single-socket contract — nothing could
+ever attach to it.
 
 #### Tabular review generation
 
