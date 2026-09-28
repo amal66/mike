@@ -689,7 +689,7 @@ userRouter.get(
             await completeGoogleDriveOAuth(
                 res.locals.userId, state, code, createServerSupabase(),
             );
-            res.set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
+            res.set(mcpOAuthPopupHeaders(nonce))
                 .type("html")
                 .send(
                     mcpOAuthPopupHtml(
@@ -703,7 +703,7 @@ userRouter.get(
                 hasCode: !!code,
             });
             res.status(400)
-                .set("Content-Security-Policy", mcpOAuthPopupCsp(nonce))
+                .set(mcpOAuthPopupHeaders(nonce))
                 .type("html")
                 .send(
                     mcpOAuthPopupHtml(
@@ -842,7 +842,7 @@ for (const provider of ["gmail", "google-calendar"] as const) {
         requireMfaIfEnrolled,
         asyncRoute(async (req, res) => {
             const nonce = crypto.randomBytes(16).toString("base64");
-            res.set("Content-Security-Policy", mcpOAuthPopupCsp(nonce)).type(
+            res.set(mcpOAuthPopupHeaders(nonce)).type(
                 "html",
             );
             try {
