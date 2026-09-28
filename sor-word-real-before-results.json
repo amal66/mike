@@ -1,0 +1,57 @@
+{
+  "A_beforeReload": {
+    "stop": 1,
+    "chars": 0
+  },
+  "A_afterReloadBeforeOpen": {
+    "stop": 0,
+    "chars": 0
+  },
+  "A_reopened": {
+    "stop": 0,
+    "chars": 38,
+    "cancelled": true
+  },
+  "A_reopenedPlus4s": {
+    "stop": 0,
+    "chars": 38
+  },
+  "A_end": {
+    "stop": 0,
+    "chars": 38,
+    "cancelled": true
+  },
+  "B_docAfterReload": {
+    "text": "SERVICES AGREEMENT. 1. Services. The Suplier shall provide the consulting services described in Schedule A. 2. Payment. All invoices are payable within thirty (30) days of receipt by the Client. 3. Term. Twelve months from the effective date.",
+    "revisions": []
+  },
+  "B_doc": {
+    "text": "SERVICES AGREEMENT. 1. Services. The Suplier shall provide the consulting services described in Schedule A. 2. Payment. All invoices are payable within thirty (30) days of receipt by the Client. 3. Term. Twelve months from the effective date.",
+    "revisions": []
+  },
+  "B_paneEnd": {
+    "stop": 0,
+    "cancelled": false,
+    "cards": []
+  },
+  "C": {
+    "stop": 0,
+    "cancelled": false,
+    "chars": 0
+  },
+  "chatIds": [
+    "7fd80e48-b993-4529-9418-1cabd28f8ceb",
+    "3fd5ebfc-2642-48bc-861d-72b0d7b65884"
+  ],
+  "requests": [
+    "GET /api/word-chat?document_id=d9e11135-d3ad-4e38-95f7-6f12148e98bb&limit=11&offset=0",
+    "POST /api/word-chat",
+    "GET /api/word-chat?document_id=d9e11135-d3ad-4e38-95f7-6f12148e98bb&limit=11&offset=0",
+    "GET /api/word-chat/7fd80e48-b993-4529-9418-1cabd28f8ceb?document_id=d9e11135-d3ad-4e38-95f7-6f12148e98bb",
+    "POST /api/word-chat",
+    "GET /api/word-chat?document_id=d9e11135-d3ad-4e38-95f7-6f12148e98bb&limit=11&offset=0",
+    "GET /api/word-chat/3fd5ebfc-2642-48bc-861d-72b0d7b65884?document_id=d9e11135-d3ad-4e38-95f7-6f12148e98bb",
+    "POST /api/word-chat",
+    "GET /api/word-chat?document_id=d9e11135-d3ad-4e38-95f7-6f12148e98bb&limit=11&offset=0"
+  ]
+}

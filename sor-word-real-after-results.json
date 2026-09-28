@@ -1,0 +1,67 @@
+{
+  "A_beforeReload": {
+    "stop": 1,
+    "chars": 0
+  },
+  "A_afterReloadBeforeOpen": {
+    "stop": 0,
+    "chars": 0
+  },
+  "A_reopened": {
+    "stop": 1,
+    "chars": 228,
+    "cancelled": false
+  },
+  "A_reopenedPlus4s": {
+    "stop": 1,
+    "chars": 328
+  },
+  "A_end": {
+    "stop": 0,
+    "chars": 560,
+    "cancelled": false
+  },
+  "B_docAfterReload": {
+    "text": "SERVICES AGREEMENT. 1. Services. The Suplier shall provide the consulting services described in Schedule A. 2. Payment. All invoices are payable within thirty (30) days of receipt by the Client. 3. Term. Twelve months from the effective date.",
+    "revisions": []
+  },
+  "B_doc": {
+    "text": "SERVICES AGREEMENT. 1. Services. The Suplier shall provide the consulting services described in Schedule A. 2. Payment. All invoices are payable within thirty (30) days of receipt by the Client. 3. Term. Twelve months from the effective date.",
+    "revisions": []
+  },
+  "B_paneEnd": {
+    "stop": 0,
+    "cancelled": false,
+    "cards": [
+      "ready"
+    ]
+  },
+  "C": {
+    "stop": 0,
+    "cancelled": false,
+    "chars": 0
+  },
+  "chatIds": [
+    "c34a6533-f839-4320-8c6b-f53c97c0c877",
+    "ee2ab654-8520-4315-a4d3-0bc6f3db1100",
+    "4a10b1ed-499c-4cbd-99bb-0d16f411c4f5"
+  ],
+  "requests": [
+    "GET /api/word-chat?document_id=6696256b-843a-4df4-a54d-0a8958587c09&limit=11&offset=0",
+    "POST /api/word-chat",
+    "GET /api/word-chat?document_id=6696256b-843a-4df4-a54d-0a8958587c09&limit=11&offset=0",
+    "GET /api/word-chat/c34a6533-f839-4320-8c6b-f53c97c0c877?document_id=6696256b-843a-4df4-a54d-0a8958587c09",
+    "GET /api/word-chat/c34a6533-f839-4320-8c6b-f53c97c0c877/turn/88a45839-9f4e-4ce9-b8ef-273c3745bfb7/stream?document_id=6696256b-843a-4df4-a54d-0a8958587c09&from=1",
+    "GET /api/word-chat?document_id=6696256b-843a-4df4-a54d-0a8958587c09&limit=11&offset=0",
+    "POST /api/word-chat",
+    "GET /api/word-chat?document_id=6696256b-843a-4df4-a54d-0a8958587c09&limit=11&offset=0",
+    "GET /api/word-chat/ee2ab654-8520-4315-a4d3-0bc6f3db1100?document_id=6696256b-843a-4df4-a54d-0a8958587c09",
+    "GET /api/word-chat/ee2ab654-8520-4315-a4d3-0bc6f3db1100/turn/0fcae8eb-b3e6-41fe-a6c4-ff3cc590ee0e/stream?document_id=6696256b-843a-4df4-a54d-0a8958587c09&from=1",
+    "PUT /api/word-chat/messages/0fcae8eb-b3e6-41fe-a6c4-ff3cc590ee0e/edits/1000?document_id=6696256b-843a-4df4-a54d-0a8958587c09",
+    "POST /api/word-chat/tool-result",
+    "GET /api/word-chat?document_id=6696256b-843a-4df4-a54d-0a8958587c09&limit=11&offset=0",
+    "POST /api/word-chat",
+    "POST /api/word-chat/4a10b1ed-499c-4cbd-99bb-0d16f411c4f5/turn/dcd9d243-be87-4069-993c-28b105c6363e/stop?document_id=6696256b-843a-4df4-a54d-0a8958587c09",
+    "GET /api/word-chat?document_id=6696256b-843a-4df4-a54d-0a8958587c09&limit=11&offset=0"
+  ]
+}
