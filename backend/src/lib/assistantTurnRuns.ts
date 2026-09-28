@@ -31,7 +31,11 @@ import {
  * SSE attachment — lives in `streamRuns.ts`.
  */
 
-export { FINISHED_RUN_RETENTION_MS, MAX_RUN_LIFETIME_MS } from "./streamRuns";
+export {
+    FINISHED_RUN_RETENTION_MS,
+    MAX_RUN_LIFETIME_MS,
+    STOPPED_RUN_GRACE_MS,
+} from "./streamRuns";
 
 /**
  * Which kind of thread the turn belongs to. It only namespaces the run key,
@@ -114,6 +118,10 @@ export function startAssistantTurnRun(args: {
                 ? { persistChat: args.persistChat }
                 : {}),
         },
+        forcedStopFrames: [
+            `data: ${JSON.stringify({ type: "cancelled" })}\n\n`,
+            "data: [DONE]\n\n",
+        ],
     });
     return run ? turnView(run) : null;
 }

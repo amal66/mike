@@ -431,6 +431,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, asyncRoute(async (req, re
               id: generationId,
               key: reviewRunKey(reviewId),
               userId,
+              forcedStopFrames: [
+                  `data: ${JSON.stringify({ type: "cancelled" })}\n\n`,
+                  "data: [DONE]\n\n",
+              ],
           });
     if (!asyncPath && !run) {
         // The lease was free but the previous run for this review has not let

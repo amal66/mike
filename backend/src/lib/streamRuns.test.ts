@@ -39,8 +39,19 @@ function fakeResponse() {
     return res;
 }
 
+const forcedStopFrames = [
+    'data: {"type":"cancelled"}\n\n',
+    "data: [DONE]\n\n",
+];
+
 const start = (id = "run-1", key = "review:r1") =>
-    startStreamRun({ id, key, userId: "u1", meta: { label: id } })!;
+    startStreamRun({
+        id,
+        key,
+        userId: "u1",
+        meta: { label: id },
+        forcedStopFrames,
+    })!;
 
 afterEach(() => {
     resetStreamRunsForTests();
@@ -169,7 +180,12 @@ describe("stream runs", () => {
     it("refuses a second concurrent run for the same key, and frees the slot on finish", () => {
         const first = start("run-1");
         expect(
-            startStreamRun({ id: "run-2", key: "review:r1", userId: "u1" }),
+            startStreamRun({
+                id: "run-2",
+                key: "review:r1",
+                userId: "u1",
+                forcedStopFrames,
+            }),
         ).toBeNull();
         const other = start("other", "review:r2");
         expect(other.key).toBe("review:r2");
@@ -184,7 +200,12 @@ describe("stream runs", () => {
     });
 
     it("defaults meta to an empty object when the caller keeps no state", () => {
-        const run = startStreamRun({ id: "bare", key: "k", userId: "u1" })!;
+        const run = startStreamRun({
+            id: "bare",
+            key: "k",
+            userId: "u1",
+            forcedStopFrames,
+        })!;
         expect(run.meta).toEqual({});
         expect(run.userId).toBe("u1");
         expect(run.startedAt).toBeLessThanOrEqual(Date.now());
@@ -210,21 +231,40 @@ describe("stream runs", () => {
         // would stay claimed and every later send would 409 until restart.
         vi.useFakeTimers();
         const hung = start("run-hung", "review:hung");
-        const ended: string[] = [];
-        hung.subscribe(1, { write: () => true, end: () => ended.push("end") });
+        const events: string[] = [];
+        hung.subscribe(1, {
+            write: (chunk) => events.push(chunk),
+            end: () => events.push("end"),
+        });
 
         vi.advanceTimersByTime(MAX_RUN_LIFETIME_MS + 1);
         expect(hung.signal.aborted).toBe(true);
         expect(hung.finished).toBe(false);
-        expect(startStreamRun({ id: "run-next", key: "review:hung", userId: "u1" })).toBeNull();
+        expect(
+            startStreamRun({
+                id: "run-next",
+                key: "review:hung",
+                userId: "u1",
+                forcedStopFrames,
+            }),
+        ).toBeNull();
 
         vi.advanceTimersByTime(STOPPED_RUN_GRACE_MS + 1);
         expect(hung.finished).toBe(true);
-        expect(ended).toEqual(["end"]);
+        expect(events).toEqual([
+            'id: 1\ndata: {"type":"cancelled"}\n\n',
+            "id: 2\ndata: [DONE]\n\n",
+            "end",
+        ]);
         // Retained for late readers like any finished run, but no longer a
         // writer: the key accepts a successor.
         expect(getActiveStreamRun("review:hung")?.finished).toBe(true);
-        const next = startStreamRun({ id: "run-next", key: "review:hung", userId: "u1" });
+        const next = startStreamRun({
+            id: "run-next",
+            key: "review:hung",
+            userId: "u1",
+            forcedStopFrames,
+        });
         expect(next).not.toBeNull();
         next!.finish();
     });

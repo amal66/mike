@@ -47,6 +47,14 @@ export class WordChatStreamInterrupted extends Error {
   }
 }
 
+/** The server ended the turn with an error frame and a terminal `[DONE]`. */
+export class WordChatTerminalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WordChatTerminalError";
+  }
+}
+
 /** Everything a turn's frames are routed to, whichever response carries them. */
 export interface WordTurnHandlers {
   /**
@@ -164,10 +172,11 @@ async function consumeTurnStream(
       },
     },
   );
-  if (streamError) throw new Error(streamError);
-  if (!result.done && !params.signal?.aborted) {
-    throw new WordChatStreamInterrupted();
+  if (!result.done) {
+    if (!params.signal?.aborted) throw new WordChatStreamInterrupted();
+    return;
   }
+  if (streamError) throw new WordChatTerminalError(streamError);
 }
 
 /**

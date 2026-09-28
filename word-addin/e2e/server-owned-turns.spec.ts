@@ -352,3 +352,86 @@ test("a finished local turn is not advertised as running when the chat is reopen
   await page.waitForTimeout(1500);
   expect(resumeUrls).toHaveLength(0);
 });
+
+test("a local turn remains resumable after transport retries are exhausted", async ({
+  addin,
+  page,
+}) => {
+  let localChatId: string | null = null;
+  await page.route("**/word-chat", async (route, request) => {
+    if (request.method() !== "POST") return route.fallback();
+    const body = request.postDataJSON() as { chat_id?: string };
+    localChatId = body.chat_id ?? null;
+    return route.fulfill(
+      eventStream(
+        sse(
+          [
+            {
+              seq: 1,
+              data: {
+                type: "chat_id",
+                chatId: localChatId,
+                turnId: TURN_ID,
+              },
+            },
+            {
+              seq: 2,
+              data: { type: "content_delta", text: "Half an answer" },
+            },
+          ],
+          { done: false },
+        ),
+      ),
+    );
+  });
+  let resumeCount = 0;
+  await page.route(TURN_STREAM_GLOB, async (route, request) => {
+    if (request.method() !== "GET") return route.fallback();
+    resumeCount += 1;
+    if (resumeCount <= 2) {
+      return route.fulfill(eventStream(sse([], { done: false })));
+    }
+    return route.fulfill(
+      eventStream(
+        sse([
+          {
+            seq: 3,
+            data: { type: "content_delta", text: "Recovered after reopening." },
+          },
+        ]),
+      ),
+    );
+  });
+
+  await addin.gotoTaskpane({ token: TOKEN });
+  await addin.expectAuthedShell();
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const cloudSwitch = page.getByRole("switch", {
+    name: "Save chats in the cloud",
+  });
+  await cloudSwitch.click();
+  await expect(cloudSwitch).not.toBeChecked();
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "Assistant" }).click();
+
+  await page.getByPlaceholder("How can I help?").fill("Resume this answer");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => resumeCount).toBe(2);
+  await expect(
+    page.getByText("Error: Chat stream ended before the completion marker."),
+  ).toBeVisible();
+  expect(localChatId).not.toBeNull();
+
+  await page.getByRole("button", { name: "New chat" }).click();
+  await page.getByRole("button", { name: "Chat history" }).click();
+  await page
+    .getByRole("menu")
+    .getByRole("button", { name: /Resume this answer/ })
+    .click();
+
+  await expect.poll(() => resumeCount).toBe(3);
+  await expect(page.getByText("Recovered after reopening.")).toBeVisible({
+    timeout: 15_000,
+  });
+});

@@ -4,6 +4,7 @@ import type { Response } from "express";
 import {
   FINISHED_RUN_RETENTION_MS,
   MAX_RUN_LIFETIME_MS,
+  STOPPED_RUN_GRACE_MS,
   attachAssistantTurnSse,
   getActiveAssistantTurn,
   getAssistantTurnRun,
@@ -119,6 +120,22 @@ describe("assistant turn runs", () => {
     const hung = start("turn-hung");
     vi.advanceTimersByTime(MAX_RUN_LIFETIME_MS + 1);
     expect(hung.signal.aborted).toBe(true);
+  });
+
+  it("ends a wedged stopped turn with cancelled and done frames", () => {
+    vi.useFakeTimers();
+    const run = start("turn-hung");
+    const reader = fakeResponse();
+    attachAssistantTurnSse(reader as unknown as Response, run);
+
+    run.stop();
+    vi.advanceTimersByTime(STOPPED_RUN_GRACE_MS + 1);
+
+    expect(reader.chunks).toEqual([
+      'id: 1\ndata: {"type":"cancelled"}\n\n',
+      "id: 2\ndata: [DONE]\n\n",
+    ]);
+    expect(reader.writableEnded).toBe(true);
   });
 
   it("drops a subscriber whose response throws and keeps serving the others", () => {

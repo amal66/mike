@@ -16,8 +16,9 @@ interface LocalChatRow extends Chat {
    * The server-owned turn this chat had in flight when the pane last wrote
    * to it. A local chat has no server row, so this is the ONLY record a
    * reopened pane has of an answer that is still being generated; it is
-   * cleared when the turn ends, whatever the outcome. A stale value (the
-   * server restarted, the retention window passed) simply 404s on resume.
+   * cleared after a confirmed terminal frame or an explicit Stop. A stale
+   * value (the server restarted, the retention window passed) simply 404s on
+   * resume.
    */
   active_turn_id?: string | null;
 }

@@ -140,6 +140,12 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
     key: string;
     userId: string;
     meta?: Meta;
+    /**
+     * Terminal SSE records to emit when a stopped route does not unwind during
+     * the grace period. The owning surface supplies its own wire contract; the
+     * registry only guarantees that readers see those records before EOF.
+     */
+    forcedStopFrames: readonly string[];
 }): StreamRun<Meta> | null {
     const current = runsByKey.get(args.key);
     if (current && !current.finished) return null;
@@ -226,7 +232,10 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
             // The route owns the orderly ending; this is the disorderly one.
             // Whatever it is still awaiting, the key is free again after the
             // grace period and attached readers get their terminal frame.
-            run.grace = setTimeout(() => run.finish(), STOPPED_RUN_GRACE_MS);
+            run.grace = setTimeout(() => {
+                for (const frame of args.forcedStopFrames) run.write(frame);
+                run.finish();
+            }, STOPPED_RUN_GRACE_MS);
             run.grace.unref?.();
         },
         subscribe(from: number, subscriber: StreamRunSubscriber) {

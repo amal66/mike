@@ -3,6 +3,7 @@ import {
   resumeAssistant,
   streamAssistant,
   WordChatStreamInterrupted,
+  WordChatTerminalError,
   type WordClientToolCall,
   type WordTurnHandlers,
 } from "../api/stream";
@@ -65,6 +66,8 @@ interface WordTurnCursor {
   turnId: string | null;
   /** The sequence number of the last frame applied; a resume asks for +1. */
   lastSeq: number;
+  /** The user explicitly asked the backend to stop this turn. */
+  stopRequested: boolean;
 }
 
 /**
@@ -211,6 +214,9 @@ export function useWordAssistantChat({
   useEffect(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    // This session no longer owns the in-memory cursor. Keep a LOCAL chat's
+    // persisted turn id so reopening it can resume the server-owned answer.
+    activeTurnRef.current = null;
     sendSequenceRef.current += 1;
     sendingRef.current = false;
     sessionGenerationRef.current += 1;
@@ -228,6 +234,7 @@ export function useWordAssistantChat({
   const cancel = useCallback((): void => {
     const cursor = activeTurnRef.current;
     if (cursor?.chatId && cursor.turnId) {
+      cursor.stopRequested = true;
       // Closing the stream is no longer how Stop works: it would detach this
       // pane and leave the server answering into the transcript. Failures are
       // ignored on purpose — the server may have forgotten the turn already,
@@ -278,6 +285,8 @@ export function useWordAssistantChat({
       onChatStarted();
       let cleanupAssistantMessageId: string | null = null;
       let assistantEvents: WordAssistantEvent[] = [];
+      let runCursor: WordTurnCursor | null = null;
+      let turnIsTerminal = false;
 
       // Whether this send still owns the transcript. Cancellation is tracked
       // separately: an aborted stream is no longer current, but the sealed
@@ -334,7 +343,9 @@ export function useWordAssistantChat({
           chatId: requestChatId ?? null,
           turnId: input.kind === "resume" ? input.turnId : null,
           lastSeq: 0,
+          stopRequested: false,
         };
+        runCursor = cursor;
         activeTurnRef.current = cursor;
 
         let assistantMessageId = createMessageId("assistant");
@@ -840,6 +851,7 @@ export function useWordAssistantChat({
           if (controller.signal.aborted) {
             throw new DOMException("The request was aborted.", "AbortError");
           }
+          turnIsTerminal = true;
           if (!requestIsCurrent()) return;
           if (!clientToolsSeen) {
             editController.processLiveRedlines(
@@ -872,6 +884,13 @@ export function useWordAssistantChat({
             notifyWordChatHistoryChanged();
           }
         } catch (error) {
+          if (error instanceof WordChatTerminalError) turnIsTerminal = true;
+          // Any local message saved below must observe the turn-id write. If
+          // the save raced it, the save could preserve the row's older null
+          // value and make a still-running turn impossible to resume.
+          if (wordChatStorage === "local" && cursor.turnId) {
+            await localActiveTurnWriteRef.current;
+          }
           // Commit whatever streamed before the failure so the terminal UI
           // state below always builds on the latest transcript.
           publishAssistantEventsNow();
@@ -954,11 +973,19 @@ export function useWordAssistantChat({
         }
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
-        // The turn is over, whatever the outcome: a local chat must stop
-        // advertising it, or the next open would try to resume a dead run.
-        const finishedCursor = activeTurnRef.current;
-        if (finishedCursor) {
+        // Only this invocation may clean up its cursor. A session change can
+        // start another turn before this async finally runs, and the old turn
+        // must never clear the newer one's Stop/resume state.
+        const finishedCursor = runCursor;
+        if (finishedCursor && activeTurnRef.current === finishedCursor) {
+          // A transport failure after the final retry is not terminal: the
+          // server-owned turn may still be generating. Keep its local id so a
+          // reopened chat can resume it. A terminal frame or explicit Stop is
+          // the evidence that makes clearing safe.
+          const shouldClearActiveTurn =
+            turnIsTerminal || finishedCursor.stopRequested;
           if (
+            shouldClearActiveTurn &&
             wordChatStorage === "local" &&
             finishedCursor.chatId &&
             finishedCursor.turnId
@@ -976,7 +1003,7 @@ export function useWordAssistantChat({
               )
               .catch(() => undefined);
           }
-          activeTurnRef.current = null;
+          if (shouldClearActiveTurn) activeTurnRef.current = null;
         }
         if (sendToken === sendSequenceRef.current) {
           sendingRef.current = false;
