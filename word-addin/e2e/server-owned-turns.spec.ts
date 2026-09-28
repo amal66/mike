@@ -304,3 +304,51 @@ test("executes a client tool call replayed to a reattached pane exactly once", a
     (toolResults[0] as { result?: { document?: string } }).result?.document,
   ).toContain("The Supplier shall deliver.");
 });
+
+test("a finished local turn is not advertised as running when the chat is reopened", async ({
+  addin,
+  page,
+}) => {
+  // A local chat records its running turn id in IndexedDB when the `chat_id`
+  // frame names it, and clears it when the turn ends. The two writes used to
+  // be independent transactions, so on a short turn the clear could commit
+  // before the set and leave the finished id behind; the next open of the
+  // chat then tried to resume a dead run. The clear now chains behind the
+  // set, so reopening a finished local chat must never ask the server for a
+  // turn stream.
+  const LOCAL_CHAT_ID = "4f0e19cf-9be0-4b53-a1c4-2f2ffb92e603";
+  const resumeUrls: string[] = [];
+  await page.route(TURN_STREAM_GLOB, async (route, request) => {
+    if (request.method() !== "GET") return route.fallback();
+    resumeUrls.push(request.url());
+    return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ code: "turn_not_found" }) });
+  });
+  await addin.mockChatStream(["Done in one frame."], {
+    chatId: LOCAL_CHAT_ID,
+    turnId: TURN_ID,
+    assistantMessageId: "m-local-1",
+  });
+  await addin.gotoTaskpane({ token: TOKEN });
+  await addin.expectAuthedShell();
+
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const cloudSwitch = page.getByRole("switch", { name: "Save chats in the cloud" });
+  await cloudSwitch.click();
+  await expect(cloudSwitch).not.toBeChecked();
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.getByRole("menuitem", { name: "Assistant" }).click();
+
+  for (let round = 0; round < 3; round += 1) {
+    await page.getByPlaceholder("How can I help?").fill(`Quick local question ${round}`);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Done in one frame.").nth(round)).toBeVisible();
+  }
+
+  await page.getByRole("button", { name: "New chat" }).click();
+  await page.getByRole("button", { name: "Chat history" }).click();
+  await page.getByRole("menu").getByRole("button", { name: /Quick local question 0/ }).click();
+  await expect(page.getByText("Done in one frame.").first()).toBeVisible();
+  await page.waitForTimeout(1500);
+  expect(resumeUrls).toHaveLength(0);
+});

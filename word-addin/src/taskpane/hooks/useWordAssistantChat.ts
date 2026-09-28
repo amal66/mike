@@ -186,6 +186,11 @@ export function useWordAssistantChat({
   const abortRef = useRef<AbortController | null>(null);
   // The turn currently being read, so Stop can name it to the server.
   const activeTurnRef = useRef<WordTurnCursor | null>(null);
+  // The most recent local-storage write of a chat's active turn id. The
+  // clearing write in `runTurn`'s finally chains behind it (see onMetadata).
+  const localActiveTurnWriteRef = useRef<Promise<void | undefined>>(
+    Promise.resolve(),
+  );
   const mountedRef = useRef(true);
   const sessionGenerationRef = useRef(0);
   const sendSequenceRef = useRef(0);
@@ -671,12 +676,20 @@ export function useWordAssistantChat({
                   // here. Best-effort: losing it costs a resume, not the
                   // answer.
                   if (wordChatStorage === "local" && cursor.chatId) {
-                    void setLocalWordChatActiveTurn({
-                      documentId: wordDocumentId,
-                      ownerId: wordChatOwnerId,
-                      chatId: cursor.chatId,
-                      activeTurnId: metadata.turnId,
-                    });
+                    // Each write opens its own IndexedDB transaction, and
+                    // nothing else orders them: on a short turn the clearing
+                    // write in `finally` could commit BEFORE this one and
+                    // leave the finished turn id behind, so the next open of
+                    // the chat would try to resume a dead run. Chain the
+                    // clear behind this write.
+                    localActiveTurnWriteRef.current = setLocalWordChatActiveTurn(
+                      {
+                        documentId: wordDocumentId,
+                        ownerId: wordChatOwnerId,
+                        chatId: cursor.chatId,
+                        activeTurnId: metadata.turnId,
+                      },
+                    ).catch(() => undefined);
                   }
                 }
                 if (!requestIsCurrent()) return;
@@ -950,12 +963,18 @@ export function useWordAssistantChat({
             finishedCursor.chatId &&
             finishedCursor.turnId
           ) {
-            void setLocalWordChatActiveTurn({
-              documentId: wordDocumentId,
-              ownerId: wordChatOwnerId,
-              chatId: finishedCursor.chatId,
-              activeTurnId: null,
-            });
+            // After the write that recorded the turn, never racing it.
+            const clearedChatId = finishedCursor.chatId;
+            localActiveTurnWriteRef.current = localActiveTurnWriteRef.current
+              .then(() =>
+                setLocalWordChatActiveTurn({
+                  documentId: wordDocumentId,
+                  ownerId: wordChatOwnerId,
+                  chatId: clearedChatId,
+                  activeTurnId: null,
+                }),
+              )
+              .catch(() => undefined);
           }
           activeTurnRef.current = null;
         }
