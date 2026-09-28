@@ -1,0 +1,233 @@
+[
+  {
+    "t": "2026-09-28T00:23:33.659Z",
+    "step": "W1 streaming, 3 s",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 1,
+    "answerChars": 298,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:23:35.324Z",
+    "step": "W2 after refresh, 1.5 s",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 328,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:23:39.445Z",
+    "step": "W3 after refresh, 5.5 s",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 328,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:23:40.371Z",
+    "step": "W4 complete",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 328,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:23:45.193Z",
+    "step": "W5 tab 2 opened",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 381,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:23:45.306Z",
+    "step": "W6 tab 2 has no Stop control",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 381,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:03.790Z",
+    "step": "W7 tab 1 finished",
+    "url": "http://localhost:3020/assistant/chat/47484e2c-75c2-4a75-a1c3-4d8f8cf5c33e",
+    "doneCells": 0,
+    "runReview": 0,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 591,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:06.622Z",
+    "step": "A0 review loaded",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 0,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 0,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:11.915Z",
+    "step": "A1 generating, 5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 3,
+    "runReview": 0,
+    "stopGeneration": 1,
+    "stopResponse": 0,
+    "answerChars": 287,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:13.581Z",
+    "step": "A2 after refresh, 1.5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 3,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 286,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:18.674Z",
+    "step": "A3 after refresh, 6.5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 3,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 286,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:19.586Z",
+    "step": "A4 complete",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 3,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 286,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:26.036Z",
+    "step": "C1 after refresh, before Stop",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 346,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:26.134Z",
+    "step": "C2 no Stop control offered",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 346,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:30.391Z",
+    "step": "B1 streaming, 3 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 1,
+    "answerChars": 20,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:24:32.059Z",
+    "step": "B2 after refresh, 1.5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 50,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:35.183Z",
+    "step": "B3 after refresh, 4.5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 50,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:36.095Z",
+    "step": "B4 complete",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 50,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:40.944Z",
+    "step": "D1 tab 2 opened",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 91,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:41.035Z",
+    "step": "D2 tab 2 has no Stop control",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 91,
+    "cancelled": true
+  },
+  {
+    "t": "2026-09-28T00:24:58.493Z",
+    "step": "D3 tab 1 finished",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975?chat=fb6b0dad-3963-4a99-b382-dbe865430260",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 542,
+    "cancelled": true
+  }
+]

@@ -1,0 +1,79 @@
+[
+  {
+    "t": "2026-09-28T00:22:15.044Z",
+    "step": "A0 review loaded",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 0,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 0,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:22:20.565Z",
+    "step": "A1 generating, 5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 6,
+    "runReview": 0,
+    "stopGeneration": 1,
+    "stopResponse": 0,
+    "answerChars": 347,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:22:22.198Z",
+    "step": "A2 after refresh, 1.5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 9,
+    "runReview": 0,
+    "stopGeneration": 1,
+    "stopResponse": 0,
+    "answerChars": 434,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:22:27.287Z",
+    "step": "A3 after refresh, 6.5 s",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 10,
+    "runReview": 0,
+    "stopGeneration": 1,
+    "stopResponse": 0,
+    "answerChars": 457,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:22:34.536Z",
+    "step": "A4 complete",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 12,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 505,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:22:40.867Z",
+    "step": "C1 after refresh, before Stop",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 6,
+    "runReview": 0,
+    "stopGeneration": 1,
+    "stopResponse": 0,
+    "answerChars": 347,
+    "cancelled": false
+  },
+  {
+    "t": "2026-09-28T00:22:43.503Z",
+    "step": "C2 after Stop",
+    "url": "http://localhost:3020/projects/ecf389c5-3550-4bd7-9020-17f6b7f5d774/tabular-reviews/fd753db6-a4d4-40fe-9b00-62f3a996f975",
+    "doneCells": 6,
+    "runReview": 1,
+    "stopGeneration": 0,
+    "stopResponse": 0,
+    "answerChars": 346,
+    "cancelled": false
+  }
+]
