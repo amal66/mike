@@ -4,6 +4,7 @@ import type { Response } from "express";
 import {
     FINISHED_RUN_RETENTION_MS,
     MAX_RUN_LIFETIME_MS,
+    STOPPED_RUN_GRACE_MS,
     attachStreamRunSse,
     getActiveStreamRun,
     getStreamRun,
@@ -201,6 +202,44 @@ describe("stream runs", () => {
         const hung = start("run-hung", "review:hung");
         vi.advanceTimersByTime(MAX_RUN_LIFETIME_MS + 1);
         expect(hung.signal.aborted).toBe(true);
+    });
+
+    it("frees the key of a stopped run its route never finishes, after the grace period", () => {
+        // A provider that ignores the abort, or a route that threw before its
+        // try/finally, never calls finish(). Without the grace timer the key
+        // would stay claimed and every later send would 409 until restart.
+        vi.useFakeTimers();
+        const hung = start("run-hung", "review:hung");
+        const ended: string[] = [];
+        hung.subscribe(1, { write: () => true, end: () => ended.push("end") });
+
+        vi.advanceTimersByTime(MAX_RUN_LIFETIME_MS + 1);
+        expect(hung.signal.aborted).toBe(true);
+        expect(hung.finished).toBe(false);
+        expect(startStreamRun({ id: "run-next", key: "review:hung", userId: "u1" })).toBeNull();
+
+        vi.advanceTimersByTime(STOPPED_RUN_GRACE_MS + 1);
+        expect(hung.finished).toBe(true);
+        expect(ended).toEqual(["end"]);
+        // Retained for late readers like any finished run, but no longer a
+        // writer: the key accepts a successor.
+        expect(getActiveStreamRun("review:hung")?.finished).toBe(true);
+        const next = startStreamRun({ id: "run-next", key: "review:hung", userId: "u1" });
+        expect(next).not.toBeNull();
+        next!.finish();
+    });
+
+    it("lets a stopped route finish on its own inside the grace period, once", () => {
+        vi.useFakeTimers();
+        const run = start("run-stop", "review:stop");
+        run.stop();
+        expect(run.finished).toBe(false);
+        run.finish();
+        expect(run.finished).toBe(true);
+        // The grace timer must not fire a second, spurious finish (which would
+        // restart the retention clock) once the route has ended the run.
+        vi.advanceTimersByTime(STOPPED_RUN_GRACE_MS + FINISHED_RUN_RETENTION_MS + 2);
+        expect(getStreamRun("run-stop")).toBeUndefined();
     });
 
     it("drops a subscriber whose response throws and keeps serving the others", () => {

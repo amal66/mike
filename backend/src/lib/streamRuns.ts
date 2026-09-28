@@ -31,6 +31,15 @@ import type { Response } from "express";
 export const FINISHED_RUN_RETENTION_MS = 60_000;
 /** A safety net, not a feature: the work is bounded, but a hung provider is not. */
 export const MAX_RUN_LIFETIME_MS = 30 * 60_000;
+/**
+ * How long a STOPPED run may take to finish on its own before the registry
+ * finishes it. `stop()` only aborts the signal; the route is expected to unwind,
+ * persist its partial and call `finish()`. A route that never does (a provider
+ * or tool call that ignores the abort, a throw before the route's try/finally)
+ * would otherwise hold the key forever, and every later send into that chat or
+ * review would answer 409 until the process restarted.
+ */
+export const STOPPED_RUN_GRACE_MS = 30_000;
 
 /**
  * Whether a buffered frame is still worth replaying to a client that attaches
@@ -93,6 +102,7 @@ type RunRecord<Meta> = StreamRun<Meta> & {
     controller: AbortController;
     retention: ReturnType<typeof setTimeout> | null;
     lifetime: ReturnType<typeof setTimeout> | null;
+    grace: ReturnType<typeof setTimeout> | null;
 };
 
 /** The registry is meta-agnostic; each caller casts back to its own shape. */
@@ -110,6 +120,7 @@ function frameChunk(frame: Frame): string {
 function remove(run: StoredRun) {
     if (run.retention) clearTimeout(run.retention);
     if (run.lifetime) clearTimeout(run.lifetime);
+    if (run.grace) clearTimeout(run.grace);
     runs.delete(run.id);
     if (runsByKey.get(run.key) === run) runsByKey.delete(run.key);
 }
@@ -157,6 +168,7 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
         controller,
         retention: null,
         lifetime: null,
+        grace: null,
         write(line: string, opts?: StreamRunWriteOptions) {
             if (finished) return false;
             // SSE COMMENT lines (`: tool-wait`) are not records: they carry
@@ -202,6 +214,8 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
             run.subscribers.clear();
             if (run.lifetime) clearTimeout(run.lifetime);
             run.lifetime = null;
+            if (run.grace) clearTimeout(run.grace);
+            run.grace = null;
             run.retention = setTimeout(() => remove(run), FINISHED_RUN_RETENTION_MS);
             run.retention.unref?.();
         },
@@ -209,6 +223,11 @@ export function startStreamRun<Meta = Record<string, unknown>>(args: {
             if (finished || stopped) return;
             stopped = true;
             controller.abort();
+            // The route owns the orderly ending; this is the disorderly one.
+            // Whatever it is still awaiting, the key is free again after the
+            // grace period and attached readers get their terminal frame.
+            run.grace = setTimeout(() => run.finish(), STOPPED_RUN_GRACE_MS);
+            run.grace.unref?.();
         },
         subscribe(from: number, subscriber: StreamRunSubscriber) {
             for (const frame of run.frames) {
