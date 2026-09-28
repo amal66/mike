@@ -75,13 +75,13 @@ export function sendInternalError(
       // as one issue instead of one per project.
       http_route: requestRoutePattern(res.req),
     },
-    extra: { path: res.req?.originalUrl },
+    extra: { path: res.req?.originalUrl?.split("?")[0] },
   });
 
   console.error("[http/internal-error]", {
     requestId,
     method: res.req?.method,
-    path: res.req?.originalUrl,
+    path: res.req?.originalUrl?.split("?")[0],
     error: error,
   });
 
