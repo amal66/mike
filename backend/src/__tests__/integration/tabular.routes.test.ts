@@ -2033,6 +2033,32 @@ describe("tabular.routes", () => {
             expect(res.body.detail).toBe(REVIEW_EDIT_FORBIDDEN);
         });
 
+        it("lets an editor stop a run even when they hold no key for the review's model", async () => {
+            // Stop spends nothing, so it must not reuse the start gate: the run
+            // may have been started by a collaborator with their own keys, and
+            // the review's model may not resolve for this caller. Without the
+            // dedicated gate this answered 422 missing_api_key and the run
+            // kept extracting with nobody able to stop it.
+            const held = heldExtraction();
+            const first = startGeneration();
+            const firstDone = first.then((res) => res);
+            const args = await held.started;
+            getUserModelSettings.mockResolvedValue({
+                title_model: "claude-haiku-4-5",
+                tabular_model: "claude-sonnet-5",
+                legal_research_us: false,
+                api_keys: {},
+            });
+
+            const stopped = await request(app)
+                .post("/tabular-review/r1/generate/stop")
+                .set(...AUTH);
+            expect(stopped.status).toBe(200);
+            expect(stopped.body).toEqual({ stopped: true, finished: false });
+            expect(args.abortSignal.aborted).toBe(true);
+            await firstDone;
+        });
+
         it("refuses a second generation while one is still streaming into the review", async () => {
             const held = heldExtraction();
             const first = startGeneration();

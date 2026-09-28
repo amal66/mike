@@ -52,6 +52,7 @@ import {
     claimTabularGeneration,
     loadTabularGenerateWork,
     preparedGenerateFailure,
+    ensureReviewGenerateStopAccess,
     prepareTabularGenerate,
     prepareTabularRunView,
 } from "./tabular.generate";
@@ -663,16 +664,18 @@ tabularRouter.post(
     requireAuth,
     asyncRoute(async (req, res) => {
         const { reviewId } = req.params;
-        const prepared = await prepareTabularGenerate(createServerSupabase(), {
-            reviewId,
-            userId: res.locals.userId as string,
-            userEmail: res.locals.userEmail as string | undefined,
-        });
-        if (!prepared.ok)
-            return void sendTabularFailure(
-                res,
-                preparedGenerateFailure(prepared),
-            );
+        // Edit standing only — not a usable model or keys for the caller, who
+        // may not be the collaborator who started the run.
+        const gate = await ensureReviewGenerateStopAccess(
+            createServerSupabase(),
+            {
+                reviewId,
+                userId: res.locals.userId as string,
+                userEmail: res.locals.userEmail as string | undefined,
+            },
+        );
+        if (!gate.ok)
+            return void sendTabularFailure(res, preparedGenerateFailure(gate));
 
         const run = getActiveStreamRun(reviewRunKey(reviewId));
         if (!run) {
