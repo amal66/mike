@@ -221,10 +221,13 @@ at the top of `e2e-live/anthropic-stub.mjs`.
 The task pane is independently bundled. When the web design system changes,
 compare:
 
-- `src/shared/styles/tokens.css` with `frontend/src/app/globals.css`;
 - `src/taskpane/lib/modelCatalog.ts` with the web model catalog; and
 - `src/shared/chat/ChatInput.tsx` and the vendored UI primitives with their web
   counterparts, retaining narrow-pane adaptations.
+
+Design tokens are not compared by hand: both targets import
+`frontend/src/shared/ui/DesignTokensUI.css`, and `src/shared/styles/tokens.css`
+holds only the add-in's base layer.
 
 Files with no add-in-specific behavior are not vendored at all: they are
 aliased straight at the web source (`@mike/*` in `webpack.config.js` and
