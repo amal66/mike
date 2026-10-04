@@ -660,6 +660,99 @@ describe("explorer uploads", () => {
             expect(screen.queryByText("Some files were not uploaded")).toBeNull(),
         );
     });
+
+    it("names every file when the whole batch fails", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            failed("Alpha.pdf"),
+            failed("Beta.docx"),
+        ]);
+        await renderWorkspace();
+        dropOnExplorer([
+            new File(["a"], "Alpha.pdf"),
+            new File(["b"], "Beta.docx"),
+        ]);
+        const dialog = await findUploadWarning();
+        expect(dialog).toHaveTextContent(
+            "Alpha.pdf, Beta.docx could not be uploaded. Please try again.",
+        );
+    });
+
+    it("does nothing for an empty selection", async () => {
+        await renderWorkspace();
+        dropOnExplorer([]);
+        // Give any stray async work a turn before asserting nothing happened.
+        await act(async () => {});
+        expect(state.uploadProjectDocuments).not.toHaveBeenCalled();
+        expect(screen.queryByText("Some files were not uploaded")).toBeNull();
+    });
+
+    it("sends both copies of a duplicate filename instead of collapsing them", async () => {
+        // The type filter keys on File identity, not on the name, so two
+        // different files that happen to share a name both reach the session.
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            completed("a", "Same.pdf"),
+            completed("b", "Same.pdf"),
+        ]);
+        await renderWorkspace();
+        const first = new File(["one"], "Same.pdf");
+        const second = new File(["two"], "Same.pdf");
+        dropOnExplorer([first, second]);
+        await waitFor(() =>
+            expect(state.uploadProjectDocuments).toHaveBeenCalledWith(
+                "p1",
+                [
+                    expect.objectContaining({ file: first }),
+                    expect.objectContaining({ file: second }),
+                ],
+                expect.any(Object),
+            ),
+        );
+        expect(screen.queryByText("Some files were not uploaded")).toBeNull();
+    });
+
+    // Counterexample for the type guard: the filter ends the flow for a
+    // file, so supported files with an upper-case extension or a non-ASCII
+    // name must still go through untouched and raise no warning.
+    it("keeps upper-case extensions and unicode names on the upload path", async () => {
+        state.uploadProjectDocuments.mockResolvedValueOnce([
+            completed("a", "SCAN.PDF"),
+            completed("b", "Vertrag-Übersicht.docx"),
+        ]);
+        await renderWorkspace();
+        const scan = new File(["a"], "SCAN.PDF");
+        const contract = new File(["b"], "Vertrag-Übersicht.docx");
+        dropOnExplorer([scan, contract]);
+        await waitFor(() =>
+            expect(state.uploadProjectDocuments).toHaveBeenCalledWith(
+                "p1",
+                [
+                    expect.objectContaining({ file: scan }),
+                    expect.objectContaining({ file: contract }),
+                ],
+                expect.any(Object),
+            ),
+        );
+        expect(screen.queryByText(/Unsupported file type/)).toBeNull();
+    });
+
+    // Counterexample for the failure path: reporting a failure must not
+    // block the next attempt, and a successful retry clears the old warning.
+    it("lets the user retry after a failed upload and clears the stale warning", async () => {
+        state.uploadProjectDocuments
+            .mockRejectedValueOnce(new Error("network down"))
+            .mockResolvedValueOnce([completed("a", "Alpha.pdf")]);
+        await renderWorkspace();
+        dropOnExplorer([new File(["a"], "Alpha.pdf")]);
+        await findUploadWarning();
+
+        dropOnExplorer([new File(["a"], "Alpha.pdf")]);
+        await waitFor(() =>
+            expect(state.uploadProjectDocuments).toHaveBeenCalledTimes(2),
+        );
+        await waitFor(() =>
+            expect(screen.queryByText("Some files were not uploaded")).toBeNull(),
+        );
+    });
 });
 
 describe("project chat workspace lifecycle", () => {
